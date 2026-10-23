@@ -155,7 +155,21 @@
       <p v-if="draftRestored && !terminal" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿。' : 'Your local draft was restored.' }}</p>
       <div class="run-composer">
         <button v-if="hasUnreadUpdates" class="run-new-updates" type="button" @click="scrollToLatest(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
+        <div v-if="terminal && !message.trim()" class="run-ended-bar" role="group" :aria-label="zh ? '任务结束后的操作' : 'Run ended actions'">
+          <span class="run-ended-status" :class="run.status" aria-hidden="true">
+            <WorkspaceIcon :name="run.status === 'succeeded' ? 'check' : run.status === 'cancelled' ? 'stop' : 'file'" :size="16" />
+          </span>
+          <span class="run-ended-copy">
+            <strong>{{ run.status === 'failed' ? (zh ? '任务未完成' : 'Run did not complete') : run.status === 'cancelled' ? (zh ? '任务已停止' : 'Run stopped') : (zh ? '任务已完成' : 'Run completed') }}</strong>
+            <small>{{ artifacts.length ? (zh ? `已保留 ${artifacts.length} 份成果；执行记录和结算信息仍在此任务中。` : `${artifacts.length} result${artifacts.length === 1 ? '' : 's'} saved; activity and settlement remain here.`) : (zh ? '执行记录和结算信息仍保留在当前任务中。' : 'Activity and settlement remain available in this task.') }}</small>
+          </span>
+          <router-link class="run-ended-action" :to="run.projectId ? { path: '/artigen/agent', query: { projectId: run.projectId } } : '/artigen/agent'">
+            <span>{{ zh ? '新建任务' : 'New task' }}</span>
+            <WorkspaceIcon name="arrow-right" :size="16" />
+          </router-link>
+        </div>
         <ComposerBox
+          v-else
           :draft="message"
           :attachments="[]"
           :allow-attachments="false"
@@ -1230,8 +1244,19 @@ onBeforeUnmount(() => {
 .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
 .run-new-updates { display: block; min-height: 44px; margin: 0 auto 10px; padding: 9px 14px; color: var(--acid-text); border: 0; border-radius: 9px; font-size: 13px; background: var(--surface-raised); cursor: pointer; }
 .run-new-updates:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.run-ended-bar { display: flex; min-height: 68px; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: var(--surface); }
+.run-ended-status { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
+.run-ended-status.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
+.run-ended-status.cancelled { color: var(--muted); background: var(--surface-raised); }
+.run-ended-copy { display: grid; flex: 1 1 auto; min-width: 0; gap: 3px; }
+.run-ended-copy strong { font-size: 13px; font-weight: 620; line-height: 1.35; }
+.run-ended-copy small { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.run-ended-action { display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; border: 0; border-radius: 10px; color: var(--acid-ink); font-size: 13px; font-weight: 620; text-decoration: none; background: var(--acid); }
+.run-ended-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 799px) {
   .run-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
   .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
+  .run-ended-bar { gap: 9px; padding: 9px; }
+  .run-ended-action { gap: 5px; padding: 0 10px; }
 }
 </style>

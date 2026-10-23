@@ -103,15 +103,52 @@ test('retrying the same failed Run input reuses its idempotency identity', async
   expect(fixture.state.inputs[2]?.inputId).not.toBe(fixture.state.inputs[0]?.inputId);
 });
 
-test('the terminal shared Run composer stays disabled and has no unsupported attachment action', async ({
-  page
-}) => {
-  const fixture = await installAgentInputFixture(page);
+test('terminal Runs replace the inert composer with a compact next step', async ({ page }) => {
+  const theme = test.info().project.name === 'chromium-mobile-390' ? 'light' : 'dark';
+  const fixture = await installAgentInputFixture(page, { theme });
+  const projectId = '22222222-2222-4222-8222-222222222222';
+  fixture.state.run.projectId = projectId;
+  await page.route(`**/api/workspace/projects/${projectId}/files`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, files: [] })
+  }));
+  await page.setViewportSize(test.info().project.name === 'chromium-mobile-390'
+    ? { width: 390, height: 844 }
+    : { width: 1440, height: 960 });
+
+  for (const status of ['succeeded', 'failed', 'cancelled'] as const) {
+    fixture.state.run.status = status;
+    fixture.state.run.error = status === 'failed' ? { code: 'AGENT_RUNTIME_FAILED' } : null;
+    await page.goto(`/artigen/agent/runs/${inputRunId}`);
+
+    const ended = page.getByRole('group', { name: '任务结束后的操作' });
+    await expect(ended).toBeVisible();
+    await expect(ended).toContainText(status === 'succeeded' ? '任务已完成' : status === 'failed' ? '任务未完成' : '任务已停止');
+    await expect(page.locator('.run-composer .composer-box')).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: '补充要求' })).toHaveCount(0);
+    const action = ended.getByRole('link', { name: '新建任务' });
+    await expect(action).toHaveAttribute('href', `/artigen/agent?projectId=${projectId}`);
+    const actionBox = await action.boundingBox();
+    expect(actionBox?.height).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+
+  }
+
   fixture.state.run.status = 'succeeded';
   await page.goto(`/artigen/agent/runs/${inputRunId}`);
-  await expect(page.getByRole('textbox', { name: '补充要求' })).toBeDisabled();
-  await expect(page.locator('.run-composer .attach')).toHaveCount(0);
-  await page.locator('.composer-box').dispatchEvent('submit');
+  await page.getByRole('link', { name: '新建任务' }).click();
+  await expect(page).toHaveURL(`/artigen/agent?projectId=${projectId}`);
+  fixture.state.run.status = 'running';
+  fixture.state.run.error = null;
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  const draft = page.getByRole('textbox', { name: '补充要求' });
+  await draft.fill('任务结束前写下、尚未发送的补充要求');
+  fixture.state.run.status = 'succeeded';
+  await page.reload();
+  await expect(draft).toBeDisabled();
+  await expect(draft).toHaveValue('任务结束前写下、尚未发送的补充要求');
+  await expect(page.getByRole('group', { name: '任务结束后的操作' })).toHaveCount(0);
   expect(fixture.state.inputs).toHaveLength(0);
 });
 
