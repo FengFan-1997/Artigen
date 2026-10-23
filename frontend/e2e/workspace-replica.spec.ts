@@ -63,6 +63,32 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   expect(errors).toEqual([]);
 });
 
+test('file tree separates folder disclosure from its icon and marks the active file', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await installWorkspaceFixture(page);
+  await page.goto(runPath);
+  await expect(page.locator('.run-conversation-stream')).toContainText('本轮重点');
+  await openBrief(page);
+
+  const tree = page.getByRole('complementary', { name: '文件目录' });
+  const folder = tree.getByRole('button', { name: 'docs', exact: true });
+  const file = tree.getByRole('button', { name: 'brief.md', exact: true });
+
+  await expect(folder).toHaveAttribute('aria-expanded', 'true');
+  await expect(folder.locator('.workspace-icon')).toHaveCount(2);
+  await expect(file).toHaveAttribute('aria-current', 'page');
+  await expect(file.locator('.file-tree-caret')).toBeEmpty();
+  await expect(file.locator('.file-tree-kind')).toBeVisible();
+  expect(await file.evaluate((element) => getComputedStyle(element).display)).toBe('grid');
+  const [activeIconColor, folderIconColor] = await Promise.all([
+    file.locator('.file-tree-kind').evaluate((element) => getComputedStyle(element).color),
+    folder.locator('.file-tree-kind').evaluate((element) => getComputedStyle(element).color)
+  ]);
+  expect(activeIconColor).not.toBe(folderIconColor);
+});
+
 test('Markdown table headings stay distinct in dark desktop and light mobile workspaces', async ({
   browser
 }) => {

@@ -5,20 +5,27 @@
         type="button"
         :class="{ selected: active === node.id }"
         :aria-expanded="node.directory ? expanded.has(node.id) : undefined"
+        :aria-current="!node.directory && active === node.id ? 'page' : undefined"
         @click="choose(node)"
       >
+        <span class="file-tree-caret" aria-hidden="true">
+          <WorkspaceIcon
+            v-if="node.directory"
+            :name="expanded.has(node.id) ? 'chevron-down' : 'chevron-right'"
+            :size="14"
+          />
+        </span>
         <WorkspaceIcon
+          class="file-tree-kind"
           :name="
             node.directory
-              ? expanded.has(node.id)
-                ? 'chevron-down'
-                : 'chevron-right'
+              ? 'folder'
               : node.mimeType?.startsWith('image/')
                 ? 'image'
                 : 'file'
           "
           :size="14"
-        /><span>{{ node.name }}</span>
+        /><span class="file-tree-name">{{ node.name }}</span>
       </button>
       <p v-if="errors[node.id]" role="status">{{ errors[node.id] }}</p>
       <WorkspaceFileTree
@@ -74,9 +81,10 @@ async function choose(node: TreeNode) {
   padding-left: 13px;
 }
 .file-tree button {
-  display: flex;
+  display: grid;
+  grid-template-columns: 12px 14px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   width: 100%;
   min-width: 0;
   min-height: 32px;
@@ -90,11 +98,26 @@ async function choose(node: TreeNode) {
   text-align: left;
   cursor: pointer;
 }
+.file-tree-caret {
+  display: grid;
+  width: 12px;
+  place-items: center;
+  color: var(--muted);
+}
+.file-tree-kind {
+  color: var(--muted);
+}
 .file-tree button:hover,
 .file-tree button.selected {
   background: var(--surface-hover);
 }
-.file-tree span {
+.file-tree button[aria-current='page'] {
+  font-weight: 600;
+}
+.file-tree button[aria-current='page'] .file-tree-kind {
+  color: var(--acid-text);
+}
+.file-tree-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
