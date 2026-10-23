@@ -1,9 +1,45 @@
 <template>
   <div class="pdf-document">
-    <div class="pdf-controls">
-      <button :disabled="pageNumber <= 1" @click="pageNumber--">上一页</button
-      ><span>{{ pageNumber }} / {{ count }}</span
-      ><button :disabled="pageNumber >= count" @click="pageNumber++">下一页</button>
+    <div class="pdf-controls" role="group" aria-label="PDF 页面导航">
+      <button
+        class="pdf-page-step"
+        type="button"
+        aria-label="上一页"
+        title="上一页"
+        :disabled="loading || Boolean(error) || pageNumber <= 1"
+        @click="pageNumber--"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 4-6 6 6 6" /></svg>
+      </button>
+      <output
+        class="pdf-page-counter"
+        :aria-label="
+          loading
+            ? '正在加载 PDF'
+            : error
+              ? 'PDF 预览不可用'
+              : `第 ${pageNumber} 页，共 ${count} 页`
+        "
+        aria-live="polite"
+      >
+        <template v-if="loading"><span class="pdf-loading">载入中</span></template>
+        <template v-else-if="error"><span class="pdf-loading">— / —</span></template>
+        <template v-else>
+          <strong>{{ pageNumber }}</strong
+          ><span>{{ ' / ' }}</span
+          ><span>{{ count }}</span>
+        </template>
+      </output>
+      <button
+        class="pdf-page-step"
+        type="button"
+        aria-label="下一页"
+        title="下一页"
+        :disabled="loading || Boolean(error) || pageNumber >= count"
+        @click="pageNumber++"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4 6 6-6 6" /></svg>
+      </button>
     </div>
     <p v-if="error" role="status">{{ error }}</p>
     <canvas ref="canvas"></canvas>
@@ -17,6 +53,7 @@ const canvas = ref<HTMLCanvasElement | null>(null);
 const pageNumber = ref(1);
 const count = ref(0);
 const error = ref('');
+const loading = ref(true);
 let doc: PDFDocumentProxy | null = null;
 let task: RenderTask | null = null;
 let active = true;
@@ -53,9 +90,13 @@ onMounted(async () => {
     }
     doc = loaded;
     count.value = doc.numPages;
+    loading.value = false;
     await render();
   } catch {
-    if (active) error.value = 'PDF 暂时无法预览，可下载后打开。';
+    if (active) {
+      loading.value = false;
+      error.value = 'PDF 暂时无法预览，可下载后打开。';
+    }
   }
 });
 watch(pageNumber, render);
@@ -74,18 +115,67 @@ onBeforeUnmount(() => {
 .pdf-controls {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 3px;
+  width: max-content;
+  margin: 0 auto 16px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
   font-size: 12px;
 }
-.pdf-controls button {
-  padding: 8px;
+.pdf-page-step {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
   border: 0;
   border-radius: 6px;
-  background: var(--surface);
   color: var(--text);
+  background: transparent;
   cursor: pointer;
+}
+.pdf-page-step:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+.pdf-page-step:focus-visible {
+  outline: 2px solid var(--acid-text);
+  outline-offset: 1px;
+}
+.pdf-page-step:disabled {
+  color: var(--muted);
+  opacity: 0.48;
+  cursor: default;
+}
+.pdf-page-step svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+.pdf-page-counter {
+  display: inline-flex;
+  min-width: 62px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0 8px;
+  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pdf-page-counter strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.pdf-loading {
+  font-size: 11px;
 }
 canvas {
   display: block;
@@ -95,5 +185,15 @@ canvas {
 }
 p {
   color: var(--muted);
+}
+@media (pointer: coarse) {
+  .pdf-page-step {
+    width: 44px;
+    height: 44px;
+  }
+  .pdf-page-counter {
+    height: 38px;
+    min-width: 70px;
+  }
 }
 </style>

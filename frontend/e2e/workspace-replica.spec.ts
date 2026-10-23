@@ -238,6 +238,56 @@ test('PDF preview uses the real PDF.js worker and releases its tab cleanly', asy
   await page.getByRole('button', { name: '关闭 report.pdf' }).click();
   await expect(page.locator('.pdf-document')).toHaveCount(0);
 });
+
+test('PDF page controls show the count, touch sizing and single-page bounds', async ({ page }) => {
+  await installWorkspaceFixture(page, page.viewportSize()!.width < 600 ? 'light' : 'dark');
+  await page.goto(runPath);
+  await resources(page);
+  const tree = page.getByRole('complementary', { name: '文件目录' });
+  await tree.getByRole('button', { name: 'docs', exact: true }).click();
+  await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+  const controls = page.getByRole('group', { name: 'PDF 页面导航' });
+  await expect(controls.locator('output')).toHaveText('1 / 1');
+  await expect(controls.getByRole('button', { name: '上一页' })).toBeDisabled();
+  await expect(controls.getByRole('button', { name: '下一页' })).toBeDisabled();
+  await expect(controls.locator('.pdf-page-step').first()).toHaveCSS(
+    'width',
+    page.viewportSize()!.width < 600 ? '44px' : '32px'
+  );
+  await expect(page.locator('.pdf-document canvas')).toBeVisible();
+
+  const gallery =
+    page.viewportSize()!.width >= 600 ? process.env.ARTIGEN_PDF_GALLERY_DIR : undefined;
+  if (gallery) {
+    await mkdir(`${gallery}/${process.env.ARTIGEN_PDF_GALLERY_SIDE || 'after'}`, {
+      recursive: true
+    });
+    await page.locator('.pdf-document').screenshot({
+      path: `${gallery}/${process.env.ARTIGEN_PDF_GALLERY_SIDE || 'after'}/pdf-page-controls.jpg`,
+      type: 'jpeg',
+      quality: 84
+    });
+  }
+});
+
+test('PDF preview failure does not present an invalid page count', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  await page.route('**/api/assets/80000000-0000-4000-8000-000000000005', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: 'not a PDF' })
+  );
+  await page.goto(runPath);
+  await resources(page);
+  const tree = page.getByRole('complementary', { name: '文件目录' });
+  await tree.getByRole('button', { name: 'docs', exact: true }).click();
+  await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+
+  const controls = page.getByRole('group', { name: 'PDF 页面导航' });
+  await expect(page.locator('p[role="status"]')).toContainText('PDF 暂时无法预览');
+  await expect(controls.locator('output')).toHaveAttribute('aria-label', 'PDF 预览不可用');
+  await expect(controls.locator('output')).toHaveText('— / —');
+  await expect(controls.getByRole('button', { name: '上一页' })).toBeDisabled();
+  await expect(controls.getByRole('button', { name: '下一页' })).toBeDisabled();
+});
 test('a stale candidate cannot be applied to a different file', async ({ page }) => {
   const { workspace } = await installWorkspaceFixture(page);
   Object.assign(workspace.files[2], { editTarget: { id: 'another-file', sha256: 'a'.repeat(64) } });
