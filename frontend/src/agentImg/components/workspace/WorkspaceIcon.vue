@@ -37,6 +37,8 @@
     <template v-else-if="name === 'stop'"><rect x="7" y="7" width="10" height="10" rx="1"/></template>
     <template v-else-if="name === 'pause'"><path d="M9 6v12M15 6v12"/></template>
     <template v-else-if="name === 'paper-plane'"><path d="m5 12 14-7-4 14-3-6zM12 13l7-8"/></template>
+    <template v-else-if="name === 'copy'"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></template>
+    <template v-else-if="name === 'check'"><path d="m5 12 4 4L19 6"/></template>
   </svg>
 </template>
 
@@ -46,7 +48,7 @@ type WorkspaceIconName =
   | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list'
   | 'subagents' | 'agent' | 'file' | 'attachment' | 'send' | 'refresh' | 'arrow-right'
   | 'chevron-right' | 'chevron-down' | 'trash' | 'download' | 'play' | 'stop' | 'pause'
-  | 'paper-plane' | 'git';
+  | 'paper-plane' | 'git' | 'copy' | 'check';
 
 withDefaults(defineProps<{
   name: WorkspaceIconName;

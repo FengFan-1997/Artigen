@@ -14,6 +14,16 @@
               minute: '2-digit'
             })
           }}</time>
+          <button
+            class="copy-message"
+            type="button"
+            :aria-label="copyLabel(row.message.id)"
+            :title="copyLabel(row.message.id)"
+            :disabled="copyState?.id === row.message.id && copyState.status === 'copying'"
+            @click="copyMessage(row.message)"
+          >
+            <WorkspaceIcon :name="copyState?.id === row.message.id && copyState.status === 'copied' ? 'check' : 'copy'" />
+          </button>
         </header>
         <WorkspaceMarkdown :text="row.message.text" :files="files" />
       </article>
@@ -25,6 +35,7 @@
         :subagents="subagents"
         @layout-change="$emit('layout-change')"
     /></template>
+    <span class="sr-only copy-announcement" aria-live="polite" aria-atomic="true">{{ copyAnnouncement }}</span>
   </div>
 </template>
 <script setup lang="ts">
@@ -32,6 +43,7 @@ import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch 
 import { getCurrentUserId } from '@/login/session';
 const WorkspaceMarkdown = defineAsyncComponent(() => import('./WorkspaceMarkdown.vue'));
 import AgentActivity from './AgentActivity.vue';
+import WorkspaceIcon from './WorkspaceIcon.vue';
 import { buildAgentActivity } from '../../utils/agentActivity';
 import {
   getRunMessages,
@@ -50,6 +62,10 @@ const props = defineProps<{
 const emit = defineEmits<{ 'layout-change': [] }>();
 const messages = ref<PublicMessage[]>([]);
 const error = ref(false);
+const copyState = ref<{ id: string; status: 'copying' | 'copied' | 'failed' } | null>(null);
+const copyAnnouncement = ref('');
+let copyRevision = 0;
+let copyTimer: number | null = null;
 let revision = 0;
 let running = false;
 let again = false;
@@ -77,6 +93,42 @@ const rows = computed<Row[]>(() => {
   }
   return grouped;
 });
+function copyLabel(messageId: string) {
+  const state = copyState.value;
+  if (state?.id !== messageId) return props.zh ? '复制消息' : 'Copy message';
+  if (state.status === 'copying') return props.zh ? '正在复制消息' : 'Copying message';
+  if (state.status === 'copied') return props.zh ? '已复制消息' : 'Message copied';
+  return props.zh ? '复制失败，请重试' : 'Copy failed; try again';
+}
+async function copyMessage(message: PublicMessage) {
+  const request = ++copyRevision;
+  if (copyTimer !== null) window.clearTimeout(copyTimer);
+  copyTimer = null;
+  copyState.value = { id: message.id, status: 'copying' };
+  try {
+    await navigator.clipboard.writeText(message.text);
+    if (request !== copyRevision) return;
+    copyState.value = { id: message.id, status: 'copied' };
+    copyAnnouncement.value = props.zh ? '消息已复制' : 'Message copied';
+  } catch {
+    if (request !== copyRevision) return;
+    copyState.value = { id: message.id, status: 'failed' };
+    copyAnnouncement.value = props.zh ? '复制失败，请检查剪贴板权限后重试' : 'Copy failed. Check clipboard access and try again.';
+  }
+  copyTimer = window.setTimeout(() => {
+    if (request !== copyRevision) return;
+    copyState.value = null;
+    copyAnnouncement.value = '';
+    copyTimer = null;
+  }, 1800);
+}
+function clearCopyState() {
+  copyRevision++;
+  if (copyTimer !== null) window.clearTimeout(copyTimer);
+  copyTimer = null;
+  copyState.value = null;
+  copyAnnouncement.value = '';
+}
 async function load() {
   if (running) {
     again = true;
@@ -112,6 +164,7 @@ watch(
   () => props.runId,
   () => {
     revision++;
+    clearCopyState();
     messages.value = [];
     error.value = false;
     void load();
@@ -127,6 +180,7 @@ watch(
 );
 const onAuth = () => {
   revision++;
+  clearCopyState();
   messages.value = [];
   error.value = false;
   void load();
@@ -134,6 +188,7 @@ const onAuth = () => {
 onMounted(() => window.addEventListener('app-auth-changed', onAuth));
 onBeforeUnmount(() => {
   window.removeEventListener('app-auth-changed', onAuth);
+  clearCopyState();
   revision++;
   again = false;
 });
@@ -154,6 +209,43 @@ onBeforeUnmount(() => {
 .timeline-message header > span {
   color: var(--text);
   font-weight: 600;
+}
+.copy-message {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  margin-inline-start: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
+}
+.timeline-message:hover .copy-message,
+.copy-message:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.copy-message:hover { color: var(--text); background: var(--surface-hover); }
+.copy-message:focus:not(:focus-visible) { outline: none; }
+.copy-message:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.copy-message:disabled { cursor: progress; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .timeline-message.user {
   margin-left: auto;
@@ -182,5 +274,14 @@ onBeforeUnmount(() => {
   .timeline-message button {
     min-height: 44px;
   }
+  .copy-message {
+    width: 44px;
+    height: 44px;
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-message { transition: none; }
 }
 </style>

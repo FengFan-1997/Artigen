@@ -120,6 +120,60 @@ test('Markdown table headings stay distinct in dark desktop and light mobile wor
   }
 });
 
+test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
+  await installWorkspaceFixture(page);
+  await page.goto(runPath);
+  const messages = page.locator('.run-conversation-stream .timeline-message.assistant');
+  await expect(messages).toHaveCount(2);
+  const copy = page.getByRole('button', { name: '复制消息' }).nth(1);
+  await copy.focus();
+  await expect(copy).toBeFocused();
+  await expect.poll(() => copy.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as Window & { copiedMessage?: string }).copiedMessage = text;
+        }
+      }
+    });
+  });
+  await copy.click();
+  await expect(page.locator('.copy-announcement')).toHaveText('消息已复制');
+  expect(await page.evaluate(() => (window as Window & { copiedMessage?: string }).copiedMessage)).toBe(
+    '已整理初稿。可以在右侧阅读 [审查报告](brief.md)，查看源码或对比下一版。\n\n| 优先级 | 问题 |\n| --- | --- |\n| P1 | 登录后恢复当前任务 |\n| P2 | 主按钮层级不清晰 |'
+  );
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('clipboard denied'); } }
+    });
+  });
+  await copy.click();
+  await expect(page.locator('.copy-announcement')).toHaveText(
+    '复制失败，请检查剪贴板权限后重试'
+  );
+
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true
+  });
+  const mobilePage = await mobileContext.newPage();
+  await installWorkspaceFixture(mobilePage, 'light');
+  await mobilePage.goto(runPath);
+  const mobileCopy = mobilePage.getByRole('button', { name: '复制消息' }).first();
+  await expect(mobileCopy).toBeVisible();
+  const target = await mobileCopy.boundingBox();
+  expect(target?.width).toBeGreaterThanOrEqual(44);
+  expect(target?.height).toBeGreaterThanOrEqual(44);
+  await expect.poll(() => mobileCopy.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+  await mobileContext.close();
+});
+
 test('project new chats keep project scope and account changes remove private messages', async ({
   page
 }) => {
