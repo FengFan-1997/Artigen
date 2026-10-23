@@ -352,3 +352,10 @@ Chrome目录由用户主动选择，按需展开；目录连接不上传。账�
 - 系统 Chrome 回归覆盖 1440px 深色桌面和 390px 浅色手机；断言表头与内容行背景有可见区分、文字对比度不低于 4.5:1，页面不产生横向溢出。原项目树、文件保存/冲突、候选差异及只读 GitHub 工作流回归通过。
 - 目标 ESLint、Prettier、前端 type-check、Vite production build 与 `git diff --check` 通过。构建仅有既有 empty echarts 和大 chunk 提示。
 - 同视图改前/改后截图保存在本机 `Artigen-agent-chrome-polish/artigen-markdown-table-20261023`；均为真实本地 Vue 页面和合成工作区数据，不代表 DEV 或生产验收。本轮未部署、push、创建 PR 或合并。
+
+## 2026-10-23 命令面板键盘选择精修（本地候选，未部署）
+
+- Agent 工作区命令面板现在使用可访问的 combobox/listbox 选择模型。首项默认选中，方向键循环浏览，鼠标悬停同步当前项，Enter 执行；筛选变化重置首项，无匹配项时显示空状态。Escape 仍恢复打开前焦点。
+- 选中行使用主题 raised surface，快捷键采用紧凑按键样式；没有快捷键的操作不渲染空按键。深浅主题维持各自边界与文字对比。
+- 系统 Chrome 工作区回归 22 项通过。新增命令面板断言覆盖焦点恢复、键盘循环、鼠标同步、筛选重置、空结果、Enter 导航、浅色对比度和 390px 边界/横向溢出；前端 type-check 与目标 ESLint 通过。
+- 改前/改后截图保存在本机 `Artigen-agent-chrome-polish/artigen-command-palette-keyboard-20261023`。截图来自真实本地 Vue 页面和合成 API 数据，不代表 DEV 或生产验收；本轮未部署、push、创建 PR 或合并。

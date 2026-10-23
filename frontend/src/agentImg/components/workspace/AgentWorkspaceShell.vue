@@ -213,15 +213,40 @@
         <label>
           <WorkspaceIcon name="search" :size="18" />
           <span class="sr-only">{{ zh ? '搜索页面或动作' : 'Search pages or actions' }}</span>
-          <input ref="commandInput" v-model="commandQuery" name="workspace-command" type="search" autocomplete="off" :aria-label="zh ? '搜索页面或动作' : 'Search pages or actions'" :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'" />
+          <input
+            ref="commandInput"
+            v-model="commandQuery"
+            name="workspace-command"
+            type="search"
+            role="combobox"
+            autocomplete="off"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            aria-controls="workspace-command-options"
+            :aria-activedescendant="activeCommand ? `workspace-command-${activeCommand.id}` : undefined"
+            :aria-label="zh ? '搜索页面或动作' : 'Search pages or actions'"
+            :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'"
+            @keydown="onCommandInputKeydown"
+          />
           <kbd aria-hidden="true">Esc</kbd>
         </label>
-        <div>
-          <button v-for="command in filteredCommands" :key="command.id" type="button" @click="runCommand(command)">
+        <div id="workspace-command-options" role="listbox" :aria-label="zh ? '可用操作' : 'Available actions'">
+          <button
+            v-for="(command, index) in filteredCommands"
+            :id="`workspace-command-${command.id}`"
+            :key="command.id"
+            type="button"
+            role="option"
+            tabindex="-1"
+            :aria-selected="index === activeCommandIndex"
+            @mouseenter="activeCommandIndex = index"
+            @click="runCommand(command)"
+          >
             <span><b>{{ command.label }}</b><small>{{ command.hint }}</small></span>
-            <kbd>{{ command.shortcut }}</kbd>
+            <kbd v-if="command.shortcut">{{ command.shortcut }}</kbd>
           </button>
         </div>
+        <p v-if="!filteredCommands.length" class="command-empty" role="status">{{ zh ? '没有匹配的操作' : 'No matching actions' }}</p>
       </section>
     </div>
   </div>
@@ -324,6 +349,7 @@ const theme = ref<ThemeMode>('dark');
 const systemDark = ref(true);
 const commandOpen = ref(false);
 const commandQuery = ref('');
+const activeCommandIndex = ref(0);
 const overlayLayout = ref(false);
 const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 const creditCaption = computed(() => props.creditCaption || (props.zh ? '点数与用量' : 'Credits & usage'));
@@ -376,6 +402,8 @@ const filteredCommands = computed(() => {
     ? commands.value.filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(query))
     : commands.value;
 });
+const activeCommand = computed(() => filteredCommands.value[activeCommandIndex.value] ?? null);
+watch(commandQuery, () => { activeCommandIndex.value = 0; });
 
 const emptyInspectorLabel = (id: InspectorTab) => ({
   environment: props.zh ? '等待环境信息' : 'Waiting for environment',
@@ -492,6 +520,7 @@ const openCommandPalette = async () => {
     : null;
   commandOpen.value = true;
   commandQuery.value = '';
+  activeCommandIndex.value = 0;
   await nextTick();
   commandInput.value?.focus();
 };
@@ -502,6 +531,17 @@ const closeCommandPalette = () => {
   if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
 };
 const runCommand = (command: { action: () => void }) => { closeCommandPalette(); command.action(); };
+const onCommandInputKeydown = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  const count = filteredCommands.value.length;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (count) activeCommandIndex.value = (activeCommandIndex.value + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+  } else if (event.key === 'Enter' && activeCommand.value) {
+    event.preventDefault();
+    runCommand(activeCommand.value);
+  }
+};
 const trapFocus = (panel: HTMLElement | null, event: KeyboardEvent) => {
   if (event.key !== 'Tab' || !panel) return;
   const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button,a[href],input:not([type="hidden"]),select,textarea,summary,[tabindex]'))
@@ -730,13 +770,18 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .empty-panel b { font-size: var(--font-control); font-weight: 620; }.empty-panel small { max-width: 190px; color: var(--muted-2); font-size: var(--font-meta); line-height: 1.5; }
 .drawer-scrim { display: none; }
 .command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
-.command-palette { display:flex; flex-direction:column; max-height:calc(85dvh - 16px); width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
+.command-palette { display:flex; flex-direction:column; max-height:calc(85dvh - 16px); width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
 .command-palette > label { flex:none; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
 .command-palette > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
 .command-palette > label svg { width: 18px; height: 18px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
+.command-palette > label { border-bottom: 1px solid var(--border); }
 .command-palette > div { min-height:0; max-height: 320px; overflow: auto; padding: 6px; }
-.command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
-.command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
+.command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; color: var(--text); text-align: left; background: transparent; cursor: pointer; }
+.command-palette button:hover,.command-palette button[aria-selected="true"] { background: var(--surface-raised); }
+.command-palette button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
+.command-palette kbd { display: inline-flex; min-width: 22px; min-height: 22px; align-items: center; justify-content: center; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); }
+.command-empty { margin: 0; padding: 15px; color: var(--muted); font-size: var(--font-control); text-align: center; }
 .mobile-only,.mobile-panel-controls,.workspace-account .mobile-only { display: none; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
 @media (max-width: 1439px) {
