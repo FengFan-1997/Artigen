@@ -345,3 +345,10 @@ Chrome目录由用户主动选择，按需展开；目录连接不上传。账�
 - 加载中不显示 `1 / 0`，预览失败时显示 `— / —` 并禁用翻页，避免无效页码状态看起来可操作。原有 PDF.js 加载、绘制和清理生命周期未改变。
 - 回归验证：系统 Chrome 下 PDF.js 渲染/关闭、页码状态及失败状态共 6 项通过，覆盖 1440px 深色桌面和 390px 浅色触屏；目标 ESLint、Prettier、`vue-tsc -b` 通过。测试文件为合成 PDF 与工作区 API 数据，不代表 DEV 或真实用户数据。
 - 改前/改后截图保存在本机 `Artigen-agent-chrome-polish/artigen-pdf-navigation-polish-20261023`，两张均为真实本地 Vue 页面截图；本轮没有部署、push、创建 PR 或合并。
+
+## 2026-10-23 Markdown 表格预览层级精修（本地候选，未部署）
+
+- Markdown 预览表格的表头现在使用主题中性的 raised surface 和加重字重，数据行保留轻分隔线，最后一行去掉多余尾线；没有增加外框或卡片层级，沿用现有横向滚动和明暗主题。
+- 系统 Chrome 回归覆盖 1440px 深色桌面和 390px 浅色手机；断言表头与内容行背景有可见区分、文字对比度不低于 4.5:1，页面不产生横向溢出。原项目树、文件保存/冲突、候选差异及只读 GitHub 工作流回归通过。
+- 目标 ESLint、Prettier、前端 type-check、Vite production build 与 `git diff --check` 通过。构建仅有既有 empty echarts 和大 chunk 提示。
+- 同视图改前/改后截图保存在本机 `Artigen-agent-chrome-polish/artigen-markdown-table-20261023`；均为真实本地 Vue 页面和合成工作区数据，不代表 DEV 或生产验收。本轮未部署、push、创建 PR 或合并。

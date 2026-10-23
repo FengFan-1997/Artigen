@@ -63,6 +63,63 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   expect(errors).toEqual([]);
 });
 
+test('Markdown table headings stay distinct in dark desktop and light mobile workspaces', async ({
+  browser
+}) => {
+  for (const [theme, viewport] of [
+    ['dark', { width: 1440, height: 960 }],
+    ['light', { width: 390, height: 844 }]
+  ] as const) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    const fixture = await installWorkspaceFixture(page, theme);
+    await page.goto(runPath);
+    await fixture.emit();
+    await openBrief(page);
+
+    const table = page.locator('.document-preview .workspace-markdown table');
+    const heading = table.locator('thead th').first();
+    const cell = table.locator('tbody td').first();
+    await expect(heading).toBeVisible();
+    const styles = await heading.evaluate((element) => {
+      const foreground = getComputedStyle(element).color;
+      const background = getComputedStyle(element).backgroundColor;
+      const bodyBackground = getComputedStyle(
+        element.closest('table')!.querySelector('tbody td')!
+      ).backgroundColor;
+      const luminance = (color: string) => {
+        const [r, g, b] = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((value) => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const foregroundLuminance = luminance(foreground);
+      const backgroundLuminance = luminance(background);
+      return {
+        background,
+        bodyBackground,
+        fontWeight: Number(getComputedStyle(element).fontWeight),
+        contrast:
+          (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+          (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+      };
+    });
+    expect(styles.background).not.toBe(styles.bodyBackground);
+    expect(styles.fontWeight).toBeGreaterThanOrEqual(600);
+    expect(styles.contrast).toBeGreaterThanOrEqual(4.5);
+    await expect(cell).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true
+    );
+    await context.close();
+  }
+});
+
 test('project new chats keep project scope and account changes remove private messages', async ({
   page
 }) => {

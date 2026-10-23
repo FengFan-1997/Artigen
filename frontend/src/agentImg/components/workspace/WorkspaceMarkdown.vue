@@ -103,12 +103,20 @@ const openResource = (event: MouseEvent) => {
   font-size: 13px;
 }
 .workspace-markdown :deep(:is(td, th)) {
-  min-width:10ch;
-  overflow-wrap:normal;
-  word-break:normal;
-  padding: 8px 12px;
+  min-width: 10ch;
+  overflow-wrap: normal;
+  word-break: normal;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;
+}
+.workspace-markdown :deep(thead th) {
+  color: var(--text);
+  background: var(--surface-hover);
+  font-weight: 650;
+}
+.workspace-markdown :deep(tbody tr:last-child td) {
+  border-bottom: 0;
 }
 .workspace-markdown :deep(blockquote) {
   margin: 14px 0;
