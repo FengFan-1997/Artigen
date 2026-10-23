@@ -184,6 +184,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 | Command palette | Not mounted | Dialog focuses search and traps Tab | Escape closes and returns focus | `role=dialog`, labelled search, no background focus |
 | Website preview | Not mounted | Dialog focuses close affordance and traps Tab | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
 | Run controls | Pause, resume, retry, stop reflect the current status | Busy state disables duplicate submissions | Stop requires a second explicit activation | Status and failure text are announced through live regions |
+| Tool receipt rows | Timestamp, event summary and receipt ID stay in one aligned row | Long summaries wrap only in their own column | Receipt ID remains visible at mobile widths | IDs and timestamps use secondary tabular typography |
 | Terminal Run actions | Completed, failed, and cancelled runs replace the disabled composer with a compact status and a clear next task link | Project context carries into the next task; active Run input and unread-update controls remain available only in their applicable states | The saved run stays readable and its status is not inferred from color alone |
 | Reduced motion | — | No looping or positional animation | — | All state changes remain understandable from text and color |
 

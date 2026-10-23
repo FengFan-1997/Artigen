@@ -276,6 +276,37 @@ test('twenty correlated calls become twenty records, not forty chat messages, wh
   await expect(page.locator('.audit-details article')).toHaveCount(events.length);
 });
 
+test('tool receipt timestamps and event IDs stay aligned on mobile', async ({ page }) => {
+  const fixture = await installAgentInputFixture(page, { theme: 'dark' });
+  const project = test.info().project.name;
+  await page.setViewportSize(
+    project.startsWith('chromium-mobile-')
+      ? { width: project === 'chromium-mobile-360' ? 360 : 390, height: 844 }
+      : { width: 1440, height: 960 }
+  );
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  await fixture.emit(activityEvents(4));
+  await page.locator('.agent-activity > summary').click();
+  const firstCall = page.locator('.tool-call').first();
+  await firstCall.locator('> summary').click();
+  const event = firstCall.locator('.call-event').first();
+  await expect(event.locator('time')).toHaveText('11:00:01');
+  await expect(event.locator('small')).toHaveText('#2');
+  const [rowBox, timeBox, summaryBox, idBox] = await Promise.all([
+    event.boundingBox(),
+    event.locator('time').boundingBox(),
+    event.locator('span').boundingBox(),
+    event.locator('small').boundingBox()
+  ]);
+  expect(rowBox && timeBox && summaryBox && idBox).toBeTruthy();
+  expect(Math.abs(timeBox!.y - idBox!.y)).toBeLessThan(2);
+  expect(idBox!.x).toBeGreaterThan(summaryBox!.x);
+  expect(idBox!.x + idBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width + 1);
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+    .toBe(true);
+});
+
 test('unknown receipts remain unconfirmed and private payload fields never enter the UI', async ({
   page
 }) => {
