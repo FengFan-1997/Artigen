@@ -139,20 +139,10 @@
             <template v-if="active?.text !== undefined"
               ><header>
                 <b>{{ filename(active.file.path) }}</b
-                ><span class="added">+{{ statistics.added }}</span
-                ><span class="removed">−{{ statistics.removed }}</span>
+                ><template v-if="hasChanges"><span class="added">+{{ statistics.added }}</span
+                ><span class="removed">−{{ statistics.removed }}</span></template>
               </header>
-              <p>
-                {{
-                  proposal
-                    ? zh
-                      ? 'Agent 候选修改，尚未写入文件。'
-                      : 'Agent proposal; not yet applied.'
-                    : zh
-                      ? '当前编辑与打开时版本的差异。'
-                      : 'Current edits compared with the opened version.'
-                }}
-              </p>
+              <p>{{ comparisonDescription }}</p>
               <label v-if="candidateFiles.length"
                 >{{ zh ? '选择 Agent 候选文件' : 'Choose an Agent candidate'
                 }}<select
@@ -165,8 +155,8 @@
                   </option>
                 </select></label
               >
-              <div class="change-actions">
-                <button v-if="proposal" :disabled="saving" @click="applyProposal">
+              <div v-if="hasChanges || active.undo !== undefined" class="change-actions">
+                <button v-if="proposal && hasChanges" :disabled="saving" @click="applyProposal">
                   {{ zh ? '应用到当前文件' : 'Apply to current file' }}</button
                 ><button v-if="active.undo !== undefined" :disabled="saving" @click="undoApply">
                   {{ zh ? '撤销最近一次应用' : 'Undo last application' }}</button
@@ -175,6 +165,7 @@
                 </button>
               </div>
               <WorkspaceEditor
+                v-if="hasChanges"
                 :key="active.key + ':diff:' + String(proposal?.candidateId || '')"
                 :model-value="proposal?.text ?? active.text"
                 :compare-to="active.baseline"
@@ -182,6 +173,13 @@
                 :readonly="true"
                 :label="zh ? '文件差异' : 'File differences'"
               />
+              <div v-else class="changes-empty" role="status">
+                <WorkspaceIcon name="git" :size="20" />
+                <div>
+                  <h2>{{ zh ? '两份内容一致' : 'Contents are identical' }}</h2>
+                  <p>{{ zh ? '可继续编辑文件，或选择其他版本进行比较。' : 'Continue editing the file or choose another version to compare.' }}</p>
+                </div>
+              </div>
             </template>
             <div v-else class="resource-empty">
               <WorkspaceIcon name="git" :size="20" />
@@ -565,6 +563,13 @@ let observer: ResizeObserver | null = null;
 const project = computed(() => props.projectId || '');
 const scope = () => JSON.stringify([owner.value, project.value]);
 const active = computed(() => documents.value.find((d) => d.key === activeKey.value));
+const hasChanges = computed(() => active.value?.text !== undefined && (proposal.value?.text ?? active.value.text) !== active.value.baseline);
+const comparisonDescription = computed(() => {
+  const version = proposal.value?.candidateId.startsWith('version:') ? proposal.value.candidateId.slice(8) : '';
+  if (version) return props.zh ? `历史版本 v${version} 与打开时版本的比较。` : `Version v${version} compared with the opened version.`;
+  if (proposal.value) return props.zh ? 'Agent 候选内容，尚未写入文件。' : 'Agent proposal; not yet applied.';
+  return props.zh ? '当前编辑与打开时版本的比较。' : 'Current edits compared with the opened version.';
+});
 const projectNodes = computed(() =>
   cloudTree(files.value.filter((f) => f.path.toLowerCase().includes(search.value.toLowerCase())))
 );
@@ -1184,7 +1189,7 @@ async function chooseProposal(id: string) {
 async function applyProposal() {
   const doc = active.value;
   const pending = proposal.value;
-  if (!doc || !pending || saving.value) return;
+  if (!doc || !pending || saving.value || pending.text === doc.baseline) return;
   if (dirty(doc) || pending.baseHash !== doc.baselineHash) {
     notice.value = props.zh
       ? '文件已改变，请先保存并重新查看候选差异。'
@@ -1974,6 +1979,11 @@ button:disabled {
 .changes-panel > .workspace-code-editor {
   flex: 1 0 180px;
 }
+.changes-empty { display: flex; flex: 1; min-height: 160px; gap: 10px; align-items: flex-start; padding: 28px 16px; color: var(--muted); }
+.changes-empty > div { min-width: 0; max-width: 400px; }
+.changes-empty > .workspace-icon { margin-top: 1px; }
+.changes-empty h2 { margin: 0; font-size: 15px; font-weight: 500; line-height: 1.5; color: var(--text); }
+.changes-empty p { margin: 6px 0 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .change-actions {
   flex-wrap: wrap;
   display: flex;
