@@ -80,7 +80,8 @@
         </section>
         <article class="message user-message workspace-user-bubble">
           <header><span>{{ zh ? '你' : 'You' }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
-          <p>{{ run.objective }}</p>
+          <p :id="objectiveTextId" ref="objectiveText" class="objective-text" :class="{ 'objective-expanded': objectiveExpanded }" :style="{ '--objective-preview-lines': objectivePreviewLines }">{{ run.objective }}</p>
+          <button v-if="objectiveOverflow" class="objective-toggle" type="button" :aria-expanded="objectiveExpanded" :aria-controls="objectiveTextId" @click="toggleObjective">{{ objectiveExpanded ? (zh ? '收起' : 'Show less') : (zh ? '显示更多' : 'Show more') }}<WorkspaceIcon name="chevron-down" :size="16" /></button>
         </article>
 
         <article class="message agent-message">
@@ -329,7 +330,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import RFB from '@novnc/novnc/lib/rfb';
 import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -369,6 +370,31 @@ const { currentLang } = storeToRefs(languageStore);
 const zh = computed(() => currentLang.value === 'zh');
 const runId = computed(() => String(route.params.runId || ''));
 const run = ref<AgentRun | null>(null);
+const objectivePreviewLines = 5;
+const objectiveTextId = `run-objective-${useId()}`;
+const objectiveText = ref<HTMLElement | null>(null);
+const objectiveExpanded = ref(false);
+const objectiveOverflow = ref(false);
+let objectiveObserver: ResizeObserver | null = null;
+watch([objectiveText, () => run.value?.objective], ([element]) => {
+  objectiveObserver?.disconnect();
+  objectiveExpanded.value = false;
+  objectiveOverflow.value = false;
+  if (!element) return;
+  objectiveObserver ||= new ResizeObserver(() => {
+    const text = objectiveText.value;
+    if (text) objectiveOverflow.value = text.scrollHeight > parseFloat(getComputedStyle(text).lineHeight) * objectivePreviewLines + 1;
+  });
+  objectiveObserver.observe(element);
+}, { flush: 'post' });
+async function toggleObjective(event: MouseEvent) {
+  const button = event.currentTarget as HTMLButtonElement;
+  objectiveExpanded.value = !objectiveExpanded.value;
+  if (!objectiveExpanded.value) {
+    await nextTick();
+    if (button.isConnected) button.scrollIntoView({ block: 'nearest' });
+  }
+}
 const loadingRun = ref(true);
 const loadError = ref('');
 const loadErrorKind = ref<'auth' | 'not-found' | 'unavailable' | null>(null);
@@ -1045,6 +1071,7 @@ onMounted(async () => {
   }, 5000);
 });
 onBeforeUnmount(() => {
+  objectiveObserver?.disconnect();
   disposed = true;
   loadRevision += 1;
   window.removeEventListener('app-auth-changed', resetSelectedRun);
@@ -1090,6 +1117,14 @@ onBeforeUnmount(() => {
 .user-message { margin-left: auto; }
 .user-message header { justify-content: flex-end; }
 .user-message p { color: var(--text); }
+.objective-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--objective-preview-lines); overflow: hidden; }
+.objective-text.objective-expanded { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.objective-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; margin-top: 8px; padding: 6px 8px; border: 0; border-radius: 6px; color: var(--text); background: transparent; font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
+.objective-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.objective-toggle[aria-expanded="true"] .workspace-icon { transform: rotate(180deg); }
+@media (hover: hover) and (pointer: fine) { .objective-toggle:hover { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .objective-toggle { min-height: 44px; } }
+
 .agent-message, .event-message { display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
 .agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--text); border: 0; border-radius: 9px; background: var(--surface-raised); font-size: 12px; font-weight: 720; }
 .event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }

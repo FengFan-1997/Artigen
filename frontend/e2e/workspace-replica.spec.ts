@@ -2298,3 +2298,48 @@ for (const language of ['zh', 'en']) {
     expect(fixture.state.inputs).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`long run objectives expand without truncating text or clearing drafts ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const objective = '请保留完整任务原文与文件来源，检查移动端购买流程、费用和审批边界。\n'.repeat(14);
+    fixture.state.run.objective = objective;
+    await page.addInitScript(() => localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, theme: 'dark', rightCollapsed: true })));
+    await page.goto(runPath);
+    await expect(page.locator('.run-conversation-stream')).toContainText('本轮重点');
+    const bubble = page.locator('.conversation-scroll > .user-message');
+    const text = bubble.locator('p'); const toggle = bubble.getByRole('button');
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留下一条未发送的意见');
+    await expect(toggle).toHaveText(zh ? '显示更多' : 'Show more');
+    const controlled = await toggle.getAttribute('aria-controls'); expect(controlled).toBe(await text.getAttribute('id'));
+    await toggle.focus(); await toggle.press('Enter');
+    await expect(toggle).toHaveText(zh ? '收起' : 'Show less'); await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(text).toHaveText(objective);
+    expect(await text.evaluate(el => el.textContent)).toBe(objective);
+    fixture.state.run.budget.used = 13;
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9800', type: 'context.compacted', summary: '保持当前任务上下文', createdAt: '2026-10-15T03:05:00Z' }]);
+    await expect(page.locator('.workspace-topbar')).toContainText('13.0 / 50');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await page.evaluate(() => window.dispatchEvent(new Event('app-auth-changed')));
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.focus(); await toggle.press('Enter');
+    await toggle.press('Space'); await expect(toggle).toHaveAttribute('aria-expanded', 'false'); await expect(toggle).toBeFocused(); await expect(toggle).toBeInViewport();
+    await expect(draft).toHaveValue('保留下一条未发送的意见');
+    // Actual text updates and viewport changes are observed; no character-count cutoff.
+    fixture.state.run.objective = '保留原文。'.repeat(24);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9801', type: 'context.compacted', summary: '读取更新后的任务原文', createdAt: '2026-10-15T03:06:00Z' }]);
+    await expect(text).toHaveText(fixture.state.run.objective);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(toggle).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fixture.state.run.objective = '短任务。';
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9802', type: 'context.compacted', summary: '保留简短任务', createdAt: '2026-10-15T03:07:00Z' }]);
+    await expect(text).toHaveText('短任务。'); await expect(toggle).toHaveCount(0);
+    expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
