@@ -1112,7 +1112,8 @@ onBeforeUnmount(() => {
 .run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 0; border-radius: 7px; background: var(--surface); font-size: 12px; }
 .run-controls .primary-control { color: var(--acid-ink); background: var(--acid); }
 .run-controls .danger-control { color: var(--danger); }
-.run-controls .danger-control.armed { color: #fff; background: var(--danger); }
+.run-controls .danger-control.armed { width: auto; min-width: 44px; gap: 6px; padding: 0 10px; color: var(--bg); background: var(--danger); font-size: 12px; white-space: nowrap; }
+.run-controls .danger-control.armed span { display: inline; }
 .history-group { padding: 4px 8px 16px; }
 .history-label { padding: 5px 8px 8px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }

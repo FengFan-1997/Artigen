@@ -414,6 +414,60 @@ test('run plan reads as a numbered checklist with aligned markers and a completi
   }
 });
 
+test('stop confirmation stays explicit and readable without submitting before confirmation', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 360, height: 800 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const fixture = await installWorkspaceFixture(page, theme);
+      let cancellations = 0;
+      await page.route(`**/api/agent-runs/${inputRunId}/cancel`, (route) => {
+        expect(route.request().method()).toBe('POST');
+        cancellations++;
+        fixture.state.run.status = 'cancelled';
+        return route.fulfill({ json: { ok: true, run: fixture.state.run } });
+      });
+      await page.goto(runPath);
+      await page.getByRole('button', { name: '停止', exact: true }).click();
+      const confirm = page.getByRole('button', { name: '确认停止', exact: true });
+      await expect(confirm).toBeVisible();
+      expect(cancellations).toBe(0);
+      await expect(page.locator('.run-notice')).toContainText('再次点击确认停止');
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_STOP_CONFIRM_CAPTURE && viewport.width !== 360) await page.screenshot({ path: `${process.env.ARTIGEN_STOP_CONFIRM_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(await confirm.locator('span').isVisible(), `${theme} ${viewport.width}px confirmation must use visible words`).toBe(true);
+      const contrast = await confirm.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const luminance = (color: string) => {
+          const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map((value) => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        };
+        const foreground = luminance(style.color), background = luminance(style.backgroundColor);
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+      expect.soft(contrast, `${theme} ${viewport.width}px confirm text contrast`).toBeGreaterThanOrEqual(4.5);
+      expect(await confirm.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })).toBe(true);
+      if (viewport.width < 800) {
+        const rect = await confirm.boundingBox();
+        expect(rect!.height).toBeGreaterThanOrEqual(44);
+        expect(rect!.width).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await confirm.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.run-ended-bar')).toContainText('任务已停止');
+      expect(cancellations).toBe(1);
+      await context.close();
+    }
+  }
+});
+
 test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
   await installWorkspaceFixture(page);
   await page.goto(runPath);
