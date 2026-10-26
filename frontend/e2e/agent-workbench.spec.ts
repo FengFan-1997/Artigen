@@ -772,6 +772,104 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await expect(page.locator('.runtime-pill')).toContainText('执行中');
 });
 
+test('run delivery labels are clear in the Files inspector and final response', async ({ page }, testInfo) => {
+  const deliveryRun = structuredClone(baseRun) as typeof baseRun;
+  deliveryRun.status = 'failed';
+  deliveryRun.subagents = [];
+  const artifact = deliveryRun.artifacts[0];
+  deliveryRun.artifacts = [
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111101', filename: 'brand-report.pdf', mimeType: 'application/pdf', byteSize: 245760, version: 1, verificationStatus: 'passed' },
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111102', filename: 'menu.csv', mimeType: 'text/csv', byteSize: 381, version: 2, verificationStatus: 'pending' },
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111103', filename: 'launch-notes.md', mimeType: 'text/markdown', byteSize: 1275, version: 1, verificationStatus: 'failed' }
+  ];
+
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('delivery-language-initialized')) {
+      localStorage.setItem('app_lang', 'zh');
+      sessionStorage.setItem('delivery-language-initialized', '1');
+    }
+    localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode: 'task', theme: 'dark' }));
+  });
+  await installRunApi(page, { run: deliveryRun });
+  await page.route('**/api/workspace/navigation', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, projects: [], sessions: [], nextCursor: null }) }));
+  await page.route(`**/api/agent-runs/${runId}/messages*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, messages: [], nextCursor: null }) }));
+  if (testInfo.project.name.includes('mobile-390')) await page.setViewportSize({ width: 390, height: 844 });
+  else await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.locator('.delivery-summary')).toBeVisible();
+  await page.locator('.conversation-scroll').evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  if (testInfo.project.name.includes('mobile-')) await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+
+  const statusLabels = page.locator('.file-list em');
+  await expect(statusLabels).toHaveText(['验证通过', '待验证', '验证失败']);
+  await expect(page.locator('.delivery-summary .artifact-verification')).toHaveText(['验证通过', '待验证', '验证失败']);
+  await expect(page.locator('.file-list a > span')).toHaveText(['PDF', 'CSV', 'MD']);
+  await expect(page.locator('.delivery-summary a > span')).toHaveText(['PDF', 'CSV', 'MD']);
+  await expect(page.locator('#workspace-panel-files')).toContainText('交付文件');
+  await expect(page.locator('#workspace-panel-files')).not.toContainText(/passed|pending|failed/);
+  await expect(page.locator('.delivery-summary')).not.toContainText(/passed|pending|failed/);
+  const badgeGeometry = await page.locator('.artifact-verification').evaluateAll((badges) => badges.map((badge) => ({
+    width: badge.getBoundingClientRect().width,
+    parentWidth: badge.parentElement?.getBoundingClientRect().width || 0,
+    justifySelf: getComputedStyle(badge).justifySelf
+  })));
+  expect(badgeGeometry.every((badge) => badge.width < badge.parentWidth * 0.5 && badge.justifySelf === 'start')).toBe(true);
+
+  const contrastRatios = async () => page.locator('.artifact-verification').evaluateAll((badges) => {
+    const channels = (value: string) => (value.match(/[\d.]+/g) || []).map(Number);
+    const rgb = (value: string) => {
+      const color = channels(value).slice(0, 3);
+      return value.startsWith('color(srgb') ? color.map((channel) => channel * 255) : color;
+    };
+    const luminance = (value: string) => {
+      const [red, green, blue] = rgb(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+    };
+    return badges.map((badge) => {
+      let ancestor: Element | null = badge;
+      let background = 'rgb(20, 22, 18)';
+      while (ancestor) {
+        const candidate = getComputedStyle(ancestor).backgroundColor;
+        const alpha = channels(candidate)[3] ?? 1;
+        if (candidate !== 'transparent' && alpha >= 0.95) { background = candidate; break; }
+        ancestor = ancestor.parentElement;
+      }
+      const foregroundLight = luminance(getComputedStyle(badge).color);
+      const backgroundLight = luminance(background);
+      return { ratio: (Math.max(foregroundLight, backgroundLight) + 0.05) / (Math.min(foregroundLight, backgroundLight) + 0.05), text: badge.textContent?.trim() };
+    });
+  });
+  expect((await contrastRatios()).every(({ ratio }) => ratio >= 4.5)).toBe(true);
+  const darkAppearance = page.getByRole('button', { name: '外观：深色', exact: true });
+  if (await darkAppearance.isVisible()) {
+    await darkAppearance.click();
+    await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
+    expect((await contrastRatios()).every(({ ratio }) => ratio >= 4.5)).toBe(true);
+    await page.getByRole('button', { name: '外观：浅色', exact: true }).click();
+    await page.getByRole('button', { name: '外观：跟随系统', exact: true }).click();
+    await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'dark');
+  }
+  if (process.env.ARTIGEN_DELIVERY_CAPTURE && !testInfo.project.name.includes('mobile-')) {
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.screenshot({ path: process.env.ARTIGEN_DELIVERY_CAPTURE, animations: 'disabled' });
+  }
+
+  await page.evaluate(() => localStorage.setItem('app_lang', 'en'));
+  await page.reload();
+  await expect(page.locator('.delivery-summary')).toBeVisible();
+  if (testInfo.project.name.includes('mobile-')) await page.getByRole('button', { name: 'Open inspector' }).click();
+  await page.getByRole('navigation', { name: 'Resources' }).getByRole('button', { name: 'Task', exact: true }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await expect(page.locator('.file-list em')).toHaveText(['Verified', 'Pending verification', 'Verification failed']);
+  await expect(page.locator('.delivery-summary .artifact-verification')).toHaveText(['Verified', 'Pending verification', 'Verification failed']);
+  await expect(page.locator('#workspace-panel-files')).toContainText('Deliverables');
+});
+
 test('switching run history replaces the run, event stream and audit timeline', async ({ page }) => {
   const secondRunId = '51111111-1111-4111-8111-111111111112';
   const secondRun = {

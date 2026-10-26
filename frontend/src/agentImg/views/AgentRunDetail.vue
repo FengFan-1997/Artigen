@@ -145,7 +145,7 @@
           <header><span>{{ run.status === 'succeeded' ? (zh ? '交付完成' : 'Delivery complete') : (zh ? '已保留的成果' : 'Saved partial results') }}</span><b>{{ artifacts.length }}</b></header>
           <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
             <span>{{ fileCode(artifact.mimeType) }}</span>
-            <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · {{ artifact.verificationStatus }}</small></div>
+            <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em class="artifact-verification" :class="artifact.verificationStatus">{{ artifactVerificationLabel(artifact.verificationStatus) }}</em></div>
             <WorkspaceIcon name="download" />
           </a>
         </div>
@@ -287,15 +287,15 @@
     <template #files>
       <div class="inspector-stack">
         <section class="inspector-card">
-          <header><span>{{ zh ? '已验证交付' : 'Verified delivery' }}</span><b>{{ artifacts.length }}</b></header>
+          <header><span>{{ zh ? '交付文件' : 'Deliverables' }}</span><b>{{ artifacts.length }}</b></header>
           <div v-if="artifacts.length" class="file-list">
             <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
               <span>{{ fileCode(artifact.mimeType) }}</span>
-              <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em :class="artifact.verificationStatus">{{ artifact.verificationStatus }}</em></div>
+              <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em class="artifact-verification" :class="artifact.verificationStatus">{{ artifactVerificationLabel(artifact.verificationStatus) }}</em></div>
               <WorkspaceIcon name="download" />
             </a>
           </div>
-          <div v-else class="inspector-empty">{{ zh ? '文件通过验证后才会显示。' : 'Files appear only after verification.' }}</div>
+          <div v-else class="inspector-empty">{{ zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.' }}</div>
         </section>
         <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
       </div>
@@ -929,6 +929,14 @@ const subagentStatusLabel = (status: AgentSubagentStatus) => {
   };
   return labels[status][zh.value ? 0 : 1];
 };
+const artifactVerificationLabel = (status: AgentArtifact['verificationStatus']) => {
+  const labels: Record<AgentArtifact['verificationStatus'], [string, string]> = {
+    pending: ['待验证', 'Pending verification'],
+    passed: ['验证通过', 'Verified'],
+    failed: ['验证失败', 'Verification failed']
+  };
+  return labels[status]?.[zh.value ? 0 : 1] || (zh.value ? '状态未知' : 'Status unavailable');
+};
 const capabilityLabel = (capability: string) => {
   const labels: Record<string, [string, string]> = {
     research: ['调研', 'Research'],
@@ -1016,10 +1024,13 @@ const formatBytes = (value: number) => {
 };
 const fileCode = (mime: string) => {
   if (mime.includes('pdf')) return 'PDF';
+  if (mime.includes('csv')) return 'CSV';
   if (mime.includes('spreadsheet')) return 'XLSX';
   if (mime.includes('presentation')) return 'PPTX';
   if (mime.includes('zip')) return 'ZIP';
   if (mime.startsWith('image/')) return 'IMG';
+  if (mime.includes('markdown')) return 'MD';
+  if (mime.startsWith('text/')) return 'TXT';
   return 'FILE';
 };
 onMounted(async () => {
@@ -1106,7 +1117,7 @@ onBeforeUnmount(() => {
 .delivery-summary a { display: grid; grid-template-columns: 36px 1fr 18px; gap: 10px; align-items: center; padding: 9px; color: inherit; border-radius: 8px; text-decoration: none; }
 .delivery-summary a:hover { background: var(--surface-raised); }
 .delivery-summary a > span { color: var(--acid-text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.delivery-summary a div { display: grid; gap: 2px; min-width: 0; }
+.delivery-summary a div { display: grid; justify-items: start; gap: 3px; min-width: 0; }
 .delivery-summary a b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-summary a small { color: var(--muted); font-size: 12px; }
 .delivery-summary svg { width: 16px; height: 16px; }
@@ -1213,8 +1224,10 @@ onBeforeUnmount(() => {
 .file-list a > span { color: var(--acid-text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .file-list a div { display: grid; min-width: 0; gap: 2px; }
 .file-list b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.file-list small, .file-list em { color: var(--muted); font-size: 12px; font-style: normal; }
-.file-list em.passed { color: var(--success); }
+.file-list small, .delivery-summary a small { color: var(--muted); font-size: 12px; }
+.artifact-verification { display: inline-flex; width: max-content; max-width: 100%; align-items: center; justify-self: start; box-sizing: border-box; padding: 2px 7px; border-radius: 999px; color: var(--muted); background: color-mix(in srgb,var(--muted) 12%,transparent); font-size: 11px; font-style: normal; font-weight: 620; line-height: 1.4; }
+.artifact-verification.passed { color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
+.artifact-verification.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
 .preview-control { width: 100%; }
 .preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto 1fr; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
 .preview-modal header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
