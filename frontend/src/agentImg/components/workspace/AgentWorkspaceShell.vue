@@ -30,7 +30,7 @@
       <router-link to="/artigen/ai" :aria-label="zh ? '高级生图' : 'Image studio'"><WorkspaceIcon name="image" :size="20" /></router-link>
       <button type="button" aria-label="GitHub" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
       <span class="rail-spacer"></span>
-      <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="20" /></button>
+      <button type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" :aria-description="themeHint" :title="themeHint" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
       <router-link to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
     </nav>
 
@@ -82,7 +82,7 @@
           <span class="account-label">{{ creditCaption }}</span>
           <b v-if="creditLabel" class="account-value">{{ creditLabel }}</b>
         </router-link>
-        <button class="mobile-only" type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="16"/><span>{{ zh ? '外观' : 'Appearance' }}</span><small>{{ themeLabel }}</small></button>
+        <button class="mobile-only" type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" :aria-description="themeHint" :title="themeHint" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="16"/><span>{{ zh ? '外观' : 'Appearance' }}</span><small>{{ themeLabel }}</small></button>
         <router-link class="mobile-only account-action" to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="16"/><span>{{ zh ? '设置' : 'Settings' }}</span></router-link>
       </footer>
     </aside>
@@ -405,18 +405,19 @@ const workspaceStyle = computed(() => ({
   '--workspace-left-width': `${leftWidth.value}px`,
   '--workspace-right-width': `${visibleRightWidth.value}px`
 }));
-const themeLabel = computed(() => {
-  const labels = props.zh
-    ? { dark: '深色', light: '浅色', system: '跟随系统' }
-    : { dark: 'Dark', light: 'Light', system: 'System' };
-  return labels[theme.value];
-});
+const themeLabels = computed(() => props.zh
+  ? { dark: '深色', light: '浅色', system: '跟随系统' }
+  : { dark: 'Dark', light: 'Light', system: 'System' });
+const themeLabel = computed(() => themeLabels.value[theme.value]);
+const nextTheme = computed<ThemeMode>(() => theme.value === 'dark' ? 'light' : theme.value === 'light' ? 'system' : 'dark');
+const themeHint = computed(() => `${props.zh ? '切换到' : 'Switch to '}${themeLabels.value[nextTheme.value]}`);
+const themeIcon = computed<'moon' | 'sun' | 'monitor'>(() => theme.value === 'system' ? 'monitor' : theme.value === 'light' ? 'sun' : 'moon');
 const commands = computed(() => [
   { id: 'new', icon: 'plus' as const, label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: `${shortcutModifier}N`, action: () => emit('new-task') },
   { id: 'create', icon: 'agent' as const, label: props.zh ? '设计 Agent' : 'Design Agent', hint: '/artigen/create', shortcut: '', action: () => router.push('/artigen/create') },
   { id: 'agent', icon: 'monitor' as const, label: props.zh ? '电脑 Agent' : 'Computer Agent', hint: '/artigen/agent', shortcut: '', action: () => router.push('/artigen/agent') },
   { id: 'images', icon: 'image' as const, label: props.zh ? '高级生图' : 'Image studio', hint: '/artigen/ai', shortcut: '', action: () => router.push('/artigen/ai') },
-  { id: 'theme', icon: 'moon' as const, label: props.zh ? '切换主题' : 'Cycle theme', hint: themeLabel.value, shortcut: '', action: cycleTheme }
+  { id: 'theme', icon: themeIcon.value, label: props.zh ? '切换主题' : 'Cycle theme', hint: themeLabel.value, shortcut: '', action: cycleTheme }
 ]);
 const filteredCommands = computed(() => {
   const query = commandQuery.value.trim().toLowerCase();
@@ -485,8 +486,7 @@ const toggleRight = async () => {
 };
 const closeDrawers = () => { if (leftDrawerOpen.value) closeLeftDrawer(true); else closeRight(true); };
 const cycleTheme = () => {
-  const order: ThemeMode[] = ['dark', 'light', 'system'];
-  theme.value = order[(order.indexOf(theme.value) + 1) % order.length];
+  theme.value = nextTheme.value;
   persistPreferences();
 };
 const beginResize = (target: ResizeTarget, event: PointerEvent) => {
