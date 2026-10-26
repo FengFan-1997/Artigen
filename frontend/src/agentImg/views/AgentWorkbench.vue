@@ -867,8 +867,8 @@ onBeforeUnmount(() => {
 .run-action:disabled { opacity: .45; cursor: not-allowed; }
 .run-action:active { transform: scale(.98); }
 .run-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px 9px 13px; color: var(--acid-text); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); box-shadow: inset 3px 0 var(--acid); font-size: 12px; }
-.workspace-notice.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); box-shadow: inset 3px 0 var(--danger); }
+.workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px; color: var(--acid-text); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font-size: 12px; }
+.workspace-notice.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .history-group { padding: 4px 8px 16px; }
 .history-label { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px 9px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }

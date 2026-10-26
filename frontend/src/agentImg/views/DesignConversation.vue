@@ -1507,7 +1507,7 @@ onBeforeUnmount(() => {
 .workspace-chat { position: relative; display: grid; grid-template-rows: minmax(0,1fr) auto; height: 100%; min-height: 0; }
 .message-scroll { min-height: 0; overflow-y: auto; padding: 32px var(--conversation-gutter) 32px; overflow-anchor: none; scrollbar-color: var(--border) transparent; scroll-padding-bottom: 40px; }
 .chat-service-note { margin-bottom: 24px; }
-.authorization-strip { display: grid; width: min(var(--conversation-max),100%); gap: 8px; margin: 0 auto 24px; padding: 12px 12px 12px 15px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface)); box-shadow: inset 3px 0 var(--warning); }
+.authorization-strip { display: grid; width: min(var(--conversation-max),100%); gap: 8px; margin: 0 auto 24px; padding: 12px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface)); }
 .authorization-strip header,.authorization-strip article { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }.authorization-strip header span { font-size: 12px; font-weight: 680; }.authorization-strip small { color: var(--muted); font-size: 12px; }.authorization-strip article { padding-top: 8px; }.authorization-strip article > span { display: grid; min-width: 0; gap: 2px; overflow-wrap: anywhere; }.authorization-strip article b { font-size: 12px; }.authorization-strip button { flex: 0 0 auto; min-height: 32px; padding: 0 9px; border: 0; border-radius: 7px; color: var(--danger); font-size: 12px; background: var(--surface-hover); cursor: pointer; }
 .message { display: flex; width: min(var(--conversation-max),100%); gap: 12px; margin: 0 auto 24px; }
 .message.user { justify-content: flex-end; }

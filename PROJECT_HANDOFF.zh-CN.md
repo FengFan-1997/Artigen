@@ -421,3 +421,9 @@ Chrome目录由用户主动选择，按需展开；目录连接不上传。账�
 - 状态文本不是仅靠颜色传达：队列/取消使用中性或危险语义，运行、完成与失败使用主题语义色。明暗主题下的状态文字对比度均由浏览器回归检查达到 4.5:1。
 - 系统 Chrome 桌面与 390px 触屏项目子 Agent 状态/取消回归 2/2 通过；前端 type-check、目标 ESLint、文档检查、workspace 检查与 `git diff --check` 通过。
 - 改前/改后真实浏览器截图保存在本机 `Artigen-agent-chrome-polish/subagent-status-20261026/`。页面使用本地 Vue 页面与合成 Run fixture，不代表 DEV 或 Production 用户/任务验收。本轮未部署、push、创建 PR 或合并。
+
+## 2026-10-26 内容容器禁用装饰性彩色边框（本地候选，未部署）
+
+- 产品设计硬约束已写入 `frontend/DESIGN.md` 和开发必读 `AGENTS.md`：内容容器严禁装饰性彩色边框及单侧装饰边框、色条；使用内阴影、渐变或伪元素模拟也属于禁用样式。结构性中性分割线与完整键盘焦点轮廓继续保持清晰。
+- Agent 工作区的交付、审批、重试、授权、预算与错误提示移除单侧彩色内阴影；保留整体表面、状态文案和图标，移除原本为色条补偿的左侧额外内距。
+- 系统 Chrome 桌面与 390px 手机交付文件回归 2/2 通过；前端 type-check、目标 ESLint、文档与 workspace 检查通过。改前/改后截图保存在本机 `Artigen-agent-chrome-polish/delivery-accent-ban-20261026/`，使用真实本地 Vue 页面和同一合成 Run fixture；没有部署或远端操作。

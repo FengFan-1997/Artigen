@@ -151,3 +151,8 @@ AI 在发送最终回复前必须完成：
 - 现行 README、PRD、Runbook 和 Handoff 不得把历史归档当作当前操作依据。
 - 文档改动至少运行 `pnpm check:docs`、`pnpm check:workspace` 和 `git diff --check`。
 - 直接运行时依赖变化必须同步 `THIRD_PARTY_NOTICES.md`；安全文档改名时必须更新仓库内全部引用。
+
+## 9. 产品 UI 硬约束
+
+- 修改产品 UI 前读取并遵守 [`frontend/DESIGN.md`](./frontend/DESIGN.md)。
+- 严禁内容容器使用装饰性彩色边框或单侧装饰边框、色条，包括用内阴影、渐变、伪元素模拟的边条。卡片、提示、审批、错误和交付区域依靠整体背景、留白、文字、图标与状态标签表达层级；结构性中性分割线和完整键盘焦点轮廓仍需清晰可见。
