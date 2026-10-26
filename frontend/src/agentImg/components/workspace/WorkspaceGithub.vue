@@ -1,5 +1,5 @@
 <template>
-  <section class="github-workspace">
+  <section ref="workspaceRoot" class="github-workspace">
     <header>
       <WorkspaceIcon name="git" /><b>GitHub</b><span>{{ zh ? '只读' : 'Read only' }}</span
       ><button v-if="repository" @click="refresh">{{ zh ? '刷新' : 'Refresh' }}</button>
@@ -63,16 +63,16 @@
             {{ zh ? '加载更多' : 'Load more' }}
           </button>
         </div>
-        <section v-if="selected">
-          <header>
-            <button ref="backButton" @click="returnToRecords">
-              {{ zh ? '返回记录' : 'Back' }}</button
+        <section v-if="selected" class="github-record-detail">
+          <header class="record-detail-toolbar">
+            <button ref="backButton" type="button" @click="returnToRecords">
+              <WorkspaceIcon class="record-back-icon" name="chevron-right" :size="16" />{{ zh ? '返回记录' : 'Back to records' }}</button
             ><a
               v-if="safeGithubUrl(selected.url)"
               :href="selected.url"
               target="_blank"
               rel="noopener noreferrer"
-              >{{ zh ? '在 GitHub 打开' : 'Open on GitHub' }}</a
+              >{{ zh ? '在 GitHub 打开' : 'Open on GitHub' }}<WorkspaceIcon name="arrow-right" :size="16" /></a
             >
           </header>
           <h3>{{ selected.title }}</h3>
@@ -122,17 +122,22 @@ const recordPageUrl = computed(() => {
 const items = ref<RecordItem[]>([]);
 const selected = ref<RecordItem | null>(null);
 const patches = ref<Patch[]>([]);
+const workspaceRoot = ref<HTMLElement | null>(null);
+let recordScrollTop = 0;
 const backButton = ref<HTMLButtonElement | null>(null);
 const recordList = ref<HTMLElement | null>(null);
 async function returnToRecords() {
   const item = selected.value;
+  const ticket = revision;
   selected.value = null;
   patches.value = [];
   await nextTick();
+  if (ticket !== revision) return;
   if (item)
     Array.from(recordList.value?.querySelectorAll<HTMLElement>('.git-record') || [])
       .find((node) => node.dataset.recordKey === String(item.sha || item.number))
-      ?.focus();
+      ?.focus({ preventScroll: true });
+  if (workspaceRoot.value) workspaceRoot.value.scrollTop = recordScrollTop;
 }
 const hasMore = ref(false);
 const patchMore = ref(false);
@@ -264,6 +269,7 @@ const select = (next: 'pulls' | 'commits') => {
   void load(false);
 };
 const inspect = (item: RecordItem) => {
+  recordScrollTop = workspaceRoot.value?.scrollTop || 0;
   selected.value = item;
   patches.value = [];
   void loadPatch(false);
@@ -339,6 +345,16 @@ onBeforeUnmount(() => revision++);
 .github-empty-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) { .github-empty-link:hover { background: var(--surface-hover); } }
 @media (max-width: 799px), (pointer: coarse) { .github-empty-link { min-height: 44px; } }
+.github-record-detail { min-width: 0; }
+.github-record-detail .record-detail-toolbar { flex-wrap: wrap; gap: 8px; }
+.github-record-detail .record-detail-toolbar > :is(button,a) { display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box; min-height: 32px; max-width: 100%; padding: 6px 8px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font: inherit; font-size: 13px; line-height: 20px; text-decoration: none; }
+.record-detail-toolbar > button { flex: none; }
+.record-detail-toolbar > a { margin-inline-start: auto; }
+.record-back-icon { transform: rotate(180deg); }
+.github-record-detail .record-detail-toolbar > :is(button,a):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.github-record-detail > h3 { margin: 16px 0; color: var(--text); font-size: 15px; font-weight: 550; line-height: 1.6; overflow-wrap: anywhere; }
+@media (hover: hover) and (pointer: fine) { .github-record-detail .record-detail-toolbar > :is(button,a):hover { color: var(--text); background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .github-record-detail .record-detail-toolbar > :is(button,a) { min-height: 44px; } }
 .repository-form {
   display: grid;
   min-width: 0;

@@ -2218,3 +2218,46 @@ for (const language of ['zh', 'en']) {
     expect(workspace.saves).toHaveLength(0); expect(writes).toEqual([]);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub detail returns to the exact record reading position without reloading ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const { workspace } = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const title = 'fix-very-long-generated-editor-component-filename-and-preserve-context-'.repeat(5);
+    let reads = 0;
+    const writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/github') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route('**/github/pulls?*', route => {
+      reads++;
+      return route.fulfill({ json: { items: Array.from({ length: 60 }, (_, i) => ({ number: 900 + i, title: i === 30 ? title : `Review ${i + 1}`, state: 'open', url: `https://github.com/example/brand-site/pull/${900 + i}` })), hasMore: false } });
+    });
+    await page.goto(runPath);
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace');
+    const row = root.locator('.git-record').nth(30);
+    for (const offset of [120, 240]) {
+      await row.scrollIntoViewIfNeeded();
+      await root.evaluate((el, offset) => { const row = el.querySelectorAll('.git-record')[30]!; el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - offset; }, offset);
+      const top = await root.evaluate(el => el.scrollTop);
+      await row.focus(); await row.press('Enter');
+      const detail = root.locator('.github-record-detail');
+      const back = detail.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true });
+      await expect(back).toBeFocused();
+      await expect(detail.locator('h3')).toHaveText(title);
+      const link = detail.getByRole('link');
+      await expect(link).toHaveAttribute('href', 'https://github.com/example/brand-site/pull/930');
+      await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+      await back.press('Tab'); await expect(link).toBeFocused();
+      await page.keyboard.press('Shift+Tab'); await expect(back).toBeFocused();
+      expect(await detail.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await back.press('Enter');
+      await expect(row).toBeFocused();
+      expect(Math.abs(await root.evaluate(el => el.scrollTop) - top)).toBeLessThanOrEqual(1);
+      await expect(root.locator('.git-record')).toHaveCount(60);
+    }
+    expect(reads).toBe(1); expect(writes).toEqual([]);
+    expect(workspace.githubRequests.every(method => method === 'GET')).toBe(true);
+  });
+}
