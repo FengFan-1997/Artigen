@@ -145,10 +145,11 @@
         </section>
         <section class="inspector-card">
           <header><span>{{ zh ? '交付物' : 'Deliverables' }}</span></header>
-          <div class="option-grid">
-            <label v-for="item in deliverableOptions" :key="item.id" :class="{ disabled: item.disabled }">
+          <div class="option-grid" role="group" :aria-label="zh ? '交付物' : 'Deliverables'">
+            <label v-for="item in deliverableOptions" :key="item.id" :class="{ disabled: item.disabled, selected: form.deliverables[item.id] }">
+              <b class="deliverable-format">{{ item.code }}</b>
+              <span class="deliverable-label">{{ item.label }}<small v-if="item.disabled">{{ zh ? '暂不可用' : 'Unavailable' }}</small></span>
               <input v-model="form.deliverables[item.id]" :name="`deliverable-${item.id}`" type="checkbox" :disabled="item.disabled" />
-              <span><b>{{ item.code }}</b><small>{{ item.label }}</small></span>
             </label>
           </div>
         </section>
@@ -897,19 +898,29 @@ onBeforeUnmount(() => {
 .inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .inspector-card > strong { color: var(--text); font-size: 13px; }
-.option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-.option-grid label, .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 0; border-radius: 8px; background: var(--surface-raised); }
-.option-grid label.disabled, .capability-list label.disabled { opacity: .45; }
-.option-grid input, .capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
-.option-grid span, .capability-list span { display: grid; gap: 2px; }
-.option-grid b, .capability-list b { color: var(--text); font-size: 12px; }
-.option-grid small, .capability-list small { font-size: 12px; }
+.option-grid { display: grid; gap: 2px; }
+.option-grid label { display: grid; grid-template-columns: 48px minmax(0, 1fr) 18px; gap: 10px; align-items: center; min-height: 44px; padding: 8px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.option-grid label.selected { background: var(--surface-raised); }
+.option-grid label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.option-grid label.disabled { cursor: not-allowed; }
+.deliverable-format { display: grid; place-items: center; height: 28px; border-radius: 5px; background: var(--surface-raised); color: var(--muted); font: 500 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.deliverable-label { min-width: 0; color: var(--text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.deliverable-label small { display: block; }
+.option-grid input { width: 16px; height: 16px; margin: 0; accent-color: var(--text); cursor: inherit; }
+.option-grid input:focus-visible { outline: none; }
+@media (hover: hover) { .option-grid label:not(.disabled):hover { background: var(--surface-hover); } }
+.capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 0; border-radius: 8px; background: var(--surface-raised); }
+.capability-list label.disabled { opacity: .45; }
+.capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
+.capability-list span { display: grid; gap: 2px; }
+.capability-list b { color: var(--text); font-size: 12px; }
+.capability-list small { font-size: 12px; }
 .capability-list { display: grid; gap: 6px; }
 .runtime-settings { padding-inline: 0; }
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
 .browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
-.browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .option-grid input:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
 .text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
 .budget-range { width: 100%; }
@@ -935,7 +946,7 @@ onBeforeUnmount(() => {
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 .browser-scope > label { color: var(--text); font-size: 13px; line-height: 1.5; }
-.option-grid label,.capability-list label { align-items: center; min-height: 44px; }
+.capability-list label { align-items: center; min-height: 44px; }
 .budget-range { height: 44px; margin: 0; }
 @media (max-width: 800px) {
   .agent-conversation:not(.active) { align-content: start; padding-block: 32px 24px; }
@@ -950,7 +961,6 @@ onBeforeUnmount(() => {
   .conversation-dock { padding-block: 8px max(12px, env(safe-area-inset-bottom)); }
   .run-action { min-height: 44px; }
   .history-label button { width: 44px; height: 44px; }
-  .option-grid { grid-template-columns: 1fr; }
 }
 @media (pointer: coarse) {
   .prompt-suggestions button { min-height: 44px; }
