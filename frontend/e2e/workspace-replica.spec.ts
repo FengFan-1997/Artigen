@@ -2386,3 +2386,42 @@ for (const language of ['zh', 'en']) {
     expect(fixture.workspace.saves).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`restored draft notices stay visible across all composer placements ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const original = '已恢复的文件检查要求';
+    await page.addInitScript(({ zh, original, runId, conversationId }) => {
+      if (!zh) localStorage.setItem('app_lang', 'en');
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, theme: 'dark', rightCollapsed: true }));
+      for (const task of ['agent:new', 'conversation:new::', `run:${runId}`, `conversation:${conversationId}`]) {
+        const key = `artigen:workspace-draft:v1:input-fixture:${encodeURIComponent(task)}`;
+        if (localStorage.getItem(key) === null) localStorage.setItem(key, original);
+      }
+    }, { zh, original, runId: inputRunId, conversationId: inputConversationId });
+    await page.route(`**/api/design-conversations/${inputConversationId}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, conversation: { conversationId: inputConversationId, projectId: null, title: '品牌网站研究', status: 'active', autoCreditCap: 50, clarificationRounds: 0, expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z', updatedAt: '2026-10-15T03:00:00Z', uploads: [], executions: [], messages: [{ messageId: 'draft-notice-message', sequence: 1, role: 'assistant', kind: 'text', status: 'complete', text: '请继续补充文件检查要求。', attachments: [], questions: [], assumptions: [], memoryCandidates: [], createdAt: '2026-10-15T03:00:00Z' }] } }) }));
+    const scenes = [
+      ['workbench', '/artigen/agent'], ['create', '/artigen/create'],
+      ['run', `/artigen/agent/runs/${inputRunId}`], ['conversation', `/artigen/create?c=${inputConversationId}`]
+    ] as const;
+    for (const [scene, path] of scenes) {
+      await page.goto(path);
+      if (scene === 'conversation') await expect(page.locator('.docked-composer')).toBeVisible();
+      const input = page.locator('.composer-box textarea:visible');
+      const notice = page.locator('.draft-restored:visible');
+      await expect(input).toHaveValue(original); await expect(notice).toHaveAttribute('role', 'status');
+      await expect(notice.locator('strong')).toHaveText(zh ? '已恢复本机草稿' : 'Local draft restored');
+      await expect(notice.locator('small')).toHaveCount(scene === 'run' ? 0 : 1);
+      if (scene !== 'run') await expect(notice.locator('small')).toHaveText(zh ? '参考文件需重新选择。' : 'Choose reference files again.');
+      await expect(notice).toBeInViewport(); await expect(notice.locator('button,a,input')).toHaveCount(0);
+      await expect(page.locator('.attachment-list')).toHaveCount(0);
+      const edited = `${scene} 尚未发送的新要求`;
+      await input.fill(edited); await expect(page.locator('.draft-restored')).toHaveCount(0);
+      await page.reload(); await expect(input).toHaveValue(edited); await expect(notice).toBeVisible();
+      await expect(page.locator('.attachment-list')).toHaveCount(0);
+    }
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.quotes).toHaveLength(0);
+    expect(fixture.state.designMessages).toHaveLength(0); expect(fixture.state.uploads).toBe(0);
+  });
+}

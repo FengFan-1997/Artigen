@@ -113,7 +113,7 @@
             @remove-attachment="removeSelectedFile"
           />
         </div>
-        <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
+        <DraftRestoredNotice v-if="draftRestored" :zh="zh" />
         <div v-if="!hasConversation" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
           <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)">
             <span>{{ suggestionLabels[index] }}</span>
@@ -268,6 +268,7 @@ import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
 import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import {
   createAgentRun,
@@ -866,7 +867,7 @@ onBeforeUnmount(() => {
 .quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .conversation-dock { position: relative; z-index: 2; width: 100%; padding: 16px var(--conversation-gutter) max(16px, env(safe-area-inset-bottom)); background: var(--bg); }
 .objective-composer { min-width:0; width: min(var(--conversation-max), 100%); margin: 0 auto; }
-.draft-restored { width: min(var(--conversation-max),100%); margin: 8px auto 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
+.draft-restored { width: min(var(--conversation-max),100%); margin: 8px auto 0; }
 .objective-composer :deep(.composer-box) { color: var(--text); background: var(--surface); }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 0; background: var(--acid); }

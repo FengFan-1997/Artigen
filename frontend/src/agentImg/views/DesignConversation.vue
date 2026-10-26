@@ -89,7 +89,7 @@
         @attach="openFilePicker()"
         @remove-attachment="removeAttachment"
       />
-      <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
+      <DraftRestoredNotice v-if="draftRestored" :zh="zh" />
       <div class="suggestion-grid">
         <header>
           <span>{{ zh ? '试试这些' : 'Try one of these' }}</span>
@@ -179,7 +179,7 @@
 
       <div class="docked-composer">
         <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="scrollToBottom(true)" />
-        <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
+        <DraftRestoredNotice v-if="draftRestored" :zh="zh" />
         <ComposerBox
           :draft="draft"
           :attachments="selectedAttachments"
@@ -335,6 +335,7 @@ import { storeToRefs } from 'pinia';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
 const WorkspaceMarkdown = defineAsyncComponent(() => import('../components/workspace/WorkspaceMarkdown.vue'));
 import { takeWorkspaceAttachment, type WorkspaceAttachment } from '../services/workspaceAttachmentTransfer';
 import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
@@ -1529,7 +1530,6 @@ onBeforeUnmount(() => {
 @keyframes thinking { to { opacity: .25; transform: translateY(-2px); } }
 .docked-composer { position: relative; z-index: 12; padding: 18px var(--conversation-gutter) 16px; background: var(--bg); }
 .docked-composer :deep(.composer-box) { max-width: var(--conversation-max); margin: 0 auto; }
-.docked-composer > p { max-width: var(--conversation-max); margin: 6px auto 0; color: var(--muted-2); font-size: 12px; text-align: center; }
 
 :deep(.execution-card) { max-width: var(--conversation-max); margin: 4px auto 22px; border: 0; border-radius: 12px; color: var(--text); background: var(--surface); box-shadow: none; }
 :deep(.execution-card > header) { padding: 11px 13px; border: 0; background: transparent; }
@@ -1583,7 +1583,7 @@ onBeforeUnmount(() => {
 .conversation-load-state p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .conversation-load-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .conversation-load-actions button { min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; background: var(--surface-raised); cursor: pointer; }
-.draft-restored,.docked-composer > .draft-restored { max-width: var(--conversation-max); margin: 8px auto; color: var(--muted); font-size: 12px; line-height: 1.5; text-align: left; }
+.draft-restored { max-width: var(--conversation-max); margin: 8px auto; }
 @media (max-width: 799px) {
 
   .history-item { min-height: 44px; }
@@ -1599,7 +1599,7 @@ onBeforeUnmount(() => {
   .zero-meta span:nth-child(n+2) { display: none; }
   .authorization-strip header,.authorization-strip article { align-items: flex-start; flex-wrap: wrap; }.authorization-strip button { margin-left: auto; }
   .message-scroll { padding-block: 24px; }.message-body { max-width: 88%; font-size: 14px; }
-  .docked-composer { padding-block: 10px 8px; }.docked-composer > p { display: none; }
+  .docked-composer { padding-block: 10px 8px; }
   :deep(.composer-box textarea) { font-size: 16px; }
   :deep(.composer-box .attach),:deep(.composer-box .send) { min-width: 44px; min-height: 44px; }
   .workspace-notice { top: 62px; right: 10px; left: 10px; max-width: none; }

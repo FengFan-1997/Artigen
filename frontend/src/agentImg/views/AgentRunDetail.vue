@@ -160,7 +160,7 @@
       </div>
 
       <p v-if="loadError || notice" class="run-notice" :role="loadError ? 'alert' : 'status'" aria-live="polite">{{ loadError || notice }}</p>
-      <p v-if="draftRestored && !terminal" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿。' : 'Your local draft was restored.' }}</p>
+      <DraftRestoredNotice v-if="draftRestored && !terminal" :zh="zh" :references="false" />
       <div class="run-composer">
         <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="scrollToLatest(true)" />
         <div v-if="terminal && !message.trim()" class="run-ended-bar" role="group" :aria-label="zh ? '任务结束后的操作' : 'Run ended actions'">
@@ -347,6 +347,7 @@ import { approvalIsAvailable, useAgentApprovals } from '../composables/useAgentA
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
 import ExpiredApprovalsNotice from '../components/workspace/ExpiredApprovalsNotice.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import RunConversationStream from '../components/workspace/RunConversationStream.vue';
@@ -1310,7 +1311,7 @@ onBeforeUnmount(() => {
 .settlement-summary dt { flex:1 0 auto; color:var(--muted); font-size:12px; line-height:20px; }
 .settlement-summary dd { min-width:0; max-width:100%; margin:0; margin-inline-start:auto; font-size:13px; font-weight:500; line-height:20px; font-variant-numeric:tabular-nums; text-align:right; overflow-wrap:anywhere; }
 
-.draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
+.draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; }
 .run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
 @media (max-width: 800px) {
   .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
