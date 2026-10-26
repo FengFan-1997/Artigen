@@ -245,9 +245,18 @@
           <article v-for="child in run.subagents" :key="child.subagentId" class="subagent-card">
             <span class="agent-node">S{{ child.ordinal }}</span>
             <div>
-              <header><b>{{ child.label || child.role }}</b><i :class="child.status"></i></header>
+              <header>
+                <b>{{ child.label || child.role }}</b>
+                <span class="subagent-status" :data-status="child.status">
+                  <i aria-hidden="true"></i>
+                  <span class="subagent-status-label">{{ subagentStatusLabel(child.status) }}</span>
+                </span>
+              </header>
               <p>{{ child.summary || child.role }}</p>
-              <small>{{ subagentStatusLabel(child.status) }} · {{ child.progress.stepCount }}/{{ child.progress.maxSteps }} steps · {{ child.usage.credits.toFixed(2) }} cr</small>
+              <small class="subagent-meta">
+                <span>{{ child.progress.stepCount }} / {{ child.progress.maxSteps }} {{ zh ? '步' : 'steps' }}</span>
+                <span>{{ child.usage.credits.toFixed(2) }} {{ zh ? '点' : 'cr' }}</span>
+              </small>
               <button v-if="['queued', 'running'].includes(child.status)" type="button" :disabled="subagentBusyId === child.subagentId" @click="cancelChild(child.subagentId)">{{ zh ? '取消这个子 Agent' : 'Cancel this subagent' }}</button>
             </div>
           </article>
@@ -1164,14 +1173,21 @@ onBeforeUnmount(() => {
 .subagent-card { grid-template-columns: 32px 1fr; }
 .subagent-card > div { display: grid; min-width: 0; justify-items: start; gap: 5px; }
 .subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); background: var(--surface-raised); }
-.subagent-card header { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.subagent-card header { display: flex; width: 100%; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
 .subagent-card header b { min-width: 0; overflow-wrap: anywhere; }
-.subagent-card header i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-.subagent-card header i.running { background: var(--acid); }
-.subagent-card header i.succeeded { background: var(--success); }
-.subagent-card header i.failed, .subagent-card header i.cancelled { background: var(--danger); }
+.subagent-status { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: nowrap; }
+.subagent-status i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--muted); }
+.subagent-status[data-status="running"] { color: var(--acid-text); }
+.subagent-status[data-status="running"] i { background: var(--acid); }
+.subagent-status[data-status="succeeded"] { color: var(--success); }
+.subagent-status[data-status="succeeded"] i { background: var(--success); }
+.subagent-status[data-status="failed"] { color: var(--danger); }
+.subagent-status[data-status="failed"] i { background: var(--danger); }
+.subagent-status[data-status="cancelled"] { color: var(--danger); }
+.subagent-status[data-status="cancelled"] i { background: var(--danger); }
 .subagent-card p { max-height: 46px; margin: 1px 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .subagent-card small { line-height: 1.45; overflow-wrap: anywhere; }
+.subagent-card .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
 .subagent-card button { min-height: 32px; margin-top: 2px; padding: 0 4px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
 .inspector-empty { padding: 20px 8px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5; }
 .computer-panel { display: grid; gap: 10px; }

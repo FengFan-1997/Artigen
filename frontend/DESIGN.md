@@ -142,6 +142,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 对话、规划、验证、父 Agent 和所有子 Agent 只能显示并调用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；图片输出只调用 `Kwai-Kolors/Kolors`。
 - 所有图片只能显示并调用 `Kwai-Kolors/Kolors`。
 - 子 Agent 是真实独立 GPT-OSS-120B 上下文，不是视觉占位符：最多 3 个、深度固定 1、20 步、10 分钟。
+- 子 Agent 卡片在名称行显示带文字的实时状态；步骤和点数单独对齐展示，状态不只靠颜色表达，元数据按当前界面语言本地化。
 - 子 Agent 只能读取授权输入并运行离线 Shell；不获得浏览器、电脑、连接器、Kolors、审批或最终交付权。
 - 父 Agent 独占外部能力、审批和最终文件声明。失败或取消单个子 Agent 不应伪装成父任务失败。
 - UI 必须如实显示实际执行器、预算、已用点数、排队、审批和验证状态。

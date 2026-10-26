@@ -733,13 +733,42 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await expect(page.locator('.subagent-card').nth(0)).toContainText('竞品定位');
   await expect(page.locator('.subagent-card').nth(1)).toContainText('视觉系统');
   await expect(page.locator('.subagent-card').nth(2)).toContainText('体验建议');
+  await expect(page.locator('.subagent-card').nth(0).locator('.subagent-status-label')).toHaveText('执行中');
+  await expect(page.locator('.subagent-card').nth(1).locator('.subagent-status-label')).toHaveText('已完成');
+  await expect(page.locator('.subagent-card').nth(0).locator('.subagent-meta > span')).toHaveText([
+    '7 / 20 步',
+    '1.25 点'
+  ]);
+  await expect(page.locator('.subagent-status i').first()).toHaveAttribute('aria-hidden', 'true');
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-run-detail-1440-dark.png', fullPage: true });
   }
 
+  const statusContrast = async () => page.locator('.subagent-status-label').evaluateAll((labels) => {
+    const channels = (value: string) => (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const luminance = (value: string) => channels(value).reduce((sum, channel, index) => {
+      const normalized = channel / 255;
+      const linear = normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      return sum + linear * [0.2126, 0.7152, 0.0722][index];
+    }, 0);
+    return labels.map((label) => {
+      const foreground = luminance(getComputedStyle(label).color);
+      const background = luminance(getComputedStyle(label.closest('.subagent-card')!).backgroundColor);
+      return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+    });
+  });
+  expect((await statusContrast()).every((ratio) => ratio >= 4.5)).toBe(true);
+  await page.getByRole('button', { name: '外观：深色' }).click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
+  expect((await statusContrast()).every((ratio) => ratio >= 4.5)).toBe(true);
+  await page.getByRole('button', { name: '外观：浅色' }).click();
+  await page.getByRole('button', { name: /外观：/ }).click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'dark');
+
   await page.locator('.subagent-card').nth(0).getByRole('button', { name: '取消这个子 Agent' }).click();
   await expect.poll(() => cancelled).toEqual([childIds[0]]);
   await expect(page.locator('.subagent-card').nth(0)).toContainText('已取消');
+  await expect(page.locator('.subagent-card').nth(0).locator('.subagent-status')).toHaveAttribute('data-status', 'cancelled');
   await expect(page.locator('.runtime-pill')).toContainText('执行中');
 });
 
