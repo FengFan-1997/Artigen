@@ -2123,3 +2123,60 @@ for (const language of ['zh', 'en']) {
     } finally { pending.splice(0).forEach(resolve => resolve()); }
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`message recovery preserves cached content and drafts while coalescing SSE only ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    let fail = false, hold = false, reads = 0, text = '先前已显示的公开消息';
+    const pending: Array<() => void> = [], writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/api/agent-runs/') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(`**/api/agent-runs/${inputRunId}/messages*`, async route => {
+      reads++;
+      if (hold) await new Promise<void>(resolve => pending.push(resolve));
+      return route.fulfill(fail ? { status: 503, json: { error: { code: 'UNAVAILABLE' } } } : { json: { messages: [{ id: 'retained-public-message', role: 'assistant', kind: 'text', text, createdAt: '2026-10-15T03:00:10Z' }], nextCursor: null } });
+    });
+    const emitMessage = async (id: string) => fixture.emit([{ ...activityEvents(1)[0]!, eventId: id, type: 'message.created', summary: '合成消息通知', createdAt: '2026-10-15T03:03:00Z', data: {} }]);
+    try {
+      await page.goto(runPath);
+      const messages = page.locator('.run-conversation-stream');
+      await expect(messages).toContainText(text);
+      const draft = page.locator('.run-composer textarea');
+      await draft.fill('保留这条尚未发送的补充');
+      fail = true; await emitMessage('9401');
+      const notice = page.getByRole('region', { name: zh ? '消息读取提示' : 'Message loading notice', exact: true });
+      const retry = notice.getByRole('button');
+      await expect(notice).toBeVisible();
+      await expect(messages).toContainText(text);
+      await retry.focus(); await retry.press('Tab'); await page.keyboard.press('Shift+Tab');
+      await expect(retry).toBeFocused();
+      hold = true;
+      await retry.evaluate((el: HTMLButtonElement) => { el.click(); el.click(); });
+      await expect.poll(() => reads).toBe(3);
+      await expect(retry).toHaveAttribute('aria-disabled', 'true');
+      await expect(retry).toBeFocused();
+      await expect(notice).toHaveAttribute('aria-busy', 'true');
+      await expect(retry).toHaveText(zh ? '正在读取…' : 'Loading…');
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(retry).toHaveAttribute('aria-disabled', 'false');
+      await expect(retry).toBeFocused();
+      expect(reads).toBe(3);
+      await expect(draft).toHaveValue('保留这条尚未发送的补充');
+      fail = false;
+      await retry.press('Enter');
+      await expect.poll(() => reads).toBe(4);
+      // A real message notification during a pending manual retry still schedules one follow-up.
+      await emitMessage('9402');
+      text = '更新后的公开消息'; hold = false;
+      pending.splice(0).forEach(resolve => resolve());
+      await expect.poll(() => reads).toBe(5);
+      await expect(notice).toHaveCount(0);
+      await expect(messages.locator('.timeline-message .workspace-markdown')).toHaveText(text);
+      await expect(messages.locator('.timeline-message')).toHaveCount(1);
+      await expect(draft).toHaveValue('保留这条尚未发送的补充');
+      expect(writes).toEqual([]);
+      expect(fixture.state.inputs).toHaveLength(0);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}

@@ -1,9 +1,13 @@
 <template>
   <div class="run-conversation-stream">
-    <p v-if="error" class="message-error" role="status">
-      {{ zh ? '部分消息暂时无法读取。' : 'Some messages could not load.' }}
-      <button @click="load">{{ zh ? '重试' : 'Retry' }}</button>
-    </p>
+    <section v-if="error" class="message-error" role="region" :aria-label="zh ? '消息读取提示' : 'Message loading notice'" :aria-busy="running">
+      <WorkspaceIcon name="list" :size="16" />
+      <div>
+        <p class="message-error-title" role="status">{{ zh ? '部分消息暂时无法读取' : 'Some messages could not load' }}</p>
+        <p>{{ zh ? '已显示的内容会保留。' : 'Visible content is kept.' }}</p>
+        <button type="button" :aria-disabled="running" @click="retry"><WorkspaceIcon name="refresh" :size="16" />{{ running ? (zh ? '正在读取…' : 'Loading…') : (zh ? '重新读取消息' : 'Reload messages') }}</button>
+      </div>
+    </section>
     <template v-for="row in rows" :key="row.key"
       ><article v-if="row.kind === 'message'" class="timeline-message" :class="[row.message.role, { 'workspace-user-bubble': row.message.role === 'user' }]">
         <header>
@@ -67,7 +71,7 @@ const copyAnnouncement = ref('');
 let copyRevision = 0;
 let copyTimer: number | null = null;
 let revision = 0;
-let running = false;
+const running = ref(false);
 let again = false;
 type Row =
   | { kind: 'message'; key: string; message: PublicMessage; time: number }
@@ -129,12 +133,16 @@ function clearCopyState() {
   copyState.value = null;
   copyAnnouncement.value = '';
 }
+function retry() {
+  if (running.value) return;
+  void load();
+}
 async function load() {
-  if (running) {
+  if (running.value) {
     again = true;
     return;
   }
-  running = true;
+  running.value = true;
   const ticket = revision;
   const id = props.runId;
   const owner = getCurrentUserId();
@@ -153,7 +161,7 @@ async function load() {
   } catch {
     if (ticket === revision) error.value = true;
   } finally {
-    running = false;
+    running.value = false;
     if (again) {
       again = false;
       void load();
@@ -194,6 +202,16 @@ onBeforeUnmount(() => {
 });
 </script>
 <style scoped>
+.message-error { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px; margin: 18px 0; padding: 14px; border-radius: 8px; background: var(--surface); }
+.message-error > .workspace-icon { margin-top: 2px; color: var(--muted); }
+.message-error > div { display: grid; min-width: 0; gap: 6px; }
+.message-error p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.message-error .message-error-title { color: var(--text); font-weight: 600; }
+.message-error button { display: inline-flex; align-items: center; justify-self: start; gap: 6px; min-height: 32px; margin-top: 4px; padding: 6px 10px; border: 0; border-radius: 6px; background: var(--surface-raised); color: var(--text); font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
+.message-error button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.message-error button[aria-disabled="true"] { color: var(--muted); cursor: progress; }
+@media (hover: hover) and (pointer: fine) { .message-error button:hover:not([aria-disabled="true"]) { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .message-error button { min-height: 44px; } }
 .timeline-message {
   margin: 22px 0 28px;
   min-width: 0;
@@ -250,17 +268,6 @@ onBeforeUnmount(() => {
 .timeline-message.user {
   margin-left: auto;
   width: fit-content;
-}
-.message-error {
-  font-size: 12px;
-  color: var(--muted);
-}
-.message-error button {
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  text-decoration: underline;
-  cursor: pointer;
 }
 @media (max-width: 799px) {
   .timeline-message button {
