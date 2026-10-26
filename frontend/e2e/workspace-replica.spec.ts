@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
+import { installLazyDirectoryFixture } from './helpers/lazyDirectoryFixture';
 import { activityEvents, inputRunId, inputConversationId } from './helpers/agentInputFixtures';
 const runPath = `/artigen/agent/runs/${inputRunId}`;
 async function resources(page: Page, mode = '文件') {
@@ -1578,3 +1579,48 @@ test('loading more chats keeps its cursor on failure, prevents duplicate request
     expect(requests).toEqual([null, 'fixture-page-2', 'fixture-page-2']);
   } finally { pending.splice(0).forEach(resolve => resolve()); }
 });
+
+for (const language of ['zh', 'en']) {
+  test(`lazy local folders clear old errors, localize nested feedback and do not duplicate pending reads ${language}`, async ({ page }) => {
+    await installWorkspaceFixture(page);
+    if (language === 'en') await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.goto(runPath);
+    const zh = language === 'zh';
+    const navigation = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    await navigation.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const fixture = await installLazyDirectoryFixture(page);
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: zh ? '连接本机文件夹' : 'Connect local folder', exact: true }).click();
+    const folder = tree.getByRole('button', { name: 'reference-notes', exact: true });
+    await folder.click();
+    await expect.poll(fixture.calls).toBe(1);
+    await fixture.release(true);
+    await expect(tree.getByRole('status')).toHaveText(zh ? '目录暂时无法读取，点击文件夹重试。' : 'Could not read this folder. Select it to retry.');
+    await folder.press('Enter');
+    await expect.poll(fixture.calls).toBe(2);
+    await expect(tree.getByRole('status')).toHaveText(zh ? '正在读取目录…' : 'Reading folder…');
+    await folder.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+    await expect(folder).toHaveAttribute('aria-expanded', 'true');
+    await expect(folder).toHaveAttribute('aria-busy', 'true');
+    expect(await fixture.calls()).toBe(2);
+    await folder.press('Enter');
+    await fixture.release(false);
+    await expect(folder).toHaveAttribute('aria-busy', 'false');
+    await expect(folder).toHaveAttribute('aria-expanded', 'false');
+    await expect(tree.getByRole('status')).toHaveCount(0);
+    await folder.press('Enter');
+    await expect(tree.getByRole('button', { name: 'brief.txt', exact: true })).toBeVisible();
+    expect(await fixture.calls()).toBe(2);
+    await fixture.target('nested');
+    const nested = tree.getByRole('button', { name: 'nested', exact: true });
+    await nested.press('Enter');
+    await expect.poll(fixture.calls).toBe(3);
+    await fixture.release(true);
+    await expect(tree.getByRole('status')).toHaveText(zh ? '目录暂时无法读取，点击文件夹重试。' : 'Could not read this folder. Select it to retry.');
+    await nested.press('Enter');
+    await expect.poll(fixture.calls).toBe(4);
+    await fixture.release(false);
+    await expect(tree.getByRole('button', { name: 'nested-note.txt', exact: true })).toBeVisible();
+    await expect(tree.getByRole('status')).toHaveCount(0);
+  });
+}

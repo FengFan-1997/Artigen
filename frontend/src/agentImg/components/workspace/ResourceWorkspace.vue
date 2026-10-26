@@ -353,7 +353,7 @@
               <WorkspaceIcon name="plus" :size="14" />
             </button>
           </div>
-          <WorkspaceFileTree :nodes="projectNodes" :active="active?.file.id" @open="openNode" />
+          <WorkspaceFileTree :zh="zh" :nodes="projectNodes" :active="active?.file.id" @open="openNode" />
           <p v-if="!files.length">{{ zh ? '暂无文件' : 'No files yet' }}</p>
           <p v-else-if="search && !projectNodes.length" class="file-search-empty" role="status">
             <span>{{ zh ? '没有匹配的项目文件' : 'No matching project files' }}</span>
@@ -388,6 +388,7 @@
               v-else
               :key="localRootRevision"
               :nodes="localNodes"
+              :zh="zh"
               :read-directory="readLocalDirectory"
               :active="active?.file.id"
               @open="openNode"

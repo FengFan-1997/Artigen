@@ -5,6 +5,7 @@
         type="button"
         :class="{ selected: active === node.id }"
         :aria-expanded="node.directory ? expanded.has(node.id) : undefined"
+        :aria-busy="node.directory ? loading.has(node.id) : undefined"
         :aria-current="!node.directory && active === node.id ? 'page' : undefined"
         @click="choose(node)"
       >
@@ -27,10 +28,13 @@
           :size="14"
         /><span class="file-tree-name">{{ node.name }}</span>
       </button>
-      <p v-if="errors[node.id]" role="status">{{ errors[node.id] }}</p>
+      <p v-if="loading.has(node.id) || errors[node.id]" class="directory-feedback" role="status">
+        {{ loading.has(node.id) ? (zh ? '正在读取目录…' : 'Reading folder…') : (zh ? '目录暂时无法读取，点击文件夹重试。' : 'Could not read this folder. Select it to retry.') }}
+      </p>
       <WorkspaceFileTree
         v-if="expanded.has(node.id)"
         :nodes="children[node.id] || node.children || []"
+        :zh="zh"
         :active="active"
         :read-directory="readDirectory"
         @open="$emit('open', $event)"
@@ -44,13 +48,15 @@ import WorkspaceIcon from './WorkspaceIcon.vue';
 import type { TreeNode } from '../../services/workspaceTree';
 const props = defineProps<{
   nodes: TreeNode[];
+  zh: boolean;
   active?: string;
   readDirectory?: (node: TreeNode) => Promise<TreeNode[]>;
 }>();
 const emit = defineEmits<{ open: [node: TreeNode] }>();
 const expanded = ref(new Set<string>());
 const children = ref<Record<string, TreeNode[]>>({});
-const errors = ref<Record<string, string>>({});
+const errors = ref<Record<string, boolean>>({});
+const loading = ref(new Set<string>());
 async function choose(node: TreeNode) {
   if (!node.directory) {
     emit('open', node);
@@ -61,12 +67,16 @@ async function choose(node: TreeNode) {
     return;
   }
   expanded.value.add(node.id);
-  if (props.readDirectory && !children.value[node.id]) {
+  if (props.readDirectory && !children.value[node.id] && !loading.value.has(node.id)) {
+    loading.value.add(node.id);
+    delete errors.value[node.id];
     try {
       children.value[node.id] = await props.readDirectory(node);
     } catch {
-      errors.value[node.id] = '无法读取目录，请重新授权后重试。';
+      errors.value[node.id] = true;
       expanded.value.delete(node.id);
+    } finally {
+      loading.value.delete(node.id);
     }
   }
 }
@@ -122,9 +132,12 @@ async function choose(node: TreeNode) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.file-tree p {
+.file-tree button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.directory-feedback {
+  margin: 4px 7px 8px 43px;
+  color: var(--muted);
   font-size: 12px;
-  color: var(--danger);
+  line-height: 1.6;
 }
 @media (max-width: 799px), (pointer: coarse) {
   .file-tree button {
