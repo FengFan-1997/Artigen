@@ -51,9 +51,9 @@
         <h1>{{ zh ? '任务暂时无法打开' : 'This task could not open' }}</h1>
         <p role="alert">{{ loadError }}</p>
         <div class="load-actions">
-          <router-link v-if="loadErrorKind === 'auth'" :to="{ path: '/login', query: { returnTo: route.fullPath } }">{{ zh ? '重新登录' : 'Sign in again' }}</router-link>
-          <button v-else-if="loadErrorKind !== 'not-found'" type="button" :disabled="loadingRun" @click="load()">{{ loadingRun ? (zh ? '正在重试…' : 'Retrying…') : (zh ? '重新读取任务' : 'Retry loading') }}</button>
-          <router-link to="/artigen/agent">{{ zh ? '返回任务历史' : 'Back to task history' }}</router-link>
+          <router-link v-if="loadErrorKind === 'auth'" class="load-primary" :to="{ path: '/login', query: { returnTo: route.fullPath } }"><WorkspaceIcon name="arrow-right" :size="16" />{{ zh ? '重新登录' : 'Sign in again' }}</router-link>
+          <button v-else-if="loadErrorKind !== 'not-found'" class="load-primary" type="button" :disabled="loadingRun" @click="load()"><WorkspaceIcon name="refresh" :size="16" />{{ loadingRun ? (zh ? '正在重试…' : 'Retrying…') : (zh ? '重新读取任务' : 'Retry loading') }}</button>
+          <router-link :class="loadErrorKind === 'not-found' ? 'load-primary' : 'load-secondary'" to="/artigen/agent">{{ zh ? '返回任务历史' : 'Back to task history' }}</router-link>
         </div>
       </template>
       <template v-else><h1>{{ zh ? '正在读取任务…' : 'Loading this task…' }}</h1><p role="status">{{ zh ? '读取完成后会显示已有进度和成果。' : 'Your saved progress and results will appear here.' }}</p></template>
@@ -1235,11 +1235,22 @@ onBeforeUnmount(() => {
 .preview-modal iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: #fff; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
-.run-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 16px; }
-.run-load-state h1 { margin: 0; font-size: 24px; }
-.run-load-state p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
-.load-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.load-actions :is(button,a) { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }
+.run-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 12px; }
+.run-load-state > .workspace-icon { color: var(--muted); }
+.run-load-state h1 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; }
+.run-load-state p { max-width: 48ch; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.load-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.load-actions :is(button,a) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 7px; color: var(--text); font: inherit; font-size: 13px; line-height: 20px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }
+.load-actions .load-primary { font-weight: 500; }
+.load-actions .load-secondary { color: var(--muted); background: transparent; }
+.load-actions :is(button,a):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.load-actions button:disabled { opacity: .5; cursor: progress; }
+@media (hover: hover) and (pointer: fine) {
+  .load-actions :is(button,a):hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .load-actions :is(button,a) { min-height: 44px; }
+}
 .run-progress-header::-webkit-details-marker { display: none; }
 .run-progress-header > span { margin-left: auto; white-space: nowrap; }
 .settlement-summary { display:grid; width:min(100%,360px); gap:6px; margin:14px 0 0; }
