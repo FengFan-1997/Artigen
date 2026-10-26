@@ -434,3 +434,10 @@ Chrome目录由用户主动选择，按需展开；目录连接不上传。账�
 - 原来的预览 section 位于移动抽屉设置为 inert 的会话背景内，导致预览虽然可见，关闭按钮却无法获得焦点。改用原生 modal dialog 进入浏览器顶层，删除手写 Tab 循环与全局 Escape 监听；原生模态负责焦点隔离，关闭后返回原入口。ZIP 读取、CSP、iframe sandbox 与 referrerpolicy 保持原有边界。
 - 系统 Chrome 的 1440px 桌面和 390px 手机、深浅主题回归共 4/4 通过，覆盖标题几何、完整名称、顶层模态、关闭按钮初始焦点、背景不能抢焦点、Escape/按钮关闭和焦点返回。前端 type-check、目标 ESLint、文档与 workspace 门禁通过。
 - 真实本地 Vue 页面对照图保存在本机 `Artigen-agent-chrome-polish/preview-header-20261026/`；使用合成 Run 和实际解压的测试 ZIP，不代表 DEV/Production 或真实模型任务。本轮未部署、push、创建 PR 或合并。
+
+## 2026-10-26 Markdown 行内代码与代码块可读性（本地候选，未部署）
+
+- 共享 Markdown 渲染器为行内参数、路径和命令增加中性底色及紧凑内距，长路径换行时保持每行底色完整，不添加装饰性边框。围栏代码沿用容器 13px 字号，修复通用 code 的 0.9em 规则将其二次缩至 11.7px 的问题。
+- Markdown 解析、安全设置和文本内容不变；代码块保留原始空白与局部横向滚动。共享组件同时用于公开消息和文件预览，本轮实拍验收入口为文件预览。
+- 系统 Chrome 两项定向浏览器回归通过：代码可读性覆盖深浅主题各 1440px/390px 四种组合，原有表格层级覆盖两种组合。验证长路径不撑宽页面或文档、代码文本保持原样及代码块可横向滚动；前端 type-check、目标 ESLint、文档与 workspace 门禁通过。
+- 四组真实改前/改后截图位于本机 `Artigen-agent-chrome-polish/inline-code-20261026/`，使用相同本地 Vue 页面与合成工作区文件数据。本轮未部署、push、创建 PR 或合并。

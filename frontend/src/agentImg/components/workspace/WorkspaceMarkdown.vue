@@ -95,6 +95,17 @@ const openResource = (event: MouseEvent) => {
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-size: 0.9em;
 }
+.workspace-markdown :deep(:not(pre) > code) {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--surface-hover);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.workspace-markdown :deep(pre code) {
+  font-size: inherit;
+}
 .workspace-markdown :deep(table) {
   display: block;
   max-width: 100%;

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
 import { inputRunId } from './helpers/agentInputFixtures';
 const runPath = `/artigen/agent/runs/${inputRunId}`;
@@ -170,6 +171,42 @@ test('Markdown table headings stay distinct in dark desktop and light mobile wor
       true
     );
     await context.close();
+  }
+});
+
+test('Markdown code stays readable while long paths wrap and fenced lines scroll locally', async ({ browser }) => {
+  const longPath = `projects/${'brand-launch-'.repeat(8)}report.md`;
+  const command = 'const report = await generateReport({ projectId: "brand-launch", outputPath: "outputs/delivery/report.md", includeEvidence: true });';
+  const text = ['# 文件与执行参数', '', '继续使用 `projectId` 和 `draftVersion` 关联本次任务。保存后运行 `pnpm run build`，再打开产物检查结果。', '', `产物路径：\`${longPath}\`。`, '', '```ts', command, '```', '', '代码中的空格和换行应保持原样；长代码行在代码区域内滚动。'].join('\n');
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const { workspace } = await installWorkspaceFixture(page, theme);
+      Object.assign(workspace.files[0], { text, byteSize: Buffer.byteLength(text), sha256: createHash('sha256').update(text).digest('hex') });
+      await page.goto(runPath);
+      await openBrief(page);
+      const markdown = page.locator('.document-preview .workspace-markdown');
+      await expect(markdown).toContainText('文件与执行参数');
+      await expect(markdown.locator('p code')).toHaveText(['projectId', 'draftVersion', 'pnpm run build', longPath]);
+      const fenced = markdown.locator('pre code');
+      expect(await fenced.textContent()).toBe(`${command}\n`);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_INLINE_CODE_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_INLINE_CODE_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      const pre = markdown.locator('pre');
+      const scrollLeft = await pre.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+        const offset = element.scrollLeft;
+        element.scrollLeft = 0;
+        return offset;
+      });
+      expect(scrollLeft).toBeGreaterThan(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      const documentOverflow = await page.locator('.document-preview').evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+      expect(documentOverflow).toBe(false);
+      expect.soft(await fenced.evaluate((element) => parseFloat(getComputedStyle(element).fontSize)), `${theme} ${viewport.width}px fenced code must remain readable`).toBeGreaterThanOrEqual(12);
+      await context.close();
+    }
   }
 });
 
