@@ -194,9 +194,13 @@
             </div>
           </div>
           <template v-else-if="active">
-            <p v-if="active.loading" class="resource-loading" role="status">
-              {{ zh ? '正在读取文件…' : 'Opening file…' }}
-            </p>
+            <div v-if="active.loading" class="resource-loading" role="region" :aria-label="zh ? '文件读取' : 'File loading'" aria-busy="true">
+              <WorkspaceIcon name="file" :size="16" />
+              <div>
+                <p class="resource-loading-name" :title="active.file.path">{{ filename(active.file.path) }}</p>
+                <p role="status">{{ zh ? '正在读取文件…' : 'Opening file…' }}</p>
+              </div>
+            </div>
             <div v-else-if="active.error" class="resource-empty file-read-error">
               <div class="file-read-content">
                 <WorkspaceIcon name="file" :size="20" />
@@ -1929,10 +1933,18 @@ button:disabled {
   .resource-notice-close { width: 44px; height: 44px; }
 }
 .resource-loading {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
   padding: 20px;
   font-size: 13px;
   color: var(--muted);
 }
+.resource-loading > .workspace-icon { margin-top: 3px; }
+.resource-loading p { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.resource-loading .resource-loading-name { margin-bottom: 4px; color: var(--text); font-weight: 500; }
 .changes-panel {
   overflow: auto;
   overscroll-behavior: contain;
