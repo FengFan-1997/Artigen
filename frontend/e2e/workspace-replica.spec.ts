@@ -2180,3 +2180,41 @@ for (const language of ['zh', 'en']) {
     } finally { pending.splice(0).forEach(resolve => resolve()); }
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`version chooser is labelled and opens read-only history without losing drafts ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const { workspace } = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = workspace.files[0].text;
+    const writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/api/workspace/') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route('**/api/workspace/projects/*/files/*/content?revision=1', route => route.fulfill({ json: { file: workspace.files[0], text: '# Historical revision\n\nOriginal copy.' } }));
+    await page.goto(runPath);
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    const editor = page.getByRole('textbox', { name: '文件编辑器', exact: true });
+    await editor.fill('# 尚未保存的修改');
+    const footer = page.locator('.file-status');
+    const control = footer.locator('.file-version-control');
+    const select = control.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true });
+    await expect(control.locator('span')).toHaveText(zh ? '比较版本' : 'Compare version');
+    expect(await control.evaluate(el => (el as HTMLLabelElement).control === el.querySelector('select'))).toBe(true);
+    await select.focus(); await select.press('Tab'); await page.keyboard.press('Shift+Tab');
+    await expect(select).toBeFocused();
+    expect(await select.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await select.selectOption('1');
+    const changes = page.locator('.changes-panel');
+    await expect(changes).toContainText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
+    await expect(changes.locator('.cm-mergeView')).toBeVisible();
+    await expect(changes.locator('[contenteditable="true"]')).toHaveCount(0);
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    await expect(editor).toContainText('尚未保存的修改');
+    await expect(footer).toContainText(zh ? '未保存 · v1' : 'Unsaved · v1');
+    expect(workspace.files[0].text).toBe(original);
+    expect(workspace.saves).toHaveLength(0); expect(writes).toEqual([]);
+  });
+}

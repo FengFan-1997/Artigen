@@ -300,23 +300,25 @@
                   {{ zh ? '加入会话上下文' : 'Add to chat context' }}</button
                 ><button v-if="active.text !== undefined" @click="$emit('changes')">
                   {{ zh ? '查看变更' : 'View changes' }}</button
-                ><select
-                  v-if="versions.length"
-                  :aria-label="zh ? '查看文件版本' : 'View file versions'"
-                  @change="
-                    ($event.target as HTMLSelectElement).value !== '' &&
-                    compareVersion(Number(($event.target as HTMLSelectElement).value))
-                  "
-                >
-                  <option value="">{{ zh ? '历史版本' : 'Versions' }}</option>
-                  <option
-                    v-for="version in versions"
-                    :key="version.revision"
-                    :value="version.revision"
+                ><label v-if="versions.length" class="file-version-control">
+                  <span>{{ zh ? '比较版本' : 'Compare version' }}</span>
+                  <select
+                    :aria-label="zh ? '查看文件版本' : 'View file versions'"
+                    @change="
+                      ($event.target as HTMLSelectElement).value !== '' &&
+                      compareVersion(Number(($event.target as HTMLSelectElement).value))
+                    "
                   >
-                    v{{ version.revision }}
-                  </option>
-                </select>
+                    <option value="">{{ zh ? '选择…' : 'Choose…' }}</option>
+                    <option
+                      v-for="version in versions"
+                      :key="version.revision"
+                      :value="version.revision"
+                    >
+                      v{{ version.revision }}
+                    </option>
+                  </select>
+                </label>
               </div>
             </footer>
           </template>
@@ -1888,21 +1890,31 @@ button:disabled {
   color: var(--muted);
   background: transparent;
 }
-.file-status select {
-  min-width: 0;
-  max-width: 130px;
+.file-version-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 0;
+  padding-inline-start: 6px;
+  white-space: nowrap;
+}
+.file-version-control select {
+  min-width: 82px;
+  max-width: 120px;
   min-height: 30px;
   font: inherit;
-  color: var(--muted);
-  background: transparent;
+  color: var(--text);
+  background: var(--surface-raised);
   border: 0;
   border-radius: 6px;
   padding: 4px 6px;
   cursor: pointer;
 }
+.file-version-control select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) {
   .file-status button:hover:not(:disabled),
-  .file-status select:hover {
+  .file-version-control select:hover {
     color: var(--text);
     background: var(--surface-hover);
   }
@@ -2046,6 +2058,7 @@ button:disabled {
     min-width: 44px;
     min-height: 44px;
   }
+  .file-version-control select { font-size: 16px; }
   .file-toolbar {
     padding: 6px;
   }
