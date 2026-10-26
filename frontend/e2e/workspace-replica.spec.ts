@@ -210,6 +210,63 @@ test('Markdown code stays readable while long paths wrap and fenced lines scroll
   }
 });
 
+test('image zoom controls remain reachable while the enlarged canvas scrolls', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      await installWorkspaceFixture(page, theme);
+      await page.goto(runPath);
+      await resources(page);
+      const tree = page.getByRole('complementary', { name: '文件目录' });
+      await tree.getByRole('button', { name: 'outputs', exact: true }).click();
+      await tree.getByRole('button', { name: 'preview.png', exact: true }).click();
+      const viewer = page.locator('.image-viewer');
+      const image = viewer.locator('img');
+      await expect(image).toBeVisible();
+      await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      const increase = viewer.getByRole('button', { name: '放大图片', exact: true });
+      const decrease = viewer.getByRole('button', { name: '缩小图片', exact: true });
+      const reset = viewer.getByRole('button').nth(1);
+      for (let i = 0; i < 12; i++) await increase.click();
+      await expect(reset).toHaveText('400%');
+      const canvas = viewer.locator('.image-canvas');
+      const scroll = await canvas.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.scrollLeft = element.scrollWidth;
+        return { top: element.scrollTop, left: element.scrollLeft };
+      });
+      expect(scroll.top).toBeGreaterThan(0);
+      expect(scroll.left).toBeGreaterThan(0);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_IMAGE_ZOOM_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_IMAGE_ZOOM_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      const reachable = await reset.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      });
+      expect.soft(reachable, `${theme} ${viewport.width}px zoom reset remains reachable after scrolling`).toBe(true);
+      expect.soft(await increase.isDisabled(), '400% disables zoom in').toBe(true);
+      await reset.click();
+      await expect(reset).toHaveText('100%');
+      await expect(reset).toHaveAccessibleName('适合宽度，当前 100%');
+      await expect.poll(() => canvas.evaluate((element) => element.scrollLeft)).toBe(0);
+      await expect.poll(() => canvas.evaluate((element) => element.scrollTop)).toBe(0);
+      for (let i = 0; i < 3; i++) await decrease.click();
+      await expect(reset).toHaveText('25%');
+      expect.soft(await decrease.isDisabled(), '25% disables zoom out').toBe(true);
+      await reset.click();
+      await expect(reset).toHaveText('100%');
+      if (viewport.width < 800) for (const button of [increase, decrease, reset]) {
+        const rect = await button.boundingBox();
+        expect(rect!.width).toBeGreaterThanOrEqual(44);
+        expect(rect!.height).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await context.close();
+    }
+  }
+});
+
 test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
   await installWorkspaceFixture(page);
   await page.goto(runPath);

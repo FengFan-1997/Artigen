@@ -10,6 +10,7 @@
     <template v-else-if="name === 'panel-right'"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M15 4v16"/></template>
     <template v-else-if="name === 'close'"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></template>
     <template v-else-if="name === 'plus'"><path d="M12 5v14M5 12h14"/></template>
+    <template v-else-if="name === 'minus'"><path d="M5 12h14"/></template>
     <template v-else-if="name === 'search'"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></template>
     <template v-else-if="name === 'folder'"><path d="M3.5 7.5h6l2-2h9v14h-17z"/></template>
     <template v-else-if="name === 'tools'"><path d="M14.5 5.5a4 4 0 0 0 4.7 5.9l-8.8 8.8-3.6-3.6 8.8-8.8a4 4 0 0 0-1.1-2.3Z"/></template>
@@ -44,7 +45,7 @@
 
 <script setup lang="ts">
 type WorkspaceIconName =
-  | 'panel-left' | 'panel-right' | 'close' | 'plus' | 'search' | 'folder' | 'tools'
+  | 'panel-left' | 'panel-right' | 'close' | 'plus' | 'minus' | 'search' | 'folder' | 'tools'
   | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list'
   | 'subagents' | 'agent' | 'file' | 'attachment' | 'send' | 'refresh' | 'arrow-right'
   | 'chevron-right' | 'chevron-down' | 'trash' | 'download' | 'play' | 'stop' | 'pause'

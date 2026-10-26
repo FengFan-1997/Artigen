@@ -186,25 +186,35 @@
               "
               class="image-viewer"
             >
-              <div>
+              <div class="image-controls" role="group" :aria-label="zh ? '图片缩放' : 'Image zoom'">
                 <button
                   :aria-label="zh ? '缩小图片' : 'Zoom out'"
+                  :disabled="zoom <= 0.25"
                   @click="zoom = Math.max(0.25, zoom - 0.25)"
                 >
-                  −</button
-                ><button @click="zoom = 1">{{ Math.round(zoom * 100) }}%</button
-                ><button
+                  <WorkspaceIcon name="minus" :size="18" />
+                </button>
+                <button
+                  class="image-zoom-reset"
+                  :aria-label="zh ? `适合宽度，当前 ${Math.round(zoom * 100)}%` : `Fit to width, currently ${Math.round(zoom * 100)}%`"
+                  :title="zh ? '适合宽度' : 'Fit to width'"
+                  @click="zoom = 1"
+                >{{ Math.round(zoom * 100) }}%</button>
+                <button
                   :aria-label="zh ? '放大图片' : 'Zoom in'"
+                  :disabled="zoom >= 4"
                   @click="zoom = Math.min(4, zoom + 0.25)"
                 >
-                  +
+                  <WorkspaceIcon name="plus" :size="18" />
                 </button>
               </div>
-              <img
-                :src="active.objectUrl"
-                :alt="filename(active.file.path)"
-                :style="{ width: 100 * zoom + '%', maxWidth: zoom === 1 ? '100%' : 'none' }"
-              />
+              <div class="image-canvas">
+                <img
+                  :src="active.objectUrl"
+                  :alt="filename(active.file.path)"
+                  :style="{ width: 100 * zoom + '%', maxWidth: zoom === 1 ? '100%' : 'none' }"
+                />
+              </div>
             </div>
             <WorkspacePdf
               v-else-if="active.file.mimeType === 'application/pdf' && active.blob"
@@ -1475,28 +1485,55 @@ button:disabled {
   width: 100%;
 }
 .image-viewer {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  padding: 20px;
+  overflow: hidden;
 }
-.image-viewer > div {
+.image-controls {
   display: flex;
-  gap: 8px;
-  justify-content: center;
-  margin-bottom: 20px;
+  flex: none;
+  align-self: center;
+  align-items: center;
+  gap: 2px;
+  margin: 12px 16px 0;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface-hover);
 }
-.image-viewer button {
+.image-controls button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 0;
-  padding: 7px 10px;
   border-radius: 6px;
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
 }
-.image-viewer img {
+.image-controls .image-zoom-reset {
+  width: 60px;
+  font-variant-numeric: tabular-nums;
+}
+.image-controls button:hover:not(:disabled) {
+  background: var(--surface);
+}
+.image-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.image-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+}
+.image-canvas img {
   display: block;
   max-height: none;
   object-fit: contain;
