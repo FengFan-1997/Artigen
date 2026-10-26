@@ -307,12 +307,20 @@
           class="resource-tree"
           :aria-label="zh ? '文件目录' : 'File explorer'"
         >
-          <label class="file-search"
-            ><WorkspaceIcon name="search" /><input
+          <div class="file-search">
+            <WorkspaceIcon name="search" />
+            <input
+              ref="fileSearchInput"
               v-model="search"
-              :placeholder="zh ? '筛选已加载文件…' : 'Filter loaded files…'"
+              :placeholder="zh ? '筛选项目文件…' : 'Filter project files…'"
+              :title="zh ? '仅筛选已加载的项目文件' : 'Filters loaded project files only'"
               :aria-label="zh ? '筛选文件' : 'Filter files'"
-          /></label>
+              @keydown.esc="onFileSearchEscape"
+            />
+            <button v-if="search" class="file-search-clear" type="button" :aria-label="zh ? '清除文件筛选' : 'Clear file filter'" @click="clearFileSearch">
+              <WorkspaceIcon name="close" :size="14" />
+            </button>
+          </div>
           <div class="tree-section-heading">
             <span>{{ zh ? '项目文件' : 'Project files' }}</span
             ><button
@@ -330,6 +338,10 @@
           </div>
           <WorkspaceFileTree :nodes="projectNodes" :active="active?.file.id" @open="openNode" />
           <p v-if="!files.length">{{ zh ? '暂无文件' : 'No files yet' }}</p>
+          <p v-else-if="search && !projectNodes.length" class="file-search-empty" role="status">
+            <span>{{ zh ? '没有匹配的项目文件' : 'No matching project files' }}</span>
+            <span>{{ zh ? '仅筛选已加载的项目文件。' : 'Only loaded project files are filtered.' }}</span>
+          </p>
           <div class="tree-section-heading">
             <span>{{ zh ? '本机文件' : 'Local files' }}</span
             ><button
@@ -473,6 +485,21 @@ const permission = ref(false);
 const localNodes = ref<TreeNode[]>([]);
 const localRootRevision = ref(0);
 const search = ref('');
+const fileSearchInput = ref<HTMLInputElement | null>(null);
+const clearFileSearch = () => {
+  search.value = '';
+  fileSearchInput.value?.focus();
+};
+const onFileSearchEscape = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) {
+    event.stopPropagation();
+    return;
+  }
+  if (!search.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  clearFileSearch();
+};
 const treeVisible = ref(true);
 const zoom = ref(1);
 const versions = ref<Array<{ revision: number; createdAt: string; sha256: string }>>([]);
@@ -1378,12 +1405,13 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 6px;
   align-items: center;
-  padding: 7px;
+  padding: 3px 6px;
   border: 1px solid var(--border);
   border-radius: 7px;
 }
 .file-search input {
   width: 100%;
+  min-height: 28px;
   min-width: 0;
   background: transparent;
   color: var(--text);
@@ -1392,6 +1420,24 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 12px;
 }
+.file-search:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+.file-search input:focus-visible { outline: 0; }
+.file-search-clear {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+.file-search-clear:hover { color: var(--text); background: var(--surface-hover); }
+.file-search-empty { display: grid; gap: 2px; margin: 8px 0 12px; }
+.file-search-empty > span:first-child { color: var(--text); font-weight: 500; }
 .tree-section-heading {
   display: flex;
   align-items: center;

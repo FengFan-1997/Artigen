@@ -27,6 +27,61 @@ async function openBrief(page: Page) {
 
 for (const theme of ['dark', 'light']) {
   for (const width of [1440, 390]) {
+    test(`file filtering explains empty results and clears before closing the inspector ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+        const page = await context.newPage();
+        await installWorkspaceFixture(page, theme);
+        await page.goto(runPath);
+        await resources(page);
+        const tree = page.getByRole('complementary', { name: '文件目录' });
+        const search = tree.getByRole('textbox', { name: '筛选文件', exact: true });
+        await search.fill('not-a-matching-project-file');
+        await page.mouse.move(0, 0);
+        const capture = process.env.ARTIGEN_FILE_FILTER_CAPTURE;
+        if (capture) {
+          await page.screenshot({ path: `${capture}/${theme}-${width}.png`, animations: 'disabled' });
+          await tree.screenshot({ path: `${capture}/${theme}-${width}-tree.png`, animations: 'disabled' });
+        }
+        await expect(tree.getByRole('status')).toContainText('没有匹配的项目文件');
+        await expect(tree.getByRole('status')).toContainText('仅筛选已加载的项目文件');
+        await search.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', isComposing: true, bubbles: true });
+        await expect(search).toHaveValue('not-a-matching-project-file');
+        await expect(tree).toBeVisible();
+        await search.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 229, bubbles: true });
+        await expect(search).toHaveValue('not-a-matching-project-file');
+        await expect(tree).toBeVisible();
+        await search.press('Escape');
+        await expect(search).toHaveValue('');
+        await expect(search).toBeFocused();
+        await expect(tree).toBeVisible();
+        await expect(tree.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
+        await search.fill('not-a-matching-project-file');
+        const clear = tree.getByRole('button', { name: '清除文件筛选', exact: true });
+        expect(await clear.evaluate((element) => { const r = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); })).toBe(true);
+        if (width === 390) { const rect = await clear.boundingBox(); expect(rect!.width).toBeGreaterThanOrEqual(44); expect(rect!.height).toBeGreaterThanOrEqual(44); }
+        await clear.focus();
+        await clear.press('Enter');
+        await expect(search).toHaveValue('');
+        await expect(search).toBeFocused();
+        await expect(clear).toHaveCount(0);
+        await expect(tree.getByRole('status')).toHaveCount(0);
+        await expect(tree.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+        if (width === 390) {
+          await search.press('Escape');
+          await expect(tree).toBeHidden();
+          await expect(page.getByRole('button', { name: '打开检查器', exact: true })).toBeFocused();
+        }
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
     test(`user bubbles share readable geometry for objectives and saved messages ${theme} ${width}`, async ({ browser }) => {
       const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
       try {
