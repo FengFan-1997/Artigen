@@ -248,13 +248,19 @@
               :title="filename(active.file.path)"
             ></iframe>
             <pre v-else-if="active.text !== undefined" class="text-preview">{{ active.text }}</pre>
-            <div v-else class="resource-empty">
-              <WorkspaceIcon name="file" :size="20" />
-              <h2>{{ filename(active.file.path) }}</h2>
-              <p>{{ active.file.mimeType }} · {{ formatSize(active.file.byteSize) }}</p>
-              <button v-if="active.blob" @click="download(active)">
-                {{ zh ? '下载后打开' : 'Download to open' }}
-              </button>
+            <div v-else class="resource-empty binary-preview">
+              <div class="binary-details">
+                <WorkspaceIcon name="file" :size="20" />
+                <h2 :title="active.file.path">{{ filename(active.file.path) }}</h2>
+                <p>{{ zh ? '此文件暂不支持在线预览。' : 'No preview is available for this file.' }}</p>
+                <dl class="binary-properties" :aria-label="zh ? '文件信息' : 'File information'">
+                  <div><dt>{{ zh ? '文件类型' : 'File type' }}</dt><dd>{{ active.file.mimeType }}</dd></div>
+                  <div><dt>{{ zh ? '文件大小' : 'File size' }}</dt><dd>{{ formatSize(active.file.byteSize) }}</dd></div>
+                </dl>
+                <button v-if="active.blob" class="binary-download" type="button" @click="download(active)">
+                  <WorkspaceIcon name="download" :size="16" />{{ zh ? '下载后打开' : 'Download to open' }}
+                </button>
+              </div>
             </div>
             <footer v-if="!active.loading" class="file-status">
               <span class="file-save-state"
@@ -1614,6 +1620,32 @@ button:disabled {
   line-height: 1.7;
   margin: 0;
   max-width: 34ch;
+}
+.binary-details {
+  display: grid;
+  width: min(100%, 360px);
+  min-width: 0;
+  gap: 14px;
+  text-align: left;
+}
+.binary-details h2 {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.binary-details p { max-width: none; }
+.binary-properties { display: grid; gap: 8px; margin: 0; font-size: 12px; line-height: 1.6; }
+.binary-properties > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px; }
+.binary-properties dt { color: var(--muted); }
+.binary-properties dd { min-width: 0; margin: 0; color: var(--text); text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.binary-details .binary-download { justify-self: start; gap: 6px; min-height: 36px; padding: 8px 12px; font-size: 13px; background: var(--surface-raised); }
+.binary-download:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .binary-details .binary-download:hover { background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .binary-details .binary-download { min-height: 44px; }
 }
 .document-preview {
   padding: 24px;

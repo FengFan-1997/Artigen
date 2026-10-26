@@ -971,6 +971,41 @@ test('public run messages expose a keyboard and touch friendly copy action with 
   await mobileContext.close();
 });
 
+test('binary preview contains long metadata and downloads the original bytes on touch screens', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
+  try {
+    const page = await context.newPage();
+    const { workspace } = await installWorkspaceFixture(page, 'light');
+    const name = `brand-reference-${'2026abcdef'.repeat(12)}.bundle`;
+    const mime = `application/vnd.artigen.${'reference'.repeat(8)}`;
+    const bytes = Buffer.from(Array.from({ length: 2048 }, (_, i) => (i * 41) % 256));
+    Object.assign(workspace.files[1], { path: `archives/${name}`, mimeType: mime, byteSize: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+    await page.route(`**${workspace.files[1].url}`, (route) => route.fulfill({ contentType: mime, body: bytes }));
+    await page.goto(runPath);
+    await resources(page);
+    const tree = page.getByRole('complementary', { name: '文件目录' });
+    await tree.getByRole('button', { name: 'archives', exact: true }).click();
+    await tree.getByRole('button', { name, exact: true }).click();
+    const preview = page.locator('.file-viewer .resource-empty');
+    await expect(preview.getByRole('heading', { name, exact: true })).toBeVisible();
+    expect(await preview.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await expect(preview.locator('dd')).toHaveText([mime, '2 KB']);
+    const download = preview.getByRole('button', { name: '下载后打开', exact: true });
+    expect((await download.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const pending = page.waitForEvent('download');
+    await download.click();
+    const file = await pending;
+    expect(file.suggestedFilename()).toBe(name);
+    const stream = await file.createReadStream();
+    expect(stream).not.toBeNull();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(bytes);
+    await file.delete();
+    expect(workspace.saves).toHaveLength(0);
+  } finally { await context.close(); }
+});
+
 test('project navigation load failures keep their own retry and readable run fallback', async ({ page }) => {
   await installWorkspaceFixture(page);
   let fail = true;
