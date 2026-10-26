@@ -2261,3 +2261,40 @@ for (const language of ['zh', 'en']) {
     expect(workspace.githubRequests.every(method => method === 'GET')).toBe(true);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`audit rows keep public summaries readable and keyboard scrolling stable ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const events = Array.from({ length: 40 }, (_, i) => ({ ...activityEvents(1)[0]!, eventId: String(9600 + i), type: i === 1 ? 'verification.repair_requested' : 'context.compacted', summary: i === 0 ? 'workspace/reports/very-long-generated-file-name-without-spaces-'.repeat(6) : 'Preserve public evidence and unfinished checks.', createdAt: new Date(Date.parse('2026-10-15T03:00:00Z') + i * 1000).toISOString() }));
+    events[2] = { ...events[2]!, type: 'tool.call.completed', summary: 'PRIVATE_AUDIT_TEST_MARKER', data: { toolName: 'browser_dom', ok: false, command: 'PRIVATE_AUDIT_TEST_MARKER' } };
+    await page.goto(runPath); await fixture.emit(events);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留尚未发送的检查意见');
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '任务' : 'Task', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? '计划' : 'Plan', exact: true }).click();
+    const audit = page.locator('.audit-details'); await audit.locator(':scope > summary').click();
+    const list = audit.getByRole('list', { name: zh ? '审计事件' : 'Audit events', exact: true });
+    const rows = list.getByRole('listitem'); await expect(rows).toHaveCount(40);
+    await expect(rows.first().locator('small')).toHaveText(events[0]!.summary);
+    await expect(rows.first().locator('time')).toHaveAttribute('datetime', events[0]!.createdAt);
+    await expect(audit).not.toContainText('PRIVATE_AUDIT_TEST_MARKER');
+    expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await list.focus(); await list.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(list).toBeFocused();
+    expect(await list.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await list.press('End'); await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+    await list.press('Home'); await expect.poll(() => list.evaluate(el => el.scrollTop)).toBe(0);
+    await list.evaluate(el => { el.scrollTop = 80; });
+    await fixture.emit([{ ...events[0]!, eventId: '9700', summary: 'A new public event.', createdAt: '2026-10-15T03:10:00Z' }]);
+    await expect(rows).toHaveCount(41);
+    expect(await list.evaluate(el => el.scrollTop)).toBe(80); await expect(list).toBeFocused();
+    await expect(audit.locator(':scope > summary')).toContainText('41');
+    await audit.locator(':scope > summary').press('Enter'); await expect(list).not.toBeVisible();
+    await audit.locator(':scope > summary').press('Enter'); await expect(list).toBeVisible();
+    await page.getByRole('tab', { name: zh ? '环境' : 'Environment', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '关闭检查器' : 'Close inspector', exact: true }).click();
+    await expect(draft).toHaveValue('保留尚未发送的检查意见');
+    expect(fixture.state.inputs).toHaveLength(0);
+  });
+}

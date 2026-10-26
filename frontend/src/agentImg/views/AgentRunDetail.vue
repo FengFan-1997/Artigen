@@ -246,10 +246,10 @@
         </ol>
       </div>
       <TechnicalDetails class="audit-details" :label="`${zh ? '审计记录' : 'Audit log'} · ${events.length}`">
-        <div>
-          <article v-for="event in events" :key="`audit-${event.eventId}`">
-            <time>{{ formatTime(event.createdAt) }}</time>
-            <span><b>{{ eventLabel(event.type) }}</b><small>{{ eventSummary(event) }}</small></span>
+        <div class="audit-entries" role="list" :aria-label="zh ? '审计事件' : 'Audit events'" tabindex="0">
+          <article v-for="event in events" :key="`audit-${event.eventId}`" role="listitem">
+            <header><b>{{ eventLabel(event.type) }}</b><time :datetime="event.createdAt">{{ formatTime(event.createdAt) }}</time></header>
+            <small>{{ eventSummary(event) }}</small>
           </article>
         </div>
       </TechnicalDetails>
@@ -1176,13 +1176,13 @@ onBeforeUnmount(() => {
 .plan-state { color: var(--muted); font-size: 12px; line-height: 18px; }
 .execution-plan li.active .plan-state { color: var(--acid-text); }
 .audit-details { margin-top: 10px; }
-.audit-details :deep(.technical-details-content) { max-height: 300px; overflow: auto; }
-.audit-details :deep(.technical-details-content) > div { display: grid; gap: 9px; }
-.audit-details article { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
-.audit-details time { color: var(--muted-2); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.audit-details article span { display: grid; gap: 2px; }
-.audit-details b { font-size: 12px; }
-.audit-details small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.audit-entries { display: grid; min-width: 0; max-height: 300px; gap: 12px; padding: 2px 4px 2px 0; overflow: auto; scrollbar-gutter: stable; }
+.audit-entries:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.audit-details article { display: grid; min-width: 0; gap: 4px; }
+.audit-details article header { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: baseline; gap: 12px; }
+.audit-details time { color: var(--muted); font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.audit-details b { min-width: 0; color: var(--text); font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.audit-details small { min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .parent-agent-card, .subagent-card { display: grid; grid-template-columns: 34px 1fr; gap: 9px; align-items: start; padding: 11px; border: 0; border-radius: 9px; background: var(--surface); }
 .agent-node { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .parent-agent-card div { display: grid; gap: 3px; }
