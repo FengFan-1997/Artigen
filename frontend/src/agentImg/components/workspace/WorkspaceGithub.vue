@@ -9,26 +9,19 @@
     </p>
     <template v-else
       ><p v-if="notice" role="status">{{ notice }}</p>
-      <template v-if="!repository"
-        ><p>
-          {{
-            zh
-              ? '查看项目的真实 PR、提交与文件差异。'
-              : 'View real pull requests, commits and file changes.'
-          }}
-        </p>
-        <button @click="connect">{{ zh ? '连接 GitHub 账号' : 'Connect GitHub' }}</button>
-        <form @submit.prevent="bind">
-          <label
-            >{{ zh ? '仓库（owner/repository）' : 'Repository (owner/repository)'
-            }}<input
-              v-model="repositoryInput"
-              placeholder="owner/repository"
-              required
-              :disabled="busy" /></label
-          ><button :disabled="busy">{{ zh ? '关联仓库' : 'Link repository' }}</button>
-        </form></template
-      >
+      <div v-if="!repository" class="repository-setup">
+        <h2>{{ zh ? '关联项目仓库' : 'Link a project repository' }}</h2>
+        <p>{{ zh ? '查看项目的真实 PR、提交与文件差异。' : 'View real pull requests, commits and file changes.' }}</p>
+        <button type="button" class="repository-connect" @click="connect">
+          <WorkspaceIcon name="git" :size="16" />{{ zh ? '连接 GitHub 账号' : 'Connect GitHub' }}
+        </button>
+        <form class="repository-form" :aria-label="zh ? '关联仓库' : 'Link repository'" :aria-busy="busy" @submit.prevent="bind">
+          <label for="github-repository">{{ zh ? '仓库（owner/repository）' : 'Repository (owner/repository)' }}</label>
+          <input id="github-repository" v-model="repositoryInput" name="github-repository" placeholder="owner/repository" autocomplete="off" autocapitalize="none" :spellcheck="false" aria-describedby="github-repository-help" required :disabled="busy" />
+          <p id="github-repository-help" class="repository-help">{{ zh ? '使用 owner/repository 格式，不要填写完整网址。' : 'Use owner/repository, without the full URL.' }}</p>
+          <button type="submit" class="repository-submit" :disabled="busy">{{ busy ? (zh ? '处理中…' : 'Working…') : (zh ? '关联仓库' : 'Link repository') }}</button>
+        </form>
+      </div>
       <template v-else
         ><div class="repo-heading">
           <b>{{ repository.owner }}/{{ repository.repository }}</b
@@ -194,10 +187,11 @@ async function bind() {
   if (busy.value) return;
   const [owner, repo, ...extra] = repositoryInput.value.trim().split('/');
   if (!owner || !repo || extra.length) {
-    notice.value = '请输入 owner/repository';
+    notice.value = props.zh ? '请输入 owner/repository。' : 'Enter owner/repository.';
     return;
   }
   const ticket = ++revision;
+  notice.value = '';
   busy.value = true;
   try {
     const result = await workspaceRequest<{ repository: { owner: string; repository: string } }>(
@@ -325,23 +319,40 @@ onBeforeUnmount(() => revision++);
   font: inherit;
   cursor: pointer;
 }
-.github-workspace form {
+.repository-form {
   display: grid;
-  gap: 10px;
-  margin: 20px 0;
+  min-width: 0;
+  gap: 8px;
+  margin: 4px 0 0;
 }
-.github-workspace label {
-  display: grid;
-  gap: 6px;
-}
-.github-workspace input {
+.repository-form input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 9px;
+  padding: 8px 10px;
   color: var(--text);
   background: var(--bg);
   font: inherit;
+  font-size: 13px;
+}
+.repository-setup { display: grid; min-width: 0; width: min(100%, 440px); gap: 16px; margin-top: 24px; }
+.repository-setup h2 { margin: 0; color: var(--text); font-size: 15px; font-weight: 500; line-height: 1.5; }
+.github-workspace .repository-setup > p { margin: 0; }
+.github-workspace .repository-connect { display: inline-flex; justify-self: start; align-items: center; gap: 7px; min-height: 36px; padding: 7px 10px; background: var(--surface-raised); }
+.repository-form label { color: var(--text); font-size: 13px; line-height: 20px; }
+.github-workspace .repository-help { margin: 0; font-size: 12px; line-height: 1.6; }
+.github-workspace .repository-submit { justify-self: start; min-height: 36px; margin-top: 4px; padding: 7px 12px; background: var(--surface-raised); }
+.repository-setup :is(input,button):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.repository-submit:disabled { color: var(--muted); opacity: 1; cursor: progress; }
+@media (hover: hover) and (pointer: fine) {
+  .github-workspace .repository-setup button:hover:not(:disabled) { background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .github-workspace .repository-form input { min-height: 44px; font-size: 16px; }
+  .github-workspace .repository-setup button { min-height: 44px; }
 }
 .repo-heading {
   display: flex;

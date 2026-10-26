@@ -1669,3 +1669,52 @@ test('file read recovery keeps context, deduplicates retry and restores keyboard
     expect(reads).toBe(4);
   } finally { pending.splice(0).forEach(resolve => resolve()); }
 });
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub repository form validates locally and keeps rejected input while linking ${language}`, async ({ page }) => {
+    await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const bindings: unknown[] = [];
+    const pending: Array<() => void> = [];
+    let fail = true;
+    await page.route('**/api/workspace/projects/*/github', async route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { ok: true, repository: null } });
+      expect(route.request().method()).toBe('PUT');
+      bindings.push(route.request().postDataJSON());
+      await new Promise<void>(resolve => pending.push(resolve));
+      return route.fulfill({ status: fail ? 503 : 200, json: fail ? { error: { code: 'UNAVAILABLE' } } : { repository: { owner: 'example', repository: 'brand-site' } } });
+    });
+    try {
+      await page.goto(runPath);
+      await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true }).getByRole('button', { name: 'GitHub', exact: true }).click();
+      const panel = page.locator('.github-workspace');
+      const form = panel.getByRole('form', { name: zh ? '关联仓库' : 'Link repository', exact: true });
+      const input = form.getByRole('textbox');
+      await expect(input).toBeEnabled();
+      await input.fill('not-a-repository-path');
+      await input.press('Enter');
+      await expect(panel.getByRole('status')).toHaveText(zh ? '请输入 owner/repository。' : 'Enter owner/repository.');
+      expect(bindings).toHaveLength(0);
+      await input.fill(' example/brand-site ');
+      const submit = form.getByRole('button');
+      await submit.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+      await expect.poll(() => bindings.length).toBe(1);
+      await expect(form).toHaveAttribute('aria-busy', 'true');
+      await expect(submit).toHaveText(zh ? '处理中…' : 'Working…');
+      await expect(input).toBeDisabled();
+      await expect(panel.getByRole('status')).toHaveCount(0);
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(input).toBeEnabled();
+      await expect(input).toHaveValue(' example/brand-site ');
+      await expect(panel.getByRole('status')).toBeVisible();
+      fail = false;
+      await input.press('Enter');
+      await expect.poll(() => bindings.length).toBe(2);
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(form).toHaveCount(0);
+      await expect(panel.locator('.git-record')).toHaveCount(1);
+      expect(bindings).toEqual([{ owner: 'example', repository: 'brand-site' }, { owner: 'example', repository: 'brand-site' }]);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}
