@@ -2425,3 +2425,46 @@ for (const language of ['zh', 'en']) {
     expect(fixture.state.designMessages).toHaveLength(0); expect(fixture.state.uploads).toBe(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`subagent card axes stay aligned through long labels and status updates ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    fixture.state.run.subagents = [0, 1, 2].map(i => ({
+      subagentId: `30000000-0000-4000-8000-00000000000${i}`, runId: inputRunId, ordinal: i + 1,
+      role: 'Research', label: i === 0 ? 'ReviewMobilePurchaseFlowAndKeyboardAccessibility'.repeat(2) : `Evidence review ${i}`,
+      status: i === 0 ? 'running' : i === 1 ? 'succeeded' : 'failed',
+      progress: { stepCount: 7 + i, maxSteps: 20, cancelRequested: false }, usage: { credits: 1.25 + i },
+      summary: '保留证据、任务范围与原始文件。', outputFiles: [], error: null,
+      expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z', startedAt: '2026-10-15T03:00:00Z', finishedAt: null, updatedAt: '2026-10-15T03:00:00Z'
+    }));
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留下一条未发送的要求');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '任务' : 'Task', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? /^子 Agent/ : /^Subagents/ }).click();
+    const panel = page.getByRole('tabpanel', { name: zh ? /^子 Agent/ : /^Subagents/ });
+    const cards = panel.locator('.subagent-card'); await expect(cards).toHaveCount(3);
+    await expect(cards.first().locator('header b')).toHaveText(fixture.state.run.subagents[0]!.label);
+    const axes = await panel.evaluate(el => {
+      const parent = el.querySelector('.parent-agent-card')!;
+      const left = parent.querySelector('b')!.getBoundingClientRect().left;
+      return [...el.querySelectorAll('.subagent-card')].map(card => ({ delta: Math.abs(card.querySelector('b')!.getBoundingClientRect().left - left), overflow: card.scrollWidth > card.clientWidth + 1 }));
+    });
+    expect(axes.every(axis => axis.delta <= 1 && !axis.overflow)).toBe(true);
+    await expect(cards.locator('.subagent-status-label')).toHaveText(zh ? ['执行中', '已完成', '失败'] : ['Running', 'Completed', 'Failed']);
+    const cancel = cards.first().getByRole('button', { name: zh ? '取消这个子 Agent' : 'Cancel this subagent' });
+    await cancel.focus(); await cancel.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(cancel).toBeFocused();
+    expect(await cancel.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    expect((await cancel.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    fixture.state.run.subagents[0]!.status = 'succeeded';
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9902', type: 'context.compacted', summary: '子任务状态已更新。' }]);
+    await expect(cards.first().locator('.subagent-status-label')).toHaveText(zh ? '已完成' : 'Completed');
+    await expect(panel.getByRole('button', { name: zh ? '取消这个子 Agent' : 'Cancel this subagent' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: zh ? '子 Agent' : 'Subagents', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('button', { name: zh ? '关闭检查器' : 'Close inspector', exact: true }).click();
+    await expect(draft).toHaveValue('保留下一条未发送的要求'); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}

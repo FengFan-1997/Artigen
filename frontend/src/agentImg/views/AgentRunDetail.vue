@@ -1225,16 +1225,14 @@ onBeforeUnmount(() => {
 .audit-details time { color: var(--muted); font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .audit-details b { min-width: 0; color: var(--text); font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
 .audit-details small { min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
-.parent-agent-card, .subagent-card { display: grid; grid-template-columns: 34px 1fr; gap: 9px; align-items: start; padding: 11px; border: 0; border-radius: 9px; background: var(--surface); }
-.agent-node { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.parent-agent-card, .subagent-card { display: grid; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px; border: 0; border-radius: 9px; background: var(--surface); }
+.agent-node { display: grid; width: 28px; height: 28px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .parent-agent-card div { display: grid; gap: 3px; }
 .parent-agent-card b, .subagent-card b { color: var(--text); font-size: 12px; }
 .parent-agent-card small, .subagent-card small { color: var(--muted); font-size: 12px; }
-.subagent-rail { position: relative; display: grid; gap: 7px; padding-left: 13px; }
-.subagent-rail::before { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; content: ''; background: var(--border); }
-.subagent-card { grid-template-columns: 32px 1fr; }
+.subagent-rail { display: grid; min-width: 0; gap: 8px; }
 .subagent-card > div { display: grid; min-width: 0; justify-items: start; gap: 5px; }
-.subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); background: var(--surface-raised); }
+.subagent-card .agent-node { color: var(--text); background: var(--surface-raised); }
 .subagent-card header { display: flex; width: 100%; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
 .subagent-card header b { min-width: 0; overflow-wrap: anywhere; }
 .subagent-status { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: nowrap; }
@@ -1251,6 +1249,7 @@ onBeforeUnmount(() => {
 .subagent-card small { line-height: 1.45; overflow-wrap: anywhere; }
 .subagent-card .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
 .subagent-card button { min-height: 32px; margin-top: 2px; padding: 0 4px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
+@media (pointer: coarse) { .subagent-card button { min-width: 44px; min-height: 44px; } }
 .inspector-empty { padding: 20px 8px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5; }
 .deliverables-empty { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 12px; padding: 20px 0; text-align: left; }
 .deliverables-empty > svg { margin-top: 2px; color: var(--muted); }
