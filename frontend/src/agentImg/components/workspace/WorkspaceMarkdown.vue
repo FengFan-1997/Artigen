@@ -1,13 +1,22 @@
-<template><div class="workspace-markdown" @click="openResource" v-html="rendered"></div></template>
+<template><div class="workspace-markdown" @click="onMarkdownClick" v-html="rendered"></div></template>
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, watch } from 'vue';
 import MarkdownIt from 'markdown-it';
 import { buildApiUrl } from '@/utils/api';
+import { useLanguageStore } from '@/stores/language';
 import { openWorkspaceFile, type WorkspaceFile } from '../../services/workspaceFiles';
 const props = withDefaults(defineProps<{ text: string; files?: WorkspaceFile[] }>(), {
   files: () => []
 });
 const md = new MarkdownIt({ html: false, linkify: false, breaks: false });
+const language = useLanguageStore();
+const zh = computed(() => language.currentLang === 'zh');
+const copyLabel = computed(() => zh.value ? '复制代码' : 'Copy code');
+const originalFence = md.renderer.rules.fence!;
+md.renderer.rules.fence = (tokens, index, options, env, self) => {
+  const label = md.utils.escapeHtml(tokens[index]!.info.trim().split(/\s+/)[0] || 'text');
+  return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-language" title="${label}">${label}</span><button type="button" class="md-code-copy" data-copy-code>${copyLabel.value}</button><span class="md-code-feedback" role="status" aria-live="polite" aria-atomic="true"></span></div>${originalFence(tokens, index, options, env, self)}</div>\n`;
+};
 const findFile = (value: string) =>
   props.files.find(
     (f) =>
@@ -47,7 +56,58 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
   return originalLink(tokens, index, options, env, self);
 };
 const rendered = computed(() => md.render(props.text));
-const openResource = (event: MouseEvent) => {
+let copyButton: HTMLButtonElement | null = null;
+let copyRevision = 0;
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
+function clearCodeCopy() {
+  copyRevision++;
+  clearTimeout(copyTimer);
+  copyTimer = undefined;
+  if (copyButton?.isConnected) {
+    copyButton.disabled = false;
+    copyButton.removeAttribute('aria-busy');
+    copyButton.textContent = copyLabel.value;
+    const status = copyButton.parentElement?.querySelector('.md-code-feedback');
+    if (status) status.textContent = '';
+  }
+  copyButton = null;
+}
+async function copyCode(button: HTMLButtonElement) {
+  if (button.disabled) return;
+  const text = button.closest('.md-code-block')?.querySelector('pre > code')?.textContent;
+  if (text == null) return;
+  clearCodeCopy();
+  const request = copyRevision;
+  copyButton = button;
+  // Keep the v-html code nodes intact so copy feedback preserves selection and scroll.
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = zh.value ? '正在复制…' : 'Copying…';
+  const status = button.parentElement?.querySelector('.md-code-feedback');
+  try {
+    await navigator.clipboard.writeText(text);
+    if (request !== copyRevision || !button.isConnected) return;
+    button.textContent = zh.value ? '已复制' : 'Copied';
+    if (status) status.textContent = zh.value ? '代码已复制' : 'Code copied';
+  } catch {
+    if (request !== copyRevision || !button.isConnected) return;
+    button.textContent = zh.value ? '复制失败，重试' : 'Copy failed; retry';
+    if (status) status.textContent = zh.value ? '复制失败，请检查剪贴板权限后重试' : 'Copy failed. Check clipboard access and try again.';
+  }
+  if (request !== copyRevision || !button.isConnected) return;
+  button.disabled = false;
+  button.removeAttribute('aria-busy');
+  copyTimer = setTimeout(clearCodeCopy, 1800);
+}
+watch(rendered, clearCodeCopy, { flush: 'sync' });
+onBeforeUnmount(clearCodeCopy);
+const onMarkdownClick = (event: MouseEvent) => {
+  const copy = (event.target as Element).closest<HTMLButtonElement>('button[data-copy-code]');
+  if (copy) {
+    event.preventDefault();
+    void copyCode(copy);
+    return;
+  }
   const target = (event.target as Element).closest<HTMLElement>('[data-resource]');
   if (!target) return;
   event.preventDefault();
@@ -106,6 +166,20 @@ const openResource = (event: MouseEvent) => {
 }
 .workspace-markdown :deep(pre code) {
   font-size: inherit;
+}
+.workspace-markdown :deep(.md-code-block) { min-width: 0; margin: 16px 0; overflow: hidden; border-radius: 8px; background: var(--surface); }
+.workspace-markdown :deep(.md-code-header) { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 8px 6px 14px; }
+.workspace-markdown :deep(.md-code-language) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 20px; color: var(--muted); }
+.workspace-markdown :deep(.md-code-copy) { flex: none; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 20px; cursor: pointer; }
+.workspace-markdown :deep(.md-code-copy:focus-visible) { outline: 2px solid var(--focus); outline-offset: -2px; }
+.workspace-markdown :deep(.md-code-copy:disabled) { cursor: progress; opacity: 1; }
+.workspace-markdown :deep(.md-code-block pre) { margin: 0; border-radius: 0; background: transparent; overscroll-behavior: contain; }
+.workspace-markdown :deep(.md-code-feedback) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (hover: hover) and (pointer: fine) {
+  .workspace-markdown :deep(.md-code-copy:hover:not(:disabled)) { background: var(--surface-hover); color: var(--text); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .workspace-markdown :deep(.md-code-copy) { min-width: 44px; min-height: 44px; }
 }
 .workspace-markdown :deep(table) {
   display: block;

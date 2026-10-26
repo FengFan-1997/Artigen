@@ -1888,3 +1888,66 @@ test('empty files compare equal but newline-only edits remain a real difference'
   await expect(panel.getByRole('button', { name: '保存当前修改', exact: true })).toBeEnabled();
   expect(workspace.saves).toHaveLength(0);
 });
+
+for (const language of ['zh', 'en']) {
+  test(`fenced code copy preserves content and rejects stale feedback ${language}`, async ({ page }) => {
+    const fixture = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const source = '  <script>window.codeInjected = true</script>\n\t中文 & "引号"\n\n';
+    const second = 'second block\n';
+    const unsafeInfo = 'html"><img/src=x/onerror=window.codeInjected=true>';
+    let text = '```' + unsafeInfo + '\n' + source + '```\n\n```\n' + second + '```';
+    await page.route(`**/api/agent-runs/${inputRunId}/messages*`, route => route.fulfill({ json: { ok: true, messages: [{ id: 'copy-code-message', role: 'assistant', kind: 'text', text, createdAt: '2026-10-15T03:00:10Z' }], nextCursor: null } }));
+    await page.goto(runPath);
+    const message = page.locator('.run-conversation-stream .workspace-markdown');
+    const blocks = message.locator('.md-code-block');
+    const button = blocks.first().getByRole('button');
+    await expect(blocks).toHaveCount(2);
+    await expect(blocks.locator('.md-code-language')).toHaveText([unsafeInfo, 'text']);
+    await expect(blocks.locator('.md-code-language').first()).toHaveAttribute('title', unsafeInfo);
+    await expect(message.locator('img,[onerror]')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as Window & { codeInjected?: boolean }).codeInjected)).toBeUndefined();
+    await expect(message.locator('script')).toHaveCount(0);
+    await page.evaluate(() => {
+      const state = window as Window & { codeCopies?: string[]; finishCodeCopy?: () => void };
+      state.codeCopies = [];
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { state.codeCopies!.push(value); await new Promise<void>(resolve => { state.finishCodeCopy = resolve; }); } } });
+    });
+    await button.focus();
+    await button.press('Enter');
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute('aria-busy', 'true');
+    await button.evaluate((el: HTMLButtonElement) => el.click());
+    expect(await page.evaluate(() => (window as Window & { codeCopies?: string[] }).codeCopies)).toEqual([source]);
+    await page.evaluate(() => (window as Window & { finishCodeCopy?: () => void }).finishCodeCopy?.());
+    await expect(button).toHaveText(zh ? '已复制' : 'Copied');
+    await expect(button).toBeEnabled();
+    await expect(blocks.first().getByRole('status')).toHaveText(zh ? '代码已复制' : 'Code copied');
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('clipboard denied'); } } }));
+    await blocks.nth(1).getByRole('button').click();
+    await expect(blocks.nth(1).getByRole('button')).toHaveText(zh ? '复制失败，重试' : 'Copy failed; retry');
+    await expect(blocks.nth(1).getByRole('status')).toContainText(zh ? '剪贴板权限' : 'clipboard access');
+    await page.evaluate(() => {
+      const state = window as Window & { codeCopies?: string[]; finishCodeCopy?: () => void };
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { state.codeCopies!.push(value); await new Promise<void>(resolve => { state.finishCodeCopy = resolve; }); } } });
+    });
+    await blocks.nth(1).getByRole('button').click();
+    await expect(blocks.nth(1).getByRole('button')).toBeDisabled();
+    expect(await page.evaluate(() => (window as Window & { codeCopies?: string[] }).codeCopies)).toEqual([source, second]);
+    text = '```json\n{"updated":true}\n```';
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9901', type: 'message.created', summary: '公开内容已更新', createdAt: '2026-10-15T03:00:11Z', data: {} }]);
+    await expect(blocks).toHaveCount(1);
+    await expect(blocks.locator('.md-code-language')).toHaveText('json');
+    await page.evaluate(() => (window as Window & { finishCodeCopy?: () => void }).finishCodeCopy?.());
+    await expect(button).toHaveText(zh ? '复制代码' : 'Copy code');
+    await expect(button).toBeEnabled();
+    await expect(blocks.getByRole('status')).toBeEmpty();
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { (window as Window & { newCodeCopy?: string }).newCodeCopy = value; } } }));
+    await button.click();
+    await expect(button).toHaveText(zh ? '已复制' : 'Copied');
+    expect(await page.evaluate(() => (window as Window & { newCodeCopy?: string }).newCodeCopy)).toBe('{"updated":true}\n');
+    expect(fixture.workspace.saves).toHaveLength(0);
+    expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
