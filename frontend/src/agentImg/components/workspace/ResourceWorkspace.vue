@@ -257,30 +257,32 @@
               </button>
             </div>
             <footer v-if="!active.loading" class="file-status">
-              <span
+              <span class="file-save-state"
                 >{{ dirty(active) ? (zh ? '未保存' : 'Unsaved') : zh ? '已保存' : 'Saved' }} ·
-                {{ active.source === 'local' ? '本机' : `v${active.file.revision}` }}</span
-              ><button :disabled="!active.blob || dirty(active) || saving" @click="attach(active)">
-                {{ zh ? '加入会话上下文' : 'Add to chat context' }}</button
-              ><button v-if="active.text !== undefined" @click="$emit('changes')">
-                {{ zh ? '查看变更' : 'View changes' }}</button
-              ><select
-                v-if="versions.length"
-                aria-label="查看文件版本"
-                @change="
-                  ($event.target as HTMLSelectElement).value !== '' &&
-                  compareVersion(Number(($event.target as HTMLSelectElement).value))
-                "
-              >
-                <option value="">{{ zh ? '历史版本' : 'Versions' }}</option>
-                <option
-                  v-for="version in versions"
-                  :key="version.revision"
-                  :value="version.revision"
+                {{ active.source === 'local' ? (zh ? '本机' : 'Local') : `v${active.file.revision}` }}</span>
+              <div class="file-status-actions">
+                <button :disabled="!active.blob || dirty(active) || saving" @click="attach(active)">
+                  {{ zh ? '加入会话上下文' : 'Add to chat context' }}</button
+                ><button v-if="active.text !== undefined" @click="$emit('changes')">
+                  {{ zh ? '查看变更' : 'View changes' }}</button
+                ><select
+                  v-if="versions.length"
+                  :aria-label="zh ? '查看文件版本' : 'View file versions'"
+                  @change="
+                    ($event.target as HTMLSelectElement).value !== '' &&
+                    compareVersion(Number(($event.target as HTMLSelectElement).value))
+                  "
                 >
-                  v{{ version.revision }}
-                </option>
-              </select>
+                  <option value="">{{ zh ? '历史版本' : 'Versions' }}</option>
+                  <option
+                    v-for="version in versions"
+                    :key="version.revision"
+                    :value="version.revision"
+                  >
+                    v{{ version.revision }}
+                  </option>
+                </select>
+              </div>
             </footer>
           </template>
           <div v-else class="resource-empty">
@@ -1674,24 +1676,51 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
-  min-height: 40px;
-  padding: 6px 10px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 4px 10px;
   font-size: 12px;
   color: var(--muted);
   border-top: 1px solid var(--border);
 }
-.file-status > span {
-  flex: 1;
+.file-save-state {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.file-status-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+.file-status button {
+  padding: 4px 6px;
+  color: var(--muted);
+  background: transparent;
 }
 .file-status select {
   min-width: 0;
   max-width: 130px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--surface);
+  min-height: 30px;
+  font: inherit;
+  color: var(--muted);
+  background: transparent;
   border: 0;
-  padding: 5px;
+  border-radius: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .file-status button:hover:not(:disabled),
+  .file-status select:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
 }
 .resource-notice {
   flex: none;

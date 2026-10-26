@@ -253,6 +253,39 @@ for (const theme of ['dark', 'light']) {
   }
 }
 
+for (const theme of ['dark', 'light']) {
+  test(`narrow English file status keeps the save state together ${theme}`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    try {
+      const page = await context.newPage();
+      const { workspace } = await installWorkspaceFixture(page, theme);
+      await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+      await page.goto(runPath);
+      await page.getByRole('button', { name: 'Open inspector', exact: true }).click();
+      await page.getByRole('navigation', { name: 'Resources' }).getByRole('button', { name: 'Files', exact: true }).click();
+      const tree = page.getByRole('complementary', { name: 'File explorer' });
+      await tree.getByRole('button', { name: 'docs', exact: true }).click();
+      await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+      await page.getByRole('button', { name: 'Source', exact: true }).click();
+      await page.getByRole('textbox', { name: '文件编辑器' }).fill('# 保留未保存内容');
+      const footer = page.locator('.file-status');
+      await expect(footer).toContainText('Unsaved · v1');
+      const stateLines = await footer.locator(':scope > span').evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return new Set([...range.getClientRects()].filter(rect => rect.width > 0).map(rect => Math.round(rect.top))).size;
+      });
+      expect(stateLines).toBe(1);
+      await expect(footer.getByRole('button', { name: 'Add to chat context' })).toBeDisabled();
+      await expect(footer.getByRole('combobox', { name: 'View file versions' })).toBeVisible();
+      expect(workspace.saves).toHaveLength(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test('project tree, file tabs, cloud save/conflict, proposals and read-only GitHub', async ({
   page
 }) => {
