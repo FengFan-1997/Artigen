@@ -79,6 +79,17 @@
           @click="dismissNotice"
         ><WorkspaceIcon name="close" :size="16" /></button>
       </div>
+      <form v-if="newFile.open" class="new-file-form" :aria-label="zh ? '新建文本文件' : 'New text file'" novalidate @submit.prevent="createTextFile" @keydown="onNewFileKeydown">
+        <h2>{{ zh ? '新建文本文件' : 'New text file' }}</h2>
+        <label :for="newFileId">{{ zh ? '相对路径' : 'Relative path' }}</label>
+        <input :id="newFileId" ref="newFileInput" v-model="newFile.path" name="path" placeholder="notes/brief.md" autocomplete="off" autocapitalize="none" :spellcheck="false" required :aria-invalid="Boolean(newFile.error)" :aria-describedby="`${newFileId}-help${newFile.error ? ` ${newFileId}-error` : ''}`" @input="newFile.error = ''" />
+        <p :id="`${newFileId}-help`">{{ zh ? '使用项目内的相对路径。输入内容后，点击保存才会写入项目。' : 'Use a path within this project. Content is written only when you save.' }}</p>
+        <p v-if="newFile.error" :id="`${newFileId}-error`" role="alert">{{ newFile.error }}</p>
+        <div class="new-file-actions">
+          <button type="submit">{{ zh ? '创建文件' : 'Create file' }}</button>
+          <button type="button" @click="closeNewFile()">{{ zh ? '取消' : 'Cancel' }}</button>
+        </div>
+      </form>
       <div class="file-body">
         <section class="file-viewer">
           <div v-if="active" class="file-toolbar">
@@ -424,6 +435,7 @@ import {
   onBeforeUnmount,
   onMounted,
   ref,
+  useId,
   watch,
   nextTick
 } from 'vue';
@@ -510,6 +522,10 @@ const files = ref<WorkspaceFile[]>([]);
 const documents = ref<Document[]>([]);
 const activeKey = ref('');
 const notice = ref('');
+const newFile = reactive({ open: false, path: '', error: '' });
+const newFileId = useId();
+const newFileInput = ref<HTMLInputElement | null>(null);
+let newFileTrigger: HTMLElement | null = null;
 const saving = ref(false);
 const connecting = ref(false);
 const root = ref<LocalDirectory | null>(null);
@@ -622,6 +638,7 @@ async function refreshFiles() {
 }
 async function reset() {
   revision++;
+  closeNewFile(false);
   openRevision++;
   const current = scope();
   documents.value.forEach((doc) => {
@@ -870,7 +887,7 @@ async function reloadDocument(doc: Document) {
     if (ticket !== revision || generation !== doc.generation || disposed) return;
     if (doc.objectUrl) URL.revokeObjectURL(doc.objectUrl);
     doc.objectUrl = URL.createObjectURL(blob);
-    doc.view = maybeText && !/\.(md|markdown|html?)$/i.test(doc.file.path) ? 'source' : 'preview';
+    doc.view = doc.file.id.startsWith('new:') || (maybeText && !/\.(md|markdown|html?)$/i.test(doc.file.path)) ? 'source' : 'preview';
     const draft = await loadEditorDraft(doc.owner, doc.scope + keyForDraft(doc)).catch(() => null);
     if (ticket !== revision || scope() !== current || disposed || generation !== doc.generation)
       return;
@@ -1000,23 +1017,53 @@ async function closeDocument(doc: Document) {
     (target?.closest('.file-tab') || target)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 }
-async function newTextFile() {
-  const path = prompt(
-    props.zh
-      ? '输入新文件的相对路径，例如 notes/brief.md'
-      : 'Relative file path, for example notes/brief.md'
-  );
-  if (!path) return;
+async function newTextFile(event: MouseEvent) {
+  if (!project.value) return;
+  newFileTrigger = event.currentTarget as HTMLElement;
+  if (!newFile.open) {
+    newFile.path = '';
+    newFile.error = '';
+    newFile.open = true;
+  }
+  await nextTick();
+  newFileInput.value?.focus();
+}
+function closeNewFile(restoreFocus = true) {
+  newFile.open = false;
+  newFile.path = '';
+  newFile.error = '';
+  if (restoreFocus && newFileTrigger?.isConnected) newFileTrigger.focus({ preventScroll: true });
+  newFileTrigger = null;
+}
+function onNewFileKeydown(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) {
+    event.stopPropagation();
+    if (event.key === 'Enter') event.preventDefault();
+    return;
+  }
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeNewFile();
+}
+async function createTextFile() {
+  if (!newFile.open || !project.value) return;
+  const path = newFile.path;
   if (
+    !path ||
     path.startsWith('/') ||
     path.split('/').some((p) => !p || p === '.' || p === '..') ||
     /[\\\x00-\x1f]/.test(path)
   ) {
-    notice.value = '文件路径无效。';
+    newFile.error = props.zh ? '请输入有效的相对路径，不能包含空目录、.、.. 或反斜杠。' : 'Enter a valid relative path without empty folders, ., .. or backslashes.';
+    newFileInput.value?.focus();
     return;
   }
+  const ticket = revision;
+  const id = 'new:' + crypto.randomUUID();
+  closeNewFile(false);
   await openFile({
-    id: 'new:' + crypto.randomUUID(),
+    id,
     path,
     revision: 0,
     assetId: '',
@@ -1025,6 +1072,9 @@ async function newTextFile() {
     sha256: '',
     url: ''
   });
+  await nextTick();
+  if (ticket === revision && active.value?.file.id === id && document.activeElement === document.body)
+    selectedTab()?.focus({ preventScroll: true });
 }
 function download(doc: Document) {
   if (!doc.objectUrl) return;
@@ -1239,6 +1289,7 @@ watch(
   () => project.value,
   () => void reset()
 );
+watch(() => props.mode, () => closeNewFile(false));
 watch(
   () => props.artifacts.map((a) => a.artifactId).join(','),
   () => void refreshFiles()
@@ -1434,6 +1485,33 @@ onBeforeUnmount(() => {
   min-height: 0;
   min-width: 0;
   flex: 1;
+}
+.new-file-form {
+  display: grid;
+  flex: none;
+  gap: 8px;
+  max-height: 60%;
+  overflow: auto;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.new-file-form > * { box-sizing: border-box; width: 100%; max-width: 440px; min-width: 0; }
+.new-file-form h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; line-height: 1.5; }
+.new-file-form label { font-size: 13px; line-height: 20px; }
+.new-file-form input { min-height: 36px; border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+.new-file-form p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.new-file-form p[role="alert"] { color: var(--text); }
+.new-file-actions { display: flex; gap: 8px; }
+.new-file-actions button { min-height: 36px; padding: 8px 12px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font-size: 13px; cursor: pointer; }
+.new-file-actions button[type="submit"] { background: var(--surface-raised); }
+.new-file-form input:focus-visible, .new-file-actions button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .new-file-actions button:hover { background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .new-file-form input { min-height: 44px; font-size: 16px; }
+  .new-file-actions button { min-height: 44px; }
 }
 .file-viewer {
   display: flex;

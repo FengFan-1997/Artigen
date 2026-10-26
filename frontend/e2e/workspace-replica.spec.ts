@@ -1718,3 +1718,93 @@ for (const language of ['zh', 'en']) {
     } finally { pending.splice(0).forEach(resolve => resolve()); }
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`new text file form preserves drafts and validates before explicit save ${language}`, async ({ page }) => {
+    const { workspace } = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const creates: Array<{ text: string; path: string; expectedRevision: number }> = [];
+    await page.route(`**/api/workspace/projects/${projectA}/files`, async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const input = route.request().postDataJSON();
+      creates.push(input);
+      return route.fulfill({ json: { file: { ...workspace.files[0], id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', path: input.path, revision: 1, sha256: createHash('sha256').update(input.text).digest('hex'), byteSize: Buffer.byteLength(input.text) } } });
+    });
+    const dialogs: string[] = [];
+    page.on('dialog', dialog => { dialogs.push(dialog.type()); void dialog.dismiss(); });
+    await page.goto(runPath);
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    const original = workspace.files[0].text + '\n保留原文件草稿';
+    await page.locator('.cm-content').fill(original);
+    if (!(await tree.isVisible())) await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    const trigger = tree.getByRole('button', { name: zh ? '新建文本文件' : 'New text file', exact: true });
+    await trigger.click();
+    const form = page.getByRole('form', { name: zh ? '新建文本文件' : 'New text file', exact: true });
+    const field = form.getByRole('textbox', { name: zh ? '相对路径' : 'Relative path', exact: true });
+    await expect(field).toBeFocused();
+    for (const path of ['', '/outside.md', 'notes//a.md', 'notes/../a.md', 'notes/./a.md', 'notes\\a.md']) {
+      await field.fill(path);
+      await form.getByRole('button', { name: zh ? '创建文件' : 'Create file', exact: true }).click();
+      await expect(form.getByRole('alert')).toContainText(zh ? '有效的相对路径' : 'valid relative path');
+      await expect(field).toHaveValue(path);
+      await expect(field).toBeFocused();
+      expect(creates).toHaveLength(0);
+    }
+    for (const key of ['Escape', 'Enter']) {
+      await field.dispatchEvent('keydown', { key, isComposing: true, bubbles: true });
+      await field.dispatchEvent('keydown', { key, keyCode: 229, bubbles: true });
+      await expect(form).toBeVisible();
+    }
+    await field.press('Escape');
+    await expect(form).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(page.getByRole('tab', { name: zh ? 'brief.md（未保存）' : 'brief.md (unsaved)', exact: true })).toHaveCount(1);
+    await trigger.click();
+    await expect(field).toHaveValue('');
+    await expect(form.getByRole('alert')).toHaveCount(0);
+    await form.getByRole('button', { name: zh ? '取消' : 'Cancel', exact: true }).click();
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await field.fill('notes/新建说明.md');
+    await form.getByRole('button', { name: zh ? '创建文件' : 'Create file', exact: true }).evaluate((el: HTMLButtonElement) => { el.click(); el.click(); });
+    await expect(form).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: '新建说明.md', exact: true })).toBeFocused();
+    expect(creates).toHaveLength(0);
+    expect(workspace.saves).toHaveLength(0);
+    await page.locator('.cm-content').fill('中文内容，仅在点击保存后写入。');
+    await page.getByRole('button', { name: zh ? '保存' : 'Save', exact: true }).click();
+    await expect.poll(() => creates.length).toBe(1);
+    expect(creates[0]).toEqual({ text: '中文内容，仅在点击保存后写入。', path: 'notes/新建说明.md', expectedRevision: 0 });
+    await expect(page.locator('.file-save-state')).toContainText(zh ? '已保存' : 'Saved');
+    await expect(page.getByRole('tab', { name: zh ? 'brief.md（未保存）' : 'brief.md (unsaved)', exact: true })).toHaveCount(1);
+    expect(dialogs).toEqual([]);
+    await page.getByRole('tab', { name: zh ? 'brief.md（未保存）' : 'brief.md (unsaved)', exact: true }).click();
+    await expect.poll(async () => (await page.locator('.cm-content .cm-line').allTextContents()).join('\n')).toBe(original);
+  });
+}
+
+test('new text file form clears when project or account scope changes', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  await page.goto(`/artigen/create?projectId=${projectA}`);
+  await resources(page);
+  const tree = page.getByRole('complementary', { name: '文件目录', exact: true });
+  const trigger = tree.getByRole('button', { name: '新建文本文件', exact: true });
+  const form = page.getByRole('form', { name: '新建文本文件', exact: true });
+  await trigger.click();
+  await form.getByRole('textbox').fill('notes/project-a.md');
+  await page.getByRole('button', { name: '在夏日视觉中新建会话', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`projectId=${projectB}`));
+  await expect(form).toHaveCount(0);
+  await trigger.click();
+  await expect(form.getByRole('textbox')).toHaveValue('');
+  await form.getByRole('textbox').fill('notes/project-b.md');
+  await page.evaluate(() => { localStorage.setItem('app_user_id', 'other-fixture'); window.dispatchEvent(new Event('app-auth-changed')); });
+  await expect(form).toHaveCount(0);
+  await expect(page.getByRole('tab')).toHaveCount(0);
+  expect(workspace.saves).toHaveLength(0);
+});
