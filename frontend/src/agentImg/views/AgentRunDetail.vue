@@ -88,7 +88,7 @@
           <div>
             <header><span>Artigen Agent</span><small>{{ statusLabel(run.status) }}</small></header>
             <p>{{ runSummary }}</p>
-            <dl v-if="terminal" class="settlement-summary">
+            <dl v-if="terminal" class="settlement-summary" :aria-label="zh ? '本次结算' : 'Run settlement'">
               <div><dt>{{ zh ? '已结算' : 'Charged' }}</dt><dd>{{ run.budget.charged }} {{ zh ? '点' : 'credits' }}</dd></div>
               <div><dt>{{ zh ? '已退还' : 'Refunded' }}</dt><dd>{{ run.budget.refunded }} {{ zh ? '点' : 'credits' }}</dd></div>
               <div><dt>{{ zh ? '已释放冻结' : 'Released hold' }}</dt><dd>{{ run.budget.released }} {{ zh ? '点' : 'credits' }}</dd></div>
@@ -1242,10 +1242,11 @@ onBeforeUnmount(() => {
 .load-actions :is(button,a) { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }
 .run-progress-header::-webkit-details-marker { display: none; }
 .run-progress-header > span { margin-left: auto; white-space: nowrap; }
-.settlement-summary { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0 0; }
-.settlement-summary div { display: grid; gap: 4px; }
-.settlement-summary dt { color: var(--muted); font-size: 12px; }
-.settlement-summary dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.settlement-summary { display:grid; width:min(100%,360px); gap:6px; margin:14px 0 0; }
+.settlement-summary > div { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 12px; min-width:0; }
+.settlement-summary dt { flex:1 0 auto; color:var(--muted); font-size:12px; line-height:20px; }
+.settlement-summary dd { min-width:0; max-width:100%; margin:0; margin-inline-start:auto; font-size:13px; font-weight:500; line-height:20px; font-variant-numeric:tabular-nums; text-align:right; overflow-wrap:anywhere; }
+
 .approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
 .draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
 .run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
