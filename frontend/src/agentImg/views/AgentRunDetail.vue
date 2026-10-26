@@ -316,7 +316,13 @@
               <WorkspaceIcon name="download" />
             </a>
           </div>
-          <div v-else class="inspector-empty">{{ zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.' }}</div>
+          <div v-else class="deliverables-empty">
+            <WorkspaceIcon name="file" :size="18" />
+            <div>
+              <h3>{{ zh ? '暂无交付文件' : 'No deliverables yet' }}</h3>
+              <p>{{ zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.' }}</p>
+            </div>
+          </div>
         </section>
         <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" :title="artifact.filename" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
       </div>
@@ -1245,6 +1251,10 @@ onBeforeUnmount(() => {
 .subagent-card .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
 .subagent-card button { min-height: 32px; margin-top: 2px; padding: 0 4px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
 .inspector-empty { padding: 20px 8px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5; }
+.deliverables-empty { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 12px; padding: 20px 0; text-align: left; }
+.deliverables-empty > svg { margin-top: 2px; color: var(--muted); }
+.deliverables-empty h3 { margin: 0; color: var(--text); font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
+.inspector-card .deliverables-empty p { margin: 6px 0 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .computer-panel { display: grid; gap: 10px; }
 .computer-panel > header { margin: 0; }
 .computer-panel header div { display: grid; gap: 2px; }

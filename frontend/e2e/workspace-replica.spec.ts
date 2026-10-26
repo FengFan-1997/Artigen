@@ -2343,3 +2343,46 @@ for (const language of ['zh', 'en']) {
     expect(fixture.state.inputs).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`empty deliverables reflect arriving artifacts without writes or draft loss ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    fixture.state.run.artifacts = [];
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea');
+    await draft.fill('保留未发送的文件说明');
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '任务' : 'Task', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? /^文件/ : /^Files/ }).click();
+    const panel = page.getByRole('tabpanel', { name: zh ? /^文件/ : /^Files/ });
+    const empty = panel.locator('.deliverables-empty');
+    const title = zh ? '暂无交付文件' : 'No deliverables yet';
+    await expect(empty.getByRole('heading', { name: title })).toBeVisible();
+    await expect(empty.locator('p')).toHaveText(zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.');
+    await expect(panel.locator('a,button,input')).toHaveCount(0);
+    fixture.state.run.artifacts = [{
+      artifactId: '60000000-0000-4000-8000-000000000001', assetId: null, parentArtifactId: null,
+      role: 'editable', filename: 'review-report.md', mimeType: 'text/markdown', byteSize: 128,
+      sha256: null, version: 1, verificationStatus: 'pending', verification: {}, sources: [], costCredits: 0,
+      url: '/api/assets/60000000-0000-4000-8000-000000000002', expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z'
+    }];
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9801', type: 'context.compacted', summary: '文件清单已更新。' }]);
+    const download = panel.getByRole('link', { name: /review-report.md/ });
+    await expect(download).toBeVisible(); await expect(empty).toHaveCount(0);
+    await expect(panel.locator('.inspector-card > header > b')).toHaveText('1');
+    await expect(download).toHaveAttribute('href', /\/api\/assets\/60000000-0000-4000-8000-000000000002$/);
+    await expect(download).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(download).toContainText(zh ? '待验证' : 'Pending verification');
+    await download.focus(); await download.press('Shift+Tab'); await page.keyboard.press('Tab'); await expect(download).toBeFocused();
+    expect(await download.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await page.getByRole('tab', { name: zh ? '环境' : 'Environment', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? /^文件/ : /^Files/ }).click();
+    await expect(download).toBeVisible();
+    await page.getByRole('button', { name: zh ? '关闭检查器' : 'Close inspector', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的文件说明');
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.creates).toHaveLength(0);
+    expect(fixture.workspace.saves).toHaveLength(0);
+  });
+}
