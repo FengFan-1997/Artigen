@@ -96,7 +96,13 @@
           </div>
         </article>
 
-        <p v-if="expiredApprovals.length" class="approval-expired" role="status">{{ zh ? '有审批已过期，不能再批准；请刷新任务查看最新状态。' : 'An approval expired and can no longer be granted. Refresh for the current status.' }}</p>
+        <ExpiredApprovalsNotice :count="expiredApprovals.length" :zh="zh" :busy="loadingRun" :error="loadError">
+          <template #actions>
+            <router-link v-if="loadErrorKind === 'auth'" :to="{ path: '/login', query: { returnTo: route.fullPath } }">{{ zh ? '重新登录' : 'Sign in again' }}</router-link>
+            <router-link v-else-if="loadErrorKind === 'not-found'" to="/artigen/agent">{{ zh ? '返回任务历史' : 'Back to task history' }}</router-link>
+            <button v-else type="button" :disabled="loadingRun" @click="load()"><WorkspaceIcon name="refresh" :size="16" />{{ loadingRun ? (zh ? '正在读取…' : 'Loading…') : (zh ? '重新读取任务' : 'Reload task') }}</button>
+          </template>
+        </ExpiredApprovalsNotice>
 
         <article v-if="retryRequired" class="retry-required" role="status">
           <div>
@@ -334,6 +340,7 @@ import { approvalIsAvailable, useAgentApprovals } from '../composables/useAgentA
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import ExpiredApprovalsNotice from '../components/workspace/ExpiredApprovalsNotice.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import RunConversationStream from '../components/workspace/RunConversationStream.vue';
 import ConversationJump from '../components/workspace/ConversationJump.vue';
@@ -1258,7 +1265,6 @@ onBeforeUnmount(() => {
 .settlement-summary dt { flex:1 0 auto; color:var(--muted); font-size:12px; line-height:20px; }
 .settlement-summary dd { min-width:0; max-width:100%; margin:0; margin-inline-start:auto; font-size:13px; font-weight:500; line-height:20px; font-variant-numeric:tabular-nums; text-align:right; overflow-wrap:anywhere; }
 
-.approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
 .draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
 .run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
 @media (max-width: 800px) {

@@ -83,7 +83,9 @@
           <router-link v-else :to="`/artigen/agent/runs/${run?.runId}`">{{ zh ? '打开安全接管' : 'Open secure takeover' }}</router-link>
         </div>
       </div>
-      <p v-if="expiredApprovals.length" class="approval-expired" role="status">{{ zh ? '有审批已过期，不能再批准；请刷新任务查看最新状态。' : 'An approval expired and can no longer be granted. Refresh for the current status.' }}</p>
+      <ExpiredApprovalsNotice :count="expiredApprovals.length" :zh="zh">
+        <template #actions><router-link v-if="run" :to="`/artigen/agent/runs/${run.runId}`">{{ zh ? '查看任务' : 'View task' }}</router-link></template>
+      </ExpiredApprovalsNotice>
     </div>
 
     <footer>
@@ -105,6 +107,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
+import ExpiredApprovalsNotice from '../workspace/ExpiredApprovalsNotice.vue';
 import type { DesignExecution } from '../../services/designConversations';
 import { useAgentApprovals } from '../../composables/useAgentApprovals';
 import { agentAssetUrl, type AgentApproval, type AgentRun } from '../../services/agentRuns';
@@ -276,7 +279,6 @@ header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 66
 .approval-evidence div { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 8px; }
 .approval-evidence dt { color: var(--muted); font-size: 12px; }
 .approval-evidence dd { margin: 0; color: var(--text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
 .status-failed .progress-track span,.status-cancelled .progress-track span { background: var(--danger); }
 @media (max-width: 799px) {
   .execution-card > header { align-items: flex-start; padding: 12px; }.execution-body { padding: 6px 12px 12px; }.status-chip { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }.execution-meta { gap: 8px 12px; }.budget-block { align-items: flex-start; flex-wrap: wrap; }.approval-actions { display: grid; grid-template-columns: 1fr; }.approval-actions button { min-height: 44px; font-size: 12px; line-height: 1.35; }.footer-actions { flex-wrap: wrap; }.footer-actions > span { width: 100%; }.footer-actions button,.footer-actions a { min-height: 44px; flex: 1; text-align: center; }.deliverables > a { max-width: 100%; width: 100%; }

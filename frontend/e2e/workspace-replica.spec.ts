@@ -1951,3 +1951,61 @@ for (const language of ['zh', 'en']) {
     expect(fixture.state.inputs).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`expired approval recovery is read-only and keeps honest reload states ${language}`, async ({ page }) => {
+    const fixture = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const approval = { approvalId: 'expired-approval', actionType: 'publish', recipient: 'https://example.invalid/publish', riskLevel: 'high' as const, changeSummary: '已过期的合成审批', status: 'pending' as const, expiresAt: '2026-10-14T03:00:00Z', createdAt: '2026-10-14T02:00:00Z', decidedAt: null };
+    fixture.state.run.approvals = [approval];
+    let reads = 0, responseStatus = 200, hold = false;
+    const pending: Array<() => void> = [], writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/api/agent-runs/') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(`**/api/agent-runs/${inputRunId}`, async route => {
+      reads++;
+      const status = responseStatus;
+      if (hold) await new Promise<void>(resolve => pending.push(resolve));
+      return route.fulfill({ status, json: status === 200 ? { run: fixture.state.run } : { error: { code: status === 401 ? 'LOGIN_REQUIRED' : status === 404 ? 'AGENT_RUN_NOT_FOUND' : 'UNAVAILABLE' } } });
+    });
+    try {
+      await page.goto(runPath);
+      const notice = page.getByRole('region', { name: zh ? '过期审批' : 'Expired approvals', exact: true });
+      const retry = notice.getByRole('button');
+      await expect(notice).toContainText(zh ? '1 项审批已过期' : '1 approval expired');
+      await expect(page.locator('.approval-card')).toHaveCount(0);
+      await page.locator('.run-composer textarea').fill('保留这条尚未发送的补充');
+      responseStatus = 503; hold = true;
+      await retry.evaluate((el: HTMLButtonElement) => { el.click(); el.click(); });
+      await expect.poll(() => reads).toBe(2);
+      await expect(retry).toBeDisabled();
+      await expect(notice).toHaveAttribute('aria-busy', 'true');
+      await expect(retry).toContainText(zh ? '正在读取' : 'Loading');
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(retry).toBeEnabled();
+      await expect(notice.getByRole('alert')).toContainText(zh ? '暂时无法读取任务' : 'could not load');
+      await expect(page.locator('.run-composer textarea')).toHaveValue('保留这条尚未发送的补充');
+      responseStatus = 200; hold = false; fixture.state.run.approvals = [];
+      await retry.click();
+      await expect(notice).toHaveCount(0);
+      expect(reads).toBe(3);
+      await expect(page.locator('.run-composer textarea')).toHaveValue('保留这条尚未发送的补充');
+      for (const status of [401, 404]) {
+        fixture.state.run.approvals = [approval]; responseStatus = 200;
+        await page.reload();
+        await expect(notice).toBeVisible();
+        responseStatus = status;
+        await retry.click();
+        await expect(notice.getByRole('alert')).toBeVisible();
+        const action = notice.getByRole('link');
+        await expect(action).toHaveText(status === 401 ? (zh ? '重新登录' : 'Sign in again') : (zh ? '返回任务历史' : 'Back to task history'));
+        if (status === 401) await expect(action).toHaveAttribute('href', new RegExp('^/login\\?returnTo='));
+        else await expect(action).toHaveAttribute('href', '/artigen/agent');
+        await expect(retry).toHaveCount(0);
+        await expect(page.locator('.approval-card')).toHaveCount(0);
+      }
+      expect(writes).toEqual([]);
+      expect(fixture.state.inputs).toHaveLength(0);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}

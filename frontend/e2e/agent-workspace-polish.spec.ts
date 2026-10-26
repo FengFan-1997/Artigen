@@ -580,6 +580,9 @@ test('expiry removes approvals without requiring another server response', async
   await expect(page.locator('.approval-evidence')).toContainText('可以恢复上一版');
   await page.clock.runFor(61000);
   await expect(page.getByRole('button', { name: '仅批准这一次', exact: true })).toHaveCount(0);
+  const expired = page.getByRole('region', { name: '过期审批', exact: true });
+  await expect(expired).toContainText('1 项审批已过期');
+  await expect(expired.getByRole('link', { name: '查看任务', exact: true })).toHaveAttribute('href', `/artigen/agent/runs/${runId}`);
 });
 test('an in-flight decision disables conflicting approval buttons', async ({ page }) => {
   const currentRun = run('waiting_user');
