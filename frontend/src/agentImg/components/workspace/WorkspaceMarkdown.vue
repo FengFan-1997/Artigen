@@ -37,6 +37,7 @@ md.renderer.rules.link_open = (tokens, index, options, env, self) => {
   const file = findFile(href);
   if (file) {
     token.attrSet('data-resource', file.id);
+    token.attrSet('title', file.path);
     token.attrSet('href', '#');
   } else if (!/^(https?:|mailto:)/i.test(href)) {
     token.attrSet('href', '#');
@@ -143,6 +144,46 @@ const openResource = (event: MouseEvent) => {
 .workspace-markdown :deep(a) {
   color: var(--acid-text);
   text-underline-offset: 3px;
+}
+.workspace-markdown :deep(a[data-resource]) {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: min(100%, 36ch);
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--surface-raised);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.workspace-markdown :deep(a[data-resource] code) {
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font-size: inherit;
+}
+.workspace-markdown :deep(a[data-resource]:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-markdown :deep(a[data-resource]:hover) {
+    background: var(--surface-hover);
+    text-decoration: underline;
+  }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .workspace-markdown :deep(a[data-resource]) {
+    min-height: 44px;
+    padding: 10px 8px;
+  }
 }
 .workspace-markdown :deep(.inline-image) {
   display: block;
