@@ -779,7 +779,7 @@ test('run delivery labels are clear in the Files inspector and final response', 
   deliveryRun.subagents = [];
   const artifact = deliveryRun.artifacts[0];
   deliveryRun.artifacts = [
-    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111101', filename: 'brand-report.pdf', mimeType: 'application/pdf', byteSize: 245760, version: 1, verificationStatus: 'passed' },
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111101', filename: 'brand-launch-research-accessibility-evidence-final-report.pdf', mimeType: 'application/pdf', byteSize: 245760, version: 1, verificationStatus: 'passed' },
     { ...artifact, artifactId: '51111111-1111-4111-8111-111111111102', filename: 'menu.csv', mimeType: 'text/csv', byteSize: 381, version: 2, verificationStatus: 'pending' },
     { ...artifact, artifactId: '51111111-1111-4111-8111-111111111103', filename: 'launch-notes.md', mimeType: 'text/markdown', byteSize: 1275, version: 1, verificationStatus: 'failed' }
   ];
@@ -808,6 +808,14 @@ test('run delivery labels are clear in the Files inspector and final response', 
   await expect(page.locator('.delivery-summary .artifact-verification')).toHaveText(['验证通过', '待验证', '验证失败']);
   await expect(page.locator('.file-list a > span')).toHaveText(['PDF', 'CSV', 'MD']);
   await expect(page.locator('.delivery-summary a > span')).toHaveText(['PDF', 'CSV', 'MD']);
+  for (const selector of ['.delivery-summary a', '.file-list a']) {
+    const file = page.locator(selector).first();
+    await expect(file).toHaveAttribute('title', deliveryRun.artifacts[0].filename);
+    expect(await file.evaluate((element) => {
+      const row = element.getBoundingClientRect(), download = element.querySelector('svg')!.getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && download.right <= row.right && download.left >= row.left;
+    })).toBe(true);
+  }
   await expect(page.locator('#workspace-panel-files')).toContainText('交付文件');
   await expect(page.locator('#workspace-panel-files')).not.toContainText(/passed|pending|failed/);
   await expect(page.locator('.delivery-summary')).not.toContainText(/passed|pending|failed/);

@@ -143,7 +143,7 @@
 
         <div v-if="terminal && artifacts.length" class="delivery-summary">
           <header><span>{{ run.status === 'succeeded' ? (zh ? '交付完成' : 'Delivery complete') : (zh ? '已保留的成果' : 'Saved partial results') }}</span><b>{{ artifacts.length }}</b></header>
-          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
+          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" :title="artifact.filename" target="_blank" rel="noopener noreferrer">
             <span>{{ fileCode(artifact.mimeType) }}</span>
             <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em class="artifact-verification" :class="artifact.verificationStatus">{{ artifactVerificationLabel(artifact.verificationStatus) }}</em></div>
             <WorkspaceIcon name="download" />
@@ -299,7 +299,7 @@
         <section class="inspector-card">
           <header><span>{{ zh ? '交付文件' : 'Deliverables' }}</span><b>{{ artifacts.length }}</b></header>
           <div v-if="artifacts.length" class="file-list">
-            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer">
+            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" :title="artifact.filename" target="_blank" rel="noopener noreferrer">
               <span>{{ fileCode(artifact.mimeType) }}</span>
               <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em class="artifact-verification" :class="artifact.verificationStatus">{{ artifactVerificationLabel(artifact.verificationStatus) }}</em></div>
               <WorkspaceIcon name="download" />
@@ -1096,18 +1096,18 @@ onBeforeUnmount(() => {
 .retry-required b { color: var(--text); font-size: 13px; }
 .retry-required p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .retry-required button { min-height: 36px; flex: 0 0 auto; padding: 0 12px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 12px; font-weight: 720; }
-.delivery-summary { padding: 14px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); }
-.delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--success); font-size: 12px; font-weight: 720; }
-.delivery-summary > header b { font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.delivery-summary a { display: grid; grid-template-columns: 36px 1fr 18px; gap: 10px; align-items: center; padding: 9px; color: inherit; border-radius: 8px; text-decoration: none; }
-.delivery-summary a:hover { background: var(--surface-raised); }
-.delivery-summary a > span { color: var(--acid-text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.delivery-summary a div { display: grid; justify-items: start; gap: 3px; min-width: 0; }
-.delivery-summary a b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.delivery-summary a small { color: var(--muted); font-size: 12px; }
-.delivery-summary svg { width: 16px; height: 16px; }
+.delivery-summary { padding: 14px; border: 0; border-radius: 10px; background: var(--surface); }
+.delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--text); font-size: 12px; font-weight: 600; }
+.delivery-summary > header b { color: var(--muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+:is(.delivery-summary, .file-list) a { display: grid; min-width: 0; grid-template-columns: 36px minmax(0, 1fr) 20px; gap: 10px; align-items: center; padding: 10px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
+:is(.delivery-summary, .file-list) a:hover { background: var(--surface-hover); }
+:is(.delivery-summary, .file-list) a > span { display: grid; width: 32px; height: 36px; place-items: center; border-radius: 6px; color: var(--muted); background: var(--surface-raised); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+:is(.delivery-summary, .file-list) a > div { display: grid; min-width: 0; justify-items: start; gap: 3px; }
+:is(.delivery-summary, .file-list) a b { display: block; min-width: 0; width: 100%; max-width: 100%; overflow: hidden; font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+:is(.delivery-summary, .file-list) a small { color: var(--muted); font-size: 12px; }
+:is(.delivery-summary, .file-list) a > svg { width: 16px; height: 16px; justify-self: end; color: var(--muted); }
 .run-notice { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 10px; padding: 10px 12px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 12px; }
-.run-controls svg, .file-list svg { width: 16px; height: 16px; }
+.run-controls svg { width: 16px; height: 16px; }
 .preview-modal svg { width: 18px; height: 18px; }
 .run-controls { display: flex; gap: 5px; }
 .run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 0; border-radius: 7px; background: var(--surface); font-size: 12px; }
@@ -1211,12 +1211,6 @@ onBeforeUnmount(() => {
 .technical-list dt { color: var(--muted); font-size: 12px; }
 .technical-list dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .file-list { display: grid; gap: 4px; }
-.file-list a { display: grid; grid-template-columns: 34px 1fr 16px; gap: 8px; align-items: center; padding: 8px; color: inherit; border-radius: 8px; text-decoration: none; }
-.file-list a:hover { background: var(--surface-raised); }
-.file-list a > span { color: var(--acid-text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.file-list a div { display: grid; min-width: 0; gap: 2px; }
-.file-list b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.file-list small, .delivery-summary a small { color: var(--muted); font-size: 12px; }
 .artifact-verification { display: inline-flex; width: max-content; max-width: 100%; align-items: center; justify-self: start; box-sizing: border-box; padding: 2px 7px; border-radius: 999px; color: var(--muted); background: color-mix(in srgb,var(--muted) 12%,transparent); font-size: 11px; font-style: normal; font-weight: 620; line-height: 1.4; }
 .artifact-verification.passed { color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
 .artifact-verification.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
