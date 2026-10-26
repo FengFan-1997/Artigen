@@ -64,6 +64,99 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   expect(errors).toEqual([]);
 });
 
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`file tabs preserve unsaved state and quiet close affordances ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      const { workspace } = await installWorkspaceFixture(page, theme);
+      const name = 'brand-launch-review-and-delivery-checklist.md';
+      workspace.files[0].path = `docs/${name}`;
+      await page.goto(runPath);
+      await resources(page);
+      const tree = page.getByRole('complementary', { name: '文件目录' });
+      await tree.getByRole('button', { name: 'docs', exact: true }).click();
+      await tree.getByRole('button', { name, exact: true }).click();
+      await page.getByRole('button', { name: '源码', exact: true }).click();
+      const draft = '# 已检查首页\n\n这份修改尚未保存。';
+      await page.getByRole('textbox', { name: '文件编辑器' }).fill(draft);
+      if (!(await tree.isVisible())) await page.getByRole('button', { name: '显示目录树' }).click();
+      await tree.getByRole('button', { name: 'src', exact: true }).click();
+      await tree.getByRole('button', { name: 'theme.css', exact: true }).click();
+      const tabs = page.getByRole('tablist', { name: '已打开文件' });
+      const dirtyTab = tabs.getByRole('tab', { name: new RegExp(name) });
+      const dirtyRow = dirtyTab.locator('..');
+      const cleanTab = tabs.getByRole('tab', { name: 'theme.css', exact: true });
+      await expect(cleanTab).toHaveAttribute('aria-selected', 'true');
+      await page.mouse.move(0, 0);
+      const capture = process.env.ARTIGEN_FILE_TABS_CAPTURE;
+      if (capture) {
+        await page.screenshot({ path: `${capture}/${theme}-${width}.png`, animations: 'disabled' });
+        await page.locator('.file-tabs-bar').screenshot({ path: `${capture}/${theme}-${width}-detail.png`, animations: 'disabled' });
+      }
+      // Capture each unchanged baseline before asserting the new state contract.
+      const activeClose = cleanTab.locator('..').getByRole('button', { name: '关闭 theme.css', exact: true });
+      expect(await activeClose.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return rect.left >= 0 && rect.right <= innerWidth && hit !== null && element.contains(hit);
+      })).toBe(true);
+      await expect(dirtyTab).toHaveAttribute('title', `docs/${name}`);
+      await expect(dirtyTab).toHaveAccessibleName(`${name}（未保存）`);
+      await expect(dirtyRow.locator('.file-tab-dirty')).toBeVisible();
+      const close = dirtyRow.getByRole('button', { name: new RegExp(`关闭 ${name}`) });
+      const label = dirtyTab.locator('.file-tab-name');
+      expect(await label.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+      const marker = await dirtyRow.locator('.file-tab-dirty').boundingBox();
+      const closeBox = await close.boundingBox();
+      expect(marker).not.toBeNull();
+      expect(closeBox).not.toBeNull();
+      expect(Math.abs(marker!.y + marker!.height / 2 - closeBox!.y - closeBox!.height / 2)).toBeLessThanOrEqual(0.5);
+      if (width === 390) {
+        expect(closeBox!.width).toBeGreaterThanOrEqual(44);
+        expect(closeBox!.height).toBeGreaterThanOrEqual(44);
+        expect(await close.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+      } else {
+        expect(await close.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+        await dirtyTab.hover();
+        expect(await close.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+        await expect(dirtyRow.locator('.file-tab-dirty')).toBeVisible();
+      }
+      // An inactive clean tab stays quiet, but keyboard focus reveals its close button.
+      await dirtyTab.click();
+      const cleanClose = cleanTab.locator('..').getByRole('button', { name: '关闭 theme.css', exact: true });
+      await page.mouse.move(0, 0);
+      if (width !== 390) expect(await cleanClose.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+      await cleanClose.focus();
+      await expect(cleanClose).toBeFocused();
+      expect(await cleanClose.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+      await cleanClose.press('Enter');
+      await expect(tabs.getByRole('tab')).toHaveCount(1);
+      await expect(dirtyTab).toBeFocused();
+      await expect(page.getByRole('textbox', { name: '文件编辑器' }).locator('.cm-line')).toHaveText(draft.split('\n'));
+      // Rejecting discard must retain both the file and its exact draft.
+      page.once('dialog', (dialog) => dialog.dismiss());
+      await dirtyTab.press('Delete');
+      await expect(dirtyTab).toBeVisible();
+      await expect(page.getByRole('textbox', { name: '文件编辑器' }).locator('.cm-line')).toHaveText(draft.split('\n'));
+      page.once('dialog', (dialog) => dialog.accept());
+      await close.focus();
+      await close.press('Enter');
+      await expect(tabs.getByRole('tab')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /目录树/ })).toBeFocused();
+      expect(workspace.saves).toHaveLength(0);
+      expect(errors).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
 test('file tree separates folder disclosure from its icon and marks the active file', async ({
   page
 }) => {

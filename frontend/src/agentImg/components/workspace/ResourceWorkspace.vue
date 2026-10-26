@@ -27,6 +27,10 @@
           >
             <button
               role="tab"
+              :title="doc.file.path"
+              :aria-label="
+                filename(doc.file.path) + (dirty(doc) ? (zh ? '（未保存）' : ' (unsaved)') : '')
+              "
               :aria-selected="activeKey === doc.key"
               :tabindex="activeKey === doc.key ? 0 : -1"
               @click="activeKey = doc.key"
@@ -35,8 +39,10 @@
               <WorkspaceIcon
                 :name="doc.file.mimeType.startsWith('image/') ? 'image' : 'file'"
                 :size="14"
-              /><span>{{ filename(doc.file.path) }}{{ dirty(doc) ? ' •' : '' }}</span></button
+              /><span class="file-tab-name">{{ filename(doc.file.path) }}</span>
+              <span v-if="dirty(doc)" class="file-tab-dirty" aria-hidden="true"></span></button
             ><button
+              class="file-tab-close"
               :aria-label="
                 zh ? `关闭 ${filename(doc.file.path)}` : `Close ${filename(doc.file.path)}`
               "
@@ -908,7 +914,7 @@ async function closeDocument(doc: Document) {
     await nextTick();
     const target = selectedTab() || resourceRoot.value?.querySelector<HTMLElement>('.tree-toggle');
     target?.focus({ preventScroll: true });
-    target?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    (target?.closest('.file-tab') || target)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
 }
 async function newTextFile() {
@@ -1093,7 +1099,7 @@ const selectedTab = () =>
   fileTabs.value?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
 watch([activeKey, () => props.mode], async () => {
   await nextTick();
-  selectedTab()?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  selectedTab()?.closest('.file-tab')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 });
 async function onFileTabKeydown(doc: Document, event: KeyboardEvent) {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Delete'].includes(event.key)) return;
@@ -1247,6 +1253,7 @@ onBeforeUnmount(() => {
 }
 .file-tabs {
   display: flex;
+  align-items: center;
   min-height: 44px;
   overflow: auto;
   flex: 1;
@@ -1274,7 +1281,9 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--muted);
   border: 0;
-  padding: 8px;
+  padding: 0 8px;
+  min-height: 34px;
+  border-radius: 6px;
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -1282,13 +1291,46 @@ onBeforeUnmount(() => {
 .file-tab.active > button {
   color: var(--text);
 }
-.file-tab span {
+.file-tab > [role='tab'] {
+  flex: 1;
+}
+.file-tab.active > [role='tab'] {
+  font-weight: 500;
+}
+.file-tab-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.file-tab > button:last-child {
-  padding: 7px;
+.file-tab-dirty {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.file-tab > .file-tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin-right: 3px;
+  padding: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .file-tab:not(.active):not(:hover):not(:focus-within) > .file-tab-close {
+    opacity: 0;
+  }
+  .file-tab:hover:not(.active) {
+    background: var(--surface-hover);
+  }
+  .file-tab > .file-tab-close:hover {
+    color: var(--text);
+    background: var(--surface);
+  }
 }
 .tree-toggle {
   display: grid;
