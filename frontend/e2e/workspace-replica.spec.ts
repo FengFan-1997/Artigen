@@ -286,6 +286,23 @@ for (const theme of ['dark', 'light']) {
   });
 }
 
+test('capabilities expose enabled and disabled values without grant controls', async ({ page }) => {
+  const { state } = await installWorkspaceFixture(page);
+  state.run.capabilities = { browser: true, files: false, shell: true };
+  await page.goto(runPath);
+  await resources(page, '任务');
+  await page.getByRole('tab', { name: '环境', exact: true }).click();
+  const list = page.locator('dl.grant-list');
+  await expect(list.locator('dt')).toHaveText(['网页操作', '文档与文件', '离线处理']);
+  await expect(list.locator('dd')).toHaveText(['已启用', '未启用', '已启用']);
+  await expect(list.locator('button,input,select')).toHaveCount(0);
+  state.run.capabilities.files = true;
+  await page.reload();
+  await expect(list.locator('dd')).toHaveText(['已启用', '已启用', '已启用']);
+  expect(state.inputs).toHaveLength(0);
+  expect(state.quotes).toHaveLength(0);
+});
+
 test('project tree, file tabs, cloud save/conflict, proposals and read-only GitHub', async ({
   page
 }) => {

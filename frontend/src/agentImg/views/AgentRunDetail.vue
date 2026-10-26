@@ -202,9 +202,12 @@
         </section>
         <section class="inspector-card">
           <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
-          <div class="grant-list">
-            <span v-for="(enabled, capability) in run.capabilities" :key="capability" :class="{ enabled }"><i></i>{{ capabilityLabel(String(capability)) }}</span>
-          </div>
+          <dl class="grant-list">
+            <div v-for="(enabled, capability) in run.capabilities" :key="capability">
+              <dt>{{ capabilityLabel(String(capability)) }}</dt>
+              <dd><WorkspaceIcon :name="enabled ? 'check' : 'minus'" :size="14" /><span>{{ enabled ? (zh ? '已启用' : 'Enabled') : (zh ? '未启用' : 'Not enabled') }}</span></dd>
+            </div>
+          </dl>
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
@@ -1145,11 +1148,11 @@ onBeforeUnmount(() => {
 .inspector-card dl div { display: flex; justify-content: space-between; gap: 10px; }
 .inspector-card dt, .inspector-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
-.grant-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.grant-list span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; color: var(--muted-2); border: 0; border-radius: 6px; background: var(--surface-raised); font-size: 12px; }
-.grant-list i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
-.grant-list span.enabled { color: var(--text); }
-.grant-list span.enabled i { background: var(--acid); }
+.inspector-card .grant-list { gap:0; }
+.inspector-card .grant-list > div { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; min-height:34px; padding:5px 0; }
+.grant-list dt { min-width:0; color:var(--text); font-size:13px; line-height:20px; overflow-wrap:anywhere; }
+.grant-list dd { display:flex; flex:none; align-items:center; gap:5px; max-width:none; color:var(--muted); font:inherit; font-size:12px; line-height:20px; white-space:nowrap; }
+
 .execution-plan > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 10px 12px; }
 .execution-plan > header b { color: var(--text); font-size: 13px; font-weight: 600; }
 .execution-plan > header span { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
