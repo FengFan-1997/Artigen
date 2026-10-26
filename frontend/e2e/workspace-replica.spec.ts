@@ -1624,3 +1624,48 @@ for (const language of ['zh', 'en']) {
     await expect(tree.getByRole('status')).toHaveCount(0);
   });
 }
+
+test('file read recovery keeps context, deduplicates retry and restores keyboard focus', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  let reads = 0;
+  const pending: Array<() => void> = [];
+  await page.route(`**/files/${workspace.files[0].id}/content`, async route => {
+    const attempt = ++reads;
+    if (attempt > 1) await new Promise<void>(resolve => pending.push(resolve));
+    if (attempt < 4) return route.fulfill({ status: attempt === 1 ? 403 : 503, contentType: 'application/json', body: JSON.stringify({ error: { code: attempt === 1 ? 'WORKSPACE_READ_PERMISSION_DENIED' : 'UNAVAILABLE' } }) });
+    await route.fallback();
+  });
+  try {
+    await page.goto(runPath);
+    await openBrief(page);
+    const panel = page.locator('.file-viewer');
+    await expect(panel.getByRole('heading', { name: '暂时无法打开文件', exact: true })).toBeVisible();
+    await expect(panel.locator('.file-status')).toHaveCount(0);
+    await expect(panel.locator('.file-read-name')).toHaveText('brief.md');
+    await expect(panel.getByRole('alert')).toContainText('文件访问权限不足');
+    const retry = panel.getByRole('button', { name: '重新读取', exact: true });
+    await retry.focus();
+    await retry.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+    await expect.poll(() => reads).toBe(2);
+    await expect(panel.getByRole('status')).toHaveText('正在读取文件…');
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(panel.getByRole('alert')).toContainText('操作未完成');
+    await expect(retry).toBeFocused();
+    await retry.press('Enter');
+    await expect.poll(() => reads).toBe(3);
+    const otherControl = page.locator('.tree-toggle');
+    await otherControl.focus();
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(retry).toBeVisible();
+    await expect(otherControl).toBeFocused();
+    await retry.press('Enter');
+    await expect.poll(() => reads).toBe(4);
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(page.locator('.document-preview')).toContainText('已完成首页');
+    await expect(page.getByRole('tab', { name: 'brief.md', exact: true })).toBeFocused();
+    await expect(panel.getByRole('alert')).toHaveCount(0);
+    await expect(panel.locator('.file-status')).toBeVisible();
+    expect(workspace.saves).toHaveLength(0);
+    expect(reads).toBe(4);
+  } finally { pending.splice(0).forEach(resolve => resolve()); }
+});

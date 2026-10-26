@@ -188,9 +188,16 @@
             <p v-if="active.loading" class="resource-loading" role="status">
               {{ zh ? '正在读取文件…' : 'Opening file…' }}
             </p>
-            <div v-else-if="active.error" class="resource-empty">
-              <p role="alert">{{ active.error }}</p>
-              <button @click="reloadDocument(active)">{{ zh ? '重试' : 'Retry' }}</button>
+            <div v-else-if="active.error" class="resource-empty file-read-error">
+              <div class="file-read-content">
+                <WorkspaceIcon name="file" :size="20" />
+                <h2>{{ zh ? '暂时无法打开文件' : 'Could not open file' }}</h2>
+                <p class="file-read-name" :title="active.file.path">{{ filename(active.file.path) }}</p>
+                <p role="alert">{{ active.error }}</p>
+                <button type="button" class="file-read-retry" @click="reloadDocument(active)">
+                  <WorkspaceIcon name="refresh" :size="16" />{{ zh ? '重新读取' : 'Reload file' }}
+                </button>
+              </div>
             </div>
             <WorkspaceEditor
               v-else-if="active.text !== undefined && active.view === 'source'"
@@ -271,7 +278,7 @@
                 </button>
               </div>
             </div>
-            <footer v-if="!active.loading" class="file-status">
+            <footer v-if="!active.loading && !active.error" class="file-status">
               <span class="file-save-state"
                 >{{ dirty(active) ? (zh ? '未保存' : 'Unsaved') : zh ? '已保存' : 'Saved' }} ·
                 {{ active.source === 'local' ? (zh ? '本机' : 'Local') : `v${active.file.revision}` }}</span>
@@ -570,7 +577,7 @@ const errorText = (error: unknown) => {
       ? '文件已在其他位置修改。请重新读取并比较，未保存内容仍保留。'
       : 'File changed elsewhere. Reload and compare; your edits are kept.';
   if (code.includes('PERMISSION') || code.includes('NotAllowed'))
-    return props.zh ? '没有文件写入权限，请重新授权后重试。' : 'Authorize file access and retry.';
+    return props.zh ? '文件访问权限不足，请重新授权后重试。' : 'Authorize file access and retry.';
   if (code.includes('TOO_LARGE'))
     return props.zh
       ? '文件超过读取或编辑限制，请下载后打开。'
@@ -790,7 +797,7 @@ async function openFile(file: WorkspaceFile, handle?: LocalFile) {
     baseline: '',
     baselineHash: '',
     view: 'preview',
-    loading: true,
+    loading: false,
     error: ''
   });
   documents.value.push(doc);
@@ -798,6 +805,8 @@ async function openFile(file: WorkspaceFile, handle?: LocalFile) {
   await reloadDocument(doc);
 }
 async function reloadDocument(doc: Document) {
+  if (doc.loading) return;
+  const restoreFocus = Boolean(doc.error && activeKey.value === doc.key && document.activeElement?.closest('.file-read-error'));
   if (
     dirty(doc) &&
     !confirm(
@@ -874,9 +883,18 @@ async function reloadDocument(doc: Document) {
         : 'The file changed since its saved draft. It was not overwritten.';
     }
   } catch (error) {
-    if (ticket === revision) doc.error = errorText(error);
+    if (ticket === revision && generation === doc.generation && !disposed) doc.error = errorText(error);
   } finally {
-    if (ticket === revision) doc.loading = false;
+    if (ticket === revision && generation === doc.generation && !disposed) {
+      doc.loading = false;
+      if (restoreFocus) {
+        await nextTick();
+        if (ticket === revision && activeKey.value === doc.key && document.activeElement === document.body) {
+          const target = doc.error ? resourceRoot.value?.querySelector<HTMLButtonElement>('.file-read-retry') : selectedTab();
+          target?.focus({ preventScroll: true });
+        }
+      }
+    }
   }
 }
 const keyForDraft = (doc: Document) => ':' + doc.key;
@@ -1637,6 +1655,15 @@ button:disabled {
   margin: 0;
   max-width: 34ch;
 }
+.file-read-content { display: grid; width: min(100%, 360px); min-width: 0; gap: 12px; text-align: left; }
+.file-read-content > .workspace-icon { color: var(--muted); }
+.file-read-error h2 { font-size: 15px; font-weight: 500; line-height: 1.5; }
+.file-read-error p { max-width: none; overflow-wrap: anywhere; }
+.file-read-error .file-read-name { color: var(--text); font-size: 13px; font-weight: 500; line-height: 1.5; }
+.file-read-error .file-read-retry { justify-self: start; min-height: 36px; gap: 6px; padding: 7px 12px; background: var(--surface-raised); font-size: 13px; }
+.file-read-retry:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .file-read-error .file-read-retry:hover { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .file-read-error .file-read-retry { min-height: 44px; } }
 .binary-details {
   display: grid;
   width: min(100%, 360px);
