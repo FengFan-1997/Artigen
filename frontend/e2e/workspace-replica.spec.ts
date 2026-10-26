@@ -548,10 +548,11 @@ test('Markdown table headings stay distinct in dark desktop and light mobile wor
 
 test('Markdown code stays readable while long paths wrap and fenced lines scroll locally', async ({ browser }) => {
   const longPath = `projects/${'brand-launch-'.repeat(8)}report.md`;
+  const listPath = `docs/${'reference/'.repeat(10)}launch-notes.md`;
   const command = 'const report = await generateReport({ projectId: "brand-launch", outputPath: "outputs/delivery/report.md", includeEvidence: true });';
-  const text = ['# 文件与执行参数', '', '继续使用 `projectId` 和 `draftVersion` 关联本次任务。保存后运行 `pnpm run build`，再打开产物检查结果。', '', `产物路径：\`${longPath}\`。`, '', '```ts', command, '```', '', '代码中的空格和换行应保持原样；长代码行在代码区域内滚动。'].join('\n');
+  const text = ['# 文件与执行参数', '', '继续使用 `projectId` 和 `draftVersion` 关联本次任务。保存后运行 `pnpm run build`，再打开产物检查结果。', '', `产物路径：\`${longPath}\`。`, '', '```ts', command, '```', '', '代码中的空格和换行应保持原样；长代码行在代码区域内滚动。', '', `- 最后核对输出路径 \`${listPath}\` 并整理交付。`].join('\n');
   for (const theme of ['dark', 'light']) {
-    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 360, height: 844 }]) {
       const context = await browser.newContext({ viewport });
       const page = await context.newPage();
       const { workspace } = await installWorkspaceFixture(page, theme);
@@ -561,6 +562,8 @@ test('Markdown code stays readable while long paths wrap and fenced lines scroll
       const markdown = page.locator('.document-preview .workspace-markdown');
       await expect(markdown).toContainText('文件与执行参数');
       await expect(markdown.locator('p code')).toHaveText(['projectId', 'draftVersion', 'pnpm run build', longPath]);
+      await expect(markdown.locator('li code')).toHaveText(listPath);
+      expect(await markdown.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
       const fenced = markdown.locator('pre code');
       expect(await fenced.textContent()).toBe(`${command}\n`);
       await page.mouse.move(0, 0);

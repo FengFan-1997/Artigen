@@ -125,6 +125,15 @@ const onMarkdownClick = (event: MouseEvent) => {
 .workspace-markdown :deep(p) {
   margin: 0 0 14px;
 }
+.workspace-markdown :deep(:is(ul, ol)) {
+  margin-block: 0 14px;
+  padding-inline-start: 1.5em;
+}
+.workspace-markdown :deep(ol) { padding-inline-start: 2.5em; }
+.workspace-markdown :deep(li + li) { margin-block-start: 6px; }
+.workspace-markdown :deep(li > :is(ul, ol)) { margin-block: 6px 0; }
+.workspace-markdown :deep(li > p) { margin-block: 0 8px; }
+.workspace-markdown :deep(li > :last-child) { margin-block-end: 0; }
 .workspace-markdown :deep(h1) {
   font-size: 26px;
 }
@@ -157,6 +166,9 @@ const onMarkdownClick = (event: MouseEvent) => {
   font-size: 0.9em;
 }
 .workspace-markdown :deep(:not(pre) > code) {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
   padding: 0.1em 0.35em;
   border-radius: 4px;
   color: var(--text);
