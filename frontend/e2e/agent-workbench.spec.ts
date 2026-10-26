@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { strToU8, zipSync } from 'fflate';
 import { expect, test, type Page } from '@playwright/test';
 import { expectWorkspaceGeometry, installDevEnvironmentBadge } from './helpers/workspaceLayoutAudit';
 
@@ -868,6 +869,62 @@ test('run delivery labels are clear in the Files inspector and final response', 
   await expect(page.locator('.file-list em')).toHaveText(['Verified', 'Pending verification', 'Verification failed']);
   await expect(page.locator('.delivery-summary .artifact-verification')).toHaveText(['Verified', 'Pending verification', 'Verification failed']);
   await expect(page.locator('#workspace-panel-files')).toContainText('Deliverables');
+});
+
+test('website preview keeps long filenames and its close action inside the viewport', async ({ page }, testInfo) => {
+  const theme = process.env.ARTIGEN_PREVIEW_THEME === 'light' ? 'light' : 'dark';
+  const filename = `${'brand-review-layout-accessibility-mobile-desktop-'.repeat(4)}website.zip`;
+  const previewRun = structuredClone(baseRun);
+  previewRun.status = 'succeeded';
+  previewRun.subagents = [];
+  previewRun.artifacts = [{ ...previewRun.artifacts[0], role: 'website', filename, mimeType: 'application/zip' }];
+  const archive = zipSync({ 'index.html': strToU8('<!doctype html><html><head><meta charset="utf-8"></head><body><h1>Artigen 网站预览</h1><p>已验证的本地测试页面。</p></body></html>') });
+  await page.addInitScript((theme) => {
+    localStorage.setItem('app_lang', 'zh');
+    localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode: 'task', theme }));
+  }, theme);
+  await installRunApi(page, { run: previewRun });
+  await page.route('**/api/workspace/navigation*', (route) => route.fulfill({ json: { ok: true, projects: [], sessions: [], nextCursor: null } }));
+  await page.route(`**/api/agent-runs/${runId}/messages*`, (route) => route.fulfill({ json: { ok: true, messages: [], nextCursor: null } }));
+  await page.route(`**${previewRun.artifacts[0].url}`, (route) => route.fulfill({ contentType: 'application/zip', body: Buffer.from(archive) }));
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.locator('.delivery-summary')).toBeVisible();
+  if (testInfo.project.name.includes('mobile-')) await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+  const trigger = page.getByRole('button', { name: `预览 ${filename}`, exact: true });
+  await expect(trigger).toHaveAttribute('title', filename);
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: filename, exact: true });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate((element) => element.matches(':modal'))).toBe(true);
+  await expect(dialog.frameLocator('iframe').getByRole('heading', { name: 'Artigen 网站预览' })).toBeVisible();
+  const close = dialog.getByRole('button', { name: '关闭预览', exact: true });
+  await page.mouse.move(0, 0);
+  if (process.env.ARTIGEN_PREVIEW_CAPTURE) await page.screenshot({ path: path.join(process.env.ARTIGEN_PREVIEW_CAPTURE, `${testInfo.project.name}.png`), animations: 'disabled' });
+  const geometry = await dialog.evaluate((element) => {
+    const header = element.querySelector('header')!;
+    const button = header.querySelector('button')!.getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    return { buttonLeft: button.left, buttonRight: button.right, dialogLeft: bounds.left, dialogRight: bounds.right, headerWidth: header.clientWidth, headerScrollWidth: header.scrollWidth, headerHeight: header.getBoundingClientRect().height };
+  });
+  expect(geometry.buttonLeft).toBeGreaterThanOrEqual(geometry.dialogLeft);
+  expect(geometry.buttonRight).toBeLessThanOrEqual(geometry.dialogRight);
+  expect(geometry.headerScrollWidth).toBeLessThanOrEqual(geometry.headerWidth + 1);
+  expect(geometry.headerHeight).toBeLessThanOrEqual(testInfo.project.name.includes('mobile-') ? 64 : 56);
+  await expect(dialog.locator('strong')).toHaveAttribute('title', filename);
+  await expect(close).toBeFocused();
+  await expect(dialog.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts');
+  await expect(dialog.locator('iframe')).toHaveAttribute('referrerpolicy', 'no-referrer');
+  await trigger.focus();
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await close.click();
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
 });
 
 test('switching run history replaces the run, event stream and audit timeline', async ({ page }) => {

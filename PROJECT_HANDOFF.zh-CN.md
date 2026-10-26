@@ -427,3 +427,10 @@ Chrome目录由用户主动选择，按需展开；目录连接不上传。账�
 - 产品设计硬约束已写入 `frontend/DESIGN.md` 和开发必读 `AGENTS.md`：内容容器严禁装饰性彩色边框及单侧装饰边框、色条；使用内阴影、渐变或伪元素模拟也属于禁用样式。结构性中性分割线与完整键盘焦点轮廓继续保持清晰。
 - Agent 工作区的交付、审批、重试、授权、预算与错误提示移除单侧彩色内阴影；保留整体表面、状态文案和图标，移除原本为色条补偿的左侧额外内距。
 - 系统 Chrome 桌面与 390px 手机交付文件回归 2/2 通过；前端 type-check、目标 ESLint、文档与 workspace 检查通过。改前/改后截图保存在本机 `Artigen-agent-chrome-polish/delivery-accent-ban-20261026/`，使用真实本地 Vue 页面和同一合成 Run fixture；没有部署或远端操作。
+
+## 2026-10-26 网站预览标题与移动端焦点修复（本地候选，未部署）
+
+- 网站预览标题与入口采用单行省略，完整文件名保留在标题提示与无障碍名称中；关闭按钮不参与压缩，手机保持至少 44px 点击区，避免长文件名把标题栏撑成多行。
+- 原来的预览 section 位于移动抽屉设置为 inert 的会话背景内，导致预览虽然可见，关闭按钮却无法获得焦点。改用原生 modal dialog 进入浏览器顶层，删除手写 Tab 循环与全局 Escape 监听；原生模态负责焦点隔离，关闭后返回原入口。ZIP 读取、CSP、iframe sandbox 与 referrerpolicy 保持原有边界。
+- 系统 Chrome 的 1440px 桌面和 390px 手机、深浅主题回归共 4/4 通过，覆盖标题几何、完整名称、顶层模态、关闭按钮初始焦点、背景不能抢焦点、Escape/按钮关闭和焦点返回。前端 type-check、目标 ESLint、文档与 workspace 门禁通过。
+- 真实本地 Vue 页面对照图保存在本机 `Artigen-agent-chrome-polish/preview-header-20261026/`；使用合成 Run 和实际解压的测试 ZIP，不代表 DEV/Production 或真实模型任务。本轮未部署、push、创建 PR 或合并。

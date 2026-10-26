@@ -186,7 +186,9 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 | Left history panel | Desktop collapsible; mobile hidden and `inert` | Desktop expands in place; mobile drawer opens with scrim | Close button, scrim, or Escape closes | Restore focus to the history opener; collapse control exposes `aria-expanded` and `aria-controls` |
 | Right Inspector | Desktop collapsible; mobile hidden and `inert` | Active tab and live state remain visible | Close button, scrim, or Escape closes | Restore focus to the Inspector opener; tabs keep roving focus and `aria-selected` |
 | Command palette | Not mounted | Dialog focuses search and traps Tab | Escape closes and returns focus | `role=dialog`, labelled search, no background focus |
-| Website preview | Not mounted | Dialog focuses close affordance and traps Tab | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
+| Website preview | Not mounted | Native modal dialog focuses close affordance and contains focus, including over mobile drawers | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
+
+- 网站预览标题保持紧凑单行，长文件名省略并保留完整标题提示；关闭按钮不参与压缩，手机点击区至少 44px。预览入口也需要截断保护，不能让文件名撑出资源区。使用原生 modal dialog 承担顶层展示与焦点约束，避免移动抽屉的背景 `inert` 禁用预览操作。
 | Run controls | Pause, resume, retry, stop reflect the current status | Busy state disables duplicate submissions | Stop requires a second explicit activation | Status and failure text are announced through live regions |
 | Tool receipt rows | Timestamp, event summary and receipt ID stay in one aligned row | Long summaries wrap only in their own column | Receipt ID remains visible at mobile widths | IDs and timestamps use secondary tabular typography |
 | Terminal Run actions | Completed, failed, and cancelled runs replace the disabled composer with a compact status and a clear next task link | Project context carries into the next task; active Run input and unread-update controls remain available only in their applicable states | The saved run stays readable and its status is not inferred from color alone |

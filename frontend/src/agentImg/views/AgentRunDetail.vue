@@ -297,14 +297,14 @@
           </div>
           <div v-else class="inspector-empty">{{ zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.' }}</div>
         </section>
-        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
+        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" :title="artifact.filename" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
       </div>
     </template>
 
-    <section v-if="previewHtml" ref="previewModal" class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" @keydown="onPreviewKeydown">
-      <header><strong id="preview-modal-title">{{ previewName }}</strong><button ref="previewCloseButton" type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
+    <dialog v-if="previewHtml" ref="previewModal" class="preview-modal" aria-modal="true" aria-labelledby="preview-modal-title" @keydown.stop @cancel.prevent="closePreview">
+      <header><strong id="preview-modal-title" :title="previewName">{{ previewName }}</strong><button ref="previewCloseButton" type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
       <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
-    </section>
+    </dialog>
   </AgentWorkspaceShell>
 </template>
 
@@ -372,7 +372,7 @@ const activeTakeoverApprovalId = ref('');
 const desktopScreen = ref<HTMLDivElement | null>(null);
 const previewHtml = ref('');
 const previewName = ref('');
-const previewModal = ref<HTMLElement | null>(null);
+const previewModal = ref<HTMLDialogElement | null>(null);
 const previewCloseButton = ref<HTMLButtonElement | null>(null);
 let previewReturnFocus: HTMLElement | null = null;
 let closeStream: (() => void) | null = null;
@@ -793,6 +793,7 @@ const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
     previewHtml.value = html;
     previewName.value = artifact.filename;
     await nextTick();
+    previewModal.value?.showModal();
     previewCloseButton.value?.focus({ preventScroll: true });
   } catch (error) {
     if (targetRunId === runId.value) {
@@ -801,37 +802,12 @@ const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
   }
 };
 const closePreview = () => {
+  previewModal.value?.close();
   previewHtml.value = '';
   previewName.value = '';
   const target = previewReturnFocus;
   previewReturnFocus = null;
   if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
-};
-const previewFocusable = () => Array.from(
-  previewModal.value?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],iframe,[tabindex]:not([tabindex="-1"])') || []
-).filter((item) => item.offsetParent !== null);
-const onPreviewKeydown = (event: KeyboardEvent) => {
-  if (!previewModal.value) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closePreview();
-    return;
-  }
-  if (event.key !== 'Tab') return;
-  const focusable = previewFocusable();
-  if (!focusable.length) return;
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
-};
-const onPreviewWindowKeydown = (event: KeyboardEvent) => {
-  if (previewHtml.value && event.key === 'Escape') onPreviewKeydown(event);
 };
 
 const onEvent = (event: AgentEvent) => {
@@ -1034,7 +1010,6 @@ const fileCode = (mime: string) => {
   return 'FILE';
 };
 onMounted(async () => {
-  window.addEventListener('keydown', onPreviewWindowKeydown);
   window.addEventListener('app-auth-changed', resetSelectedRun);
   const initialRunId = runId.value;
   await load(initialRunId);
@@ -1049,7 +1024,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   disposed = true;
   loadRevision += 1;
-  window.removeEventListener('keydown', onPreviewWindowKeydown);
   window.removeEventListener('app-auth-changed', resetSelectedRun);
   disconnectDesktop();
   closeStream?.();
@@ -1228,11 +1202,15 @@ onBeforeUnmount(() => {
 .artifact-verification { display: inline-flex; width: max-content; max-width: 100%; align-items: center; justify-self: start; box-sizing: border-box; padding: 2px 7px; border-radius: 999px; color: var(--muted); background: color-mix(in srgb,var(--muted) 12%,transparent); font-size: 11px; font-style: normal; font-weight: 620; line-height: 1.4; }
 .artifact-verification.passed { color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
 .artifact-verification.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
-.preview-control { width: 100%; }
-.preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto 1fr; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
-.preview-modal header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-.preview-modal header button { display: grid; width: 34px; height: 34px; place-items: center; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.preview-modal iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.preview-control { width: 100%; min-width: 0; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto minmax(0, 1fr); box-sizing: border-box; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0; overflow: hidden; color: var(--text); border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
+.preview-modal:not([open]) { display: none; }
+.preview-modal::backdrop { background: rgb(0 0 0 / 25%); }
+.preview-modal header { display: flex; box-sizing: border-box; min-width: 0; min-height: 52px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.preview-modal header strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.preview-modal header button { display: grid; flex: 0 0 auto; width: 32px; height: 32px; padding: 0; place-items: center; color: var(--muted); border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.preview-modal header button:hover { color: var(--text); background: var(--surface); }
+.preview-modal iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: #fff; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 .run-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 16px; }
