@@ -356,8 +356,16 @@
           </div>
           <template v-if="root"
             ><div class="local-root">
-              <b>{{ root.name }}</b
-              ><button @click="disconnectFolder">{{ zh ? '断开' : 'Disconnect' }}</button>
+              <WorkspaceIcon name="folder" :size="16" />
+              <span class="local-root-name" :title="root.name">{{ root.name }}</span>
+              <button
+                type="button"
+                :aria-label="zh ? `断开文件夹 ${root.name}` : `Disconnect folder ${root.name}`"
+                :title="zh ? '断开文件夹连接' : 'Disconnect folder'"
+                @click="disconnectFolder"
+              >
+                <WorkspaceIcon name="close" :size="14" />
+              </button>
             </div>
             <button v-if="!permission" @click="reauthorize">
               {{ zh ? '重新授权目录' : 'Authorize folder again' }}</button
@@ -1473,17 +1481,32 @@ onBeforeUnmount(() => {
   padding: 4px;
 }
 .local-root {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  gap: 6px;
   align-items: center;
-  font-size: 12px;
-  padding: 5px;
+  min-width: 0;
+  padding: 4px;
+  font-size: 13px;
+  font-weight: 500;
 }
-.local-root > b {
+.local-root > .workspace-icon { color: var(--muted); }
+.local-root-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.local-root button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .local-root button:hover {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
 }
 .file-toolbar {
   display: flex;
@@ -1816,6 +1839,7 @@ button:disabled {
   .resource-tree {
     width: 175px;
   }
+  .local-root { grid-template-columns: 16px minmax(0, 1fr) 44px; }
   .document-preview {
     padding: 16px;
   }
