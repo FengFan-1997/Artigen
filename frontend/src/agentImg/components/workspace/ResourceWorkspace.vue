@@ -73,10 +73,11 @@
       <div class="file-body">
         <section class="file-viewer">
           <div v-if="active" class="file-toolbar">
-            <span class="breadcrumb" :title="active.file.path"
-              >{{ active.source === 'local' ? (zh ? '本机' : 'Local') : zh ? '项目' : 'Project' }} /
-              {{ active.file.path }}</span
-            >
+            <div class="breadcrumb" :title="active.file.path" role="group" :aria-label="zh ? '文件位置' : 'File location'">
+              <span class="breadcrumb-source">{{ active.source === 'local' ? (zh ? '本机' : 'Local') : zh ? '项目' : 'Project' }}</span>
+              <WorkspaceIcon name="chevron-right" :size="14" />
+              <span class="breadcrumb-path"><span class="breadcrumb-directory">{{ active.file.path.slice(0, active.file.path.lastIndexOf('/') + 1) }}</span><span class="breadcrumb-filename">{{ filename(active.file.path) }}</span></span>
+            </div>
             <div class="viewer-actions">
               <div
                 v-if="active.text !== undefined"
@@ -1446,13 +1447,26 @@ onBeforeUnmount(() => {
   padding: 7px 10px;
 }
 .breadcrumb {
+  display: flex;
   min-width: 0;
   flex: 1;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   color: var(--muted);
+}
+.breadcrumb-source { flex: none; }
+.breadcrumb-path { display: flex; min-width: 0; overflow: hidden; }
+.breadcrumb-directory { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.breadcrumb-filename {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: 500;
 }
 .viewer-actions {
   display: flex;
