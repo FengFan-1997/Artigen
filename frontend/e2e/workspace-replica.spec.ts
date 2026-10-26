@@ -320,6 +320,55 @@ test('GitHub record rows keep long titles compact with hover feedback and keyboa
   }
 });
 
+test('history search recovers from no results without closing the mobile drawer', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      await installWorkspaceFixture(page, theme);
+      await page.goto(runPath);
+      if (viewport.width < 1440) await page.getByRole('button', { name: '打开历史', exact: true }).click();
+      const history = page.locator('#workspace-history-panel');
+      const search = history.locator('input[name="workspace-search"]');
+      await expect(search).toHaveAccessibleName('搜索任务');
+      const current = history.getByRole('link', { name: '整理网站审查报告', exact: true });
+      await expect(current).toBeVisible();
+      await search.fill('没有匹配的任务');
+      await expect(current).toHaveCount(0);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_HISTORY_SEARCH_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_HISTORY_SEARCH_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(await history.getByText('已加载内容中没有匹配项', { exact: true }).count()).toBe(1);
+      const clear = history.getByRole('button', { name: '清除任务搜索', exact: true });
+      expect.soft(await clear.count(), 'explicit accessible clear action exists').toBe(1);
+      await expect(clear).toBeVisible();
+      if (viewport.width < 800) {
+        const rect = await clear.boundingBox();
+        expect(rect!.width).toBeGreaterThanOrEqual(44);
+        expect(rect!.height).toBeGreaterThanOrEqual(44);
+      }
+      await clear.click();
+      await expect(search).toHaveValue('');
+      await expect(search).toBeFocused();
+      await expect(current).toBeVisible();
+      await expect(clear).toHaveCount(0);
+      await search.fill('另一个不存在的任务');
+      await search.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', isComposing: true, bubbles: true });
+      await expect(search).toHaveValue('另一个不存在的任务');
+      await expect(search).toBeFocused();
+      await search.press('Escape');
+      expect.soft(await search.inputValue(), 'first Escape clears the search').toBe('');
+      expect.soft(await search.evaluate((element) => document.activeElement === element), 'first Escape keeps search focus').toBe(true);
+      expect.soft(await history.evaluate((element) => !element.inert), 'first Escape keeps history available').toBe(true);
+      if (viewport.width < 1440) {
+        await page.keyboard.press('Escape');
+        await expect(page.getByRole('button', { name: '打开历史', exact: true })).toBeFocused();
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await context.close();
+    }
+  }
+});
+
 test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
   await installWorkspaceFixture(page);
   await page.goto(runPath);

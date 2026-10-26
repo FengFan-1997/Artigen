@@ -104,6 +104,9 @@
         <WorkspaceIcon name="settings" :size="14" />
       </button>
     </div>
+    <p v-if="search && !loading && !error && !visibleProjects.length && !filtered(null).length" class="navigation-empty" role="status">
+      {{ zh ? '已加载内容中没有匹配项' : 'No matches in loaded items' }}
+    </p>
     <button v-if="cursor" class="load-more" :disabled="loading" @click="load(true)">
       {{ zh ? '加载更多会话' : 'Load more chats' }}
     </button>
@@ -369,6 +372,10 @@ button {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+.navigation-empty {
+  margin: 8px 0;
+  line-height: 1.6;
 }
 .project-navigation > p {
   color: var(--muted);

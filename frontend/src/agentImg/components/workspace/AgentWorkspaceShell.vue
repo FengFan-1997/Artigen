@@ -61,11 +61,14 @@
         <kbd>{{ shortcutModifier }}N</kbd>
       </button>
 
-      <label class="history-search">
+      <div class="history-search">
         <WorkspaceIcon name="search" />
-        <span class="sr-only">{{ zh ? '搜索任务' : 'Search tasks' }}</span>
-        <input v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" />
-      </label>
+        <label class="sr-only" for="workspace-history-search">{{ zh ? '搜索任务' : 'Search tasks' }}</label>
+        <input ref="historySearchInput" id="workspace-history-search" v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" @keydown.esc="onHistorySearchEscape" />
+        <button v-if="search" class="history-search-clear" type="button" :aria-label="zh ? '清除任务搜索' : 'Clear task search'" :title="zh ? '清除搜索' : 'Clear search'" @click="clearHistorySearch">
+          <WorkspaceIcon name="close" :size="16" />
+        </button>
+      </div>
 
       <div class="history-slot">
         <ProjectNavigation :zh="zh" :search="search" @navigate="closeLeftDrawer"><slot name="history" :search="search" /></ProjectNavigation>
@@ -337,6 +340,22 @@ const rightDrawerButton = ref<HTMLButtonElement | null>(null);
 const commandPanel = ref<HTMLElement | null>(null);
 const commandInput = ref<HTMLInputElement | null>(null);
 const search = ref('');
+const historySearchInput = ref<HTMLInputElement | null>(null);
+const clearHistorySearch = () => {
+  search.value = '';
+  emit('search', '');
+  historySearchInput.value?.focus();
+};
+const onHistorySearchEscape = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) {
+    event.stopPropagation();
+    return;
+  }
+  if (!search.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  clearHistorySearch();
+};
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(props.defaultInspectorCollapsed);
 let rightPreferenceSet = false;
@@ -714,6 +733,11 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .history-search svg { width: 16px; height: 16px; }
 .history-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 12px; background: transparent; }
 .history-search input::placeholder { color: var(--muted-2); }
+.history-search input::-webkit-search-cancel-button { appearance: none; -webkit-appearance: none; }
+.history-search input:focus-visible { outline: 0; }
+.history-search-clear { display: grid; flex: none; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.history-search-clear:hover { background: var(--surface-hover); color: var(--text); }
+@media (max-width: 799px) { .history-search-clear { min-width: 44px; min-height: 44px; } }
 .history-slot { flex: 1; min-height: 0; overflow: auto; padding: 4px 10px 12px; scrollbar-color: var(--border) transparent; }
 .workspace-nav { display: grid; flex: 0 0 auto; gap: 3px; padding: 14px 10px 9px; }
 .workspace-nav a { display: flex; align-items: center; gap: 11px; min-height: 38px; padding: 0 10px; border-radius: 9px; color: var(--muted); font-size: 13px; text-decoration: none; }
