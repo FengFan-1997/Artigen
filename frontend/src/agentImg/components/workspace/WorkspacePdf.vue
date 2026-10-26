@@ -42,7 +42,7 @@
       </button>
     </div>
     <p v-if="error" role="status">{{ error }}</p>
-    <canvas ref="canvas"></canvas>
+    <div class="pdf-page-scroll"><canvas ref="canvas"></canvas></div>
   </div>
 </template>
 <script setup lang="ts">
@@ -108,12 +108,22 @@ onBeforeUnmount(() => {
 </script>
 <style scoped>
 .pdf-document {
-  overflow: auto;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
   height: 100%;
   padding: 12px;
 }
+.pdf-page-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
 .pdf-controls {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 3px;
   width: max-content;
