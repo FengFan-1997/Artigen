@@ -131,9 +131,14 @@ const openResource = (event: MouseEvent) => {
 }
 .workspace-markdown :deep(blockquote) {
   margin: 14px 0;
-  padding-left: 16px;
-  border-left: 1px solid var(--muted);
-  color: var(--muted);
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-raised);
+}
+.workspace-markdown :deep(blockquote > :last-child) {
+  margin-bottom: 0;
 }
 .workspace-markdown :deep(a) {
   color: var(--acid-text);
