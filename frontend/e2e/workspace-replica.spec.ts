@@ -1480,3 +1480,53 @@ test('authorized inline images open a resource tab while external image sources 
     await context.close();
   }
 });
+
+test('dismissing a file conflict keeps the draft, version guard and keyboard return', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(runPath);
+  await openBrief(page);
+  await page.getByRole('button', { name: '源码', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '文件编辑器', exact: true });
+  const original = workspace.files[0].text;
+  await editor.fill('# 保留未保存版本');
+  workspace.conflict = true;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  const notice = page.locator('.resource-notice');
+  await expect(notice.getByRole('status')).toContainText('文件已在其他位置修改');
+  const dismiss = notice.getByRole('button', { name: '关闭文件通知', exact: true });
+  await dismiss.focus();
+  await dismiss.press('Enter');
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'brief.md（未保存）', exact: true })).toBeFocused();
+  await expect(editor).toContainText('保留未保存版本');
+  expect(workspace.saves).toHaveLength(1);
+  expect(workspace.files[0].text).toBe(original);
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(notice.getByRole('status')).toContainText('文件已在其他位置修改');
+  expect(workspace.files[0].text).toBe(original);
+  workspace.conflict = false;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(notice.getByRole('status')).toContainText('文件已保存');
+  expect(workspace.files[0].text).toBe('# 保留未保存版本');
+});
+
+test('file notice dismissal without an open document returns to the tree toggle', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  await page.route(`**/api/workspace/projects/${projectA}/files`, route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'SERVICE_UNAVAILABLE' } })
+  }));
+  await page.goto(runPath);
+  await resources(page);
+  const notice = page.locator('.resource-notice');
+  await expect(notice.getByRole('status')).toContainText('操作未完成');
+  const dismiss = notice.getByRole('button', { name: '关闭文件通知', exact: true });
+  await dismiss.focus();
+  await dismiss.press('Space');
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('.tree-toggle')).toBeFocused();
+  await expect(page.getByRole('tablist', { name: '已打开文件', exact: true }).getByRole('tab')).toHaveCount(0);
+  expect(workspace.saves).toHaveLength(0);
+});

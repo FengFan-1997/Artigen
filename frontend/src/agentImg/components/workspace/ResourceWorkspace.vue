@@ -69,7 +69,16 @@
           <WorkspaceIcon name="panel-right" />
         </button>
       </div>
-      <p v-if="notice" class="resource-notice" role="status">{{ notice }}</p>
+      <div v-if="notice" class="resource-notice">
+        <WorkspaceIcon class="resource-notice-icon" name="file" :size="16" />
+        <p role="status">{{ notice }}</p>
+        <button
+          class="resource-notice-close"
+          type="button"
+          :aria-label="zh ? '关闭文件通知' : 'Dismiss file notice'"
+          @click="dismissNotice"
+        ><WorkspaceIcon name="close" :size="16" /></button>
+      </div>
       <div class="file-body">
         <section class="file-viewer">
           <div v-if="active" class="file-toolbar">
@@ -948,6 +957,12 @@ async function save(doc: Document, replacement?: string) {
     if (ticket === revision) saving.value = false;
   }
 }
+async function dismissNotice() {
+  notice.value = '';
+  await nextTick();
+  const target = selectedTab() || resourceRoot.value?.querySelector<HTMLElement>('.tree-toggle');
+  target?.focus({ preventScroll: true });
+}
 async function closeDocument(doc: Document) {
   if (dirty(doc) && !confirm(props.zh ? '丢弃此文件未保存的修改？' : 'Discard unsaved changes?'))
     return;
@@ -1778,13 +1793,29 @@ button:disabled {
   }
 }
 .resource-notice {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: 10px;
   flex: none;
-  margin: 0;
-  padding: 10px 12px;
-  background: var(--surface);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--muted);
+  min-width: 0;
+  margin: 8px 12px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+.resource-notice-icon { margin-top: 6px; color: var(--muted); }
+.resource-notice p { min-width: 0; margin: 0; padding: 4px 0; color: var(--text); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.resource-notice-close { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
+.resource-notice-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .resource-notice-close:hover { color: var(--text); background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .resource-notice { grid-template-columns: 16px minmax(0, 1fr) 44px; }
+  .resource-notice-icon { margin-top: 14px; }
+  .resource-notice p { padding-block: 12px; }
+  .resource-notice-close { width: 44px; height: 44px; }
 }
 .resource-loading {
   padding: 20px;
