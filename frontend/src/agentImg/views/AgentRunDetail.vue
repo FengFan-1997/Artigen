@@ -219,11 +219,21 @@
     </template>
 
     <template #plan>
-      <div class="execution-spine">
-        <article v-for="stage in stages" :key="stage.id" :class="{ active: stage.active, complete: stage.done }">
-          <i></i>
-          <div><b>{{ stage.label }}</b><span>{{ stage.description }}</span></div>
-        </article>
+      <div class="execution-plan">
+        <header>
+          <b>{{ zh ? '执行计划' : 'Execution plan' }}</b>
+          <span>{{ stages.filter(stage => stage.done).length }} / {{ stages.length }} {{ zh ? '已完成' : 'completed' }}</span>
+        </header>
+        <ol :aria-label="zh ? '执行计划' : 'Execution plan'">
+          <li v-for="stage in stages" :key="stage.id" :class="{ active: stage.active, complete: stage.done }" :aria-current="stage.active ? 'step' : undefined">
+            <span class="plan-marker" aria-hidden="true">
+              <WorkspaceIcon v-if="stage.done" name="check" :size="16" />
+              <WorkspaceIcon v-else-if="stage.active" name="play" :size="16" />
+              <template v-else>{{ stage.index }}</template>
+            </span>
+            <div><b>{{ stage.label }}</b><span class="plan-state">{{ stage.description }}</span></div>
+          </li>
+        </ol>
       </div>
       <TechnicalDetails class="audit-details" :label="`${zh ? '审计记录' : 'Audit log'} · ${events.length}`">
         <div>
@@ -1131,15 +1141,21 @@ onBeforeUnmount(() => {
 .grant-list i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
 .grant-list span.enabled { color: var(--text); }
 .grant-list span.enabled i { background: var(--acid); }
-.execution-spine { position: relative; display: grid; }
-.execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
-.execution-spine article { position: relative; display: grid; grid-template-columns: 17px 1fr; gap: 10px; min-height: 62px; }
-.execution-spine i { z-index: 1; width: 9px; height: 9px; margin: 5px 0 0 4px; border: 2px solid var(--border); border-radius: 50%; background: var(--sidebar); }
-.execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
-.execution-spine article.active i { border-color: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
-.execution-spine div { display: grid; align-content: start; gap: 4px; }
-.execution-spine b { color: var(--text); font-size: 12px; }
-.execution-spine span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.execution-plan > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 10px 12px; }
+.execution-plan > header b { color: var(--text); font-size: 13px; font-weight: 600; }
+.execution-plan > header span { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.execution-plan ol { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.execution-plan li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: start; gap: 10px; padding: 10px; border-radius: 8px; }
+.execution-plan li.active { background: var(--surface); }
+.plan-marker { display: grid; place-items: center; width: 22px; height: 22px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.execution-plan li.complete .plan-marker { color: var(--success); }
+.execution-plan li.active .plan-marker { color: var(--acid-text); }
+.execution-plan li > div { display: grid; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
+.execution-plan li b { color: var(--text); font-size: 13px; font-weight: 500; line-height: 22px; }
+.execution-plan li.active b { font-weight: 600; }
+.execution-plan li.complete b { color: var(--muted); }
+.plan-state { color: var(--muted); font-size: 12px; line-height: 18px; }
+.execution-plan li.active .plan-state { color: var(--acid-text); }
 .audit-details { margin-top: 10px; }
 .audit-details :deep(.technical-details-content) { max-height: 300px; overflow: auto; }
 .audit-details :deep(.technical-details-content) > div { display: grid; gap: 9px; }

@@ -369,6 +369,51 @@ test('history search recovers from no results without closing the mobile drawer'
   }
 });
 
+test('run plan reads as a numbered checklist with aligned markers and a completion summary', async ({ browser }) => {
+  const labels = ['阅读品牌资料并确认交付范围', '整理官网页面与竞品参考画面', '检查移动端从商品详情、购物车到确认订单的完整购买路径，并记录每个关键步骤的证据', '制作可编辑提案与设计说明', '验证报告和交付文件'];
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const fixture = await installWorkspaceFixture(page, theme);
+      fixture.state.run.progress.plan = labels.map((label, index) => ({ label, status: index < 2 ? 'completed' : index === 2 ? 'in_progress' : 'pending' }));
+      await page.goto(runPath);
+      await fixture.emit();
+      await resources(page, '任务');
+      await page.getByRole('tab', { name: '计划', exact: true }).click();
+      const panel = page.getByRole('tabpanel', { name: '计划', exact: true });
+      const plan = panel.locator('.execution-plan');
+      await expect(plan.locator('b').filter({ hasText: labels[0] })).toBeVisible();
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_PLAN_LIST_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_PLAN_LIST_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(await plan.getByRole('list', { name: '执行计划', exact: true }).count(), 'plan has ordered list semantics').toBe(1);
+      expect.soft(await plan.getByText('2 / 5 已完成', { exact: true }).count()).toBe(1);
+      expect.soft(await plan.locator('.plan-marker .workspace-icon').count(), 'completed and current steps use shared icons').toBe(3);
+      const current = plan.locator('[aria-current="step"]');
+      expect.soft(await current.count(), 'current step is announced').toBe(1);
+      await expect(current).toBeVisible();
+      {
+        await expect(current).toContainText(labels[2]);
+        await expect(current).toContainText('正在执行');
+        const alignment = await current.evaluate((element) => {
+          const marker = element.querySelector('.plan-marker')!.getBoundingClientRect();
+          const title = element.querySelector('b')!.getBoundingClientRect();
+          return Math.abs(marker.y - title.y);
+        });
+        expect(alignment).toBeLessThanOrEqual(1);
+      }
+      const last = plan.locator('li').last();
+      await expect(last).toContainText(labels[4]);
+      await expect(last).toContainText('待执行');
+      expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.locator('.audit-details > summary').click();
+      await expect(page.locator('.audit-details article').first()).toBeVisible();
+      await context.close();
+    }
+  }
+});
+
 test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
   await installWorkspaceFixture(page);
   await page.goto(runPath);
