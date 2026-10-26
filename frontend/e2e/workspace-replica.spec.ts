@@ -25,6 +25,59 @@ async function openBrief(page: Page) {
   await expect(page.locator('.file-toolbar')).toContainText('docs/brief.md');
 }
 
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 1024, 390]) {
+    test(`technical disclosures use a quiet leading caret and unique targets ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width < 1440 });
+      try {
+        const page = await context.newPage();
+        await installWorkspaceFixture(page, theme);
+        await page.goto('/artigen/agent');
+        await resources(page, '任务');
+        const summary = page.locator('.technical-details > summary').filter({ hasText: /^技术详情$/ });
+        const panel = summary.locator('..');
+        await expect(summary).toBeVisible();
+        await page.evaluate(() => document.fonts.ready);
+        await page.mouse.move(0, 0);
+        const capture = width === 1024 ? '' : process.env.ARTIGEN_TECHNICAL_DISCLOSURE_CAPTURE;
+        if (capture) await page.screenshot({ path: `${capture}/${theme}-${width}-closed.png`, animations: 'disabled' });
+        await summary.click();
+        await expect(summary).toHaveAttribute('aria-expanded', 'true');
+        await expect(panel.locator('.technical-details-content')).toContainText('@cf/openai/gpt-oss-120b');
+        await panel.scrollIntoViewIfNeeded();
+        await page.mouse.move(0, 0);
+        if (capture) await page.screenshot({ path: `${capture}/${theme}-${width}-open.png`, animations: 'disabled' });
+        const ids = await page.locator('.technical-details-content').evaluateAll((elements) => elements.map((element) => element.id));
+        expect.soft(ids.length).toBeGreaterThanOrEqual(2);
+        expect.soft(new Set(ids).size, 'each disclosure must own its content target').toBe(ids.length);
+        expect.soft(await summary.locator(':scope > :first-child').getAttribute('class')).toContain('workspace-icon');
+        expect.soft(await panel.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+        const controls = await summary.getAttribute('aria-controls');
+        expect.soft(await panel.locator('.technical-details-content').getAttribute('id')).toBe(controls);
+        const alignment = await panel.evaluate((element) => {
+          const label = element.querySelector('summary span')!.getBoundingClientRect();
+          const content = element.querySelector('.technical-details-content')!;
+          return Math.abs(label.left - content.getBoundingClientRect().left - parseFloat(getComputedStyle(content).paddingLeft));
+        });
+        expect.soft(alignment).toBeLessThanOrEqual(1);
+        const size = await summary.boundingBox();
+        if (width < 1440) expect.soft(size!.height).toBeGreaterThanOrEqual(44);
+        await summary.focus();
+        await summary.press('Space');
+        await expect(summary).toHaveAttribute('aria-expanded', 'false');
+        await expect(summary).toBeFocused();
+        await expect(panel.locator('.technical-details-content')).toBeHidden();
+        await summary.press('Enter');
+        await expect(summary).toHaveAttribute('aria-expanded', 'true');
+        await expect(panel.locator('.technical-details-content')).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
 test('project tree, file tabs, cloud save/conflict, proposals and read-only GitHub', async ({
   page
 }) => {
