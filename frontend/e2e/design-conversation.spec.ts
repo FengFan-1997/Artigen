@@ -230,6 +230,43 @@ const installEmptyConversation = async (page: Page) => {
   });
 };
 
+test('design conversation shares the floating return control without changing its draft', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installExistingConversation(page);
+  await page.route('**/api/workspace/navigation*', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, projects: [], sessions: [], nextCursor: null })
+  }));
+  await page.route(`**/api/design-conversations/${conversationId}`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, conversation: {
+      ...fullConversation,
+      executions: [],
+      messages: Array.from({ length: 20 }, (_, index) => message(`jump-${index}`, index + 1, 'assistant', `第 ${index + 1} 轮：已核对页面与交付条件。\n\n保留当前工作成果，继续检查移动端布局、内容可读性与键盘操作。`))
+    } })
+  }));
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.locator('.message-scroll .message').last()).toContainText('第 20 轮');
+  const input = page.getByRole('textbox', { name: '设计需求', exact: true });
+  await input.fill('这份草稿保持不变');
+  const composer = page.locator('.docked-composer .composer-box');
+  const before = await composer.boundingBox();
+  const area = page.locator('.message-scroll');
+  await area.evaluate((element) => { element.scrollTop = 120; });
+  const jump = page.getByRole('button', { name: '回到底部', exact: true });
+  await expect(jump).toBeVisible();
+  const box = await jump.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  expect(box!.width).toBe(box!.height);
+  const after = await composer.boundingBox();
+  expect(after!.y).toBeCloseTo(before!.y, 0);
+  await jump.focus();
+  await jump.press('Enter');
+  await expect(jump).toHaveCount(0);
+  await expect.poll(() => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(10);
+  await expect(input).toHaveValue('这份草稿保持不变');
+});
+
 test('finishes the executor readiness check when the backend is unavailable', async ({ page }) => {
   await installEmptyConversation(page);
   await page.unroute('**/api/design-assistant/status');

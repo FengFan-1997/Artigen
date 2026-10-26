@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
-import { inputRunId } from './helpers/agentInputFixtures';
+import { activityEvents, inputRunId } from './helpers/agentInputFixtures';
 const runPath = `/artigen/agent/runs/${inputRunId}`;
 async function resources(page: Page, mode = '文件') {
   await expect(page.locator('.workspace-topbar')).toBeVisible();
@@ -560,6 +560,84 @@ test('stop confirmation stays explicit and readable without submitting before co
     }
   }
 });
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`conversation jump floats without shifting the composer ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+        const page = await context.newPage();
+        const fixture = await installWorkspaceFixture(page, theme);
+        await page.route(`**/api/agent-runs/${inputRunId}/messages*`, (route) => route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true, nextCursor: null, messages: Array.from({ length: 8 }, (_, index) => ({
+            id: `jump-message-${index}`, role: 'assistant', kind: 'commentary',
+            text: `## 第 ${index + 1} 轮检查\n\n已核对页面结构、文件内容与交付条件。保留当前工作成果，继续检查移动端布局。\n\n- 检查标题与操作的层级\n- 确保键盘可以完成所有操作\n- 保留任务范围和原有文件`,
+            createdAt: new Date(Date.UTC(2026, 9, 15, 3, 0, index)).toISOString()
+          })) })
+        }));
+        await page.goto(runPath);
+        await expect(page.locator('.timeline-message')).toHaveCount(8);
+        await expect(page.locator('.timeline-message').last()).toContainText('确保键盘可以完成所有操作');
+        await page.evaluate(() => document.fonts.ready);
+        const area = page.locator('.conversation-scroll');
+        const composer = page.locator('.run-composer .composer-box');
+        const input = page.getByRole('textbox', { name: '补充要求' });
+        // Keep the composer untouched while a background update arrives.
+        await area.evaluate((element) => { element.scrollTop = 240; });
+        await expect.poll(() => area.evaluate((element) => element.scrollTop)).toBe(240);
+        const before = await composer.boundingBox();
+        const readingHeight = await area.evaluate((element) => element.clientHeight);
+        const event = activityEvents(1)[0]!;
+        await fixture.emit([{ ...event, eventId: '901', type: 'verification.started', summary: '开始核验交付文件。' }]);
+        const jump = page.getByRole('button', { name: '有新内容 · 回到底部', exact: true });
+        await expect(jump).toBeVisible();
+        await page.mouse.move(0, 0);
+        const capture = process.env.ARTIGEN_CONVERSATION_JUMP_CAPTURE;
+        if (capture) {
+          await page.screenshot({ path: `${capture}/${theme}-${width}.png`, animations: 'disabled' });
+          const center = await page.locator('.workspace-main').boundingBox();
+          await page.screenshot({ path: `${capture}/${theme}-${width}-detail.png`, clip: { x: center!.x, y: center!.y + center!.height - 300, width: center!.width, height: 300 }, animations: 'disabled' });
+        }
+        await expect(jump).toHaveCSS('position', 'absolute', { timeout: 500 });
+        const after = await composer.boundingBox();
+        expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(1);
+        expect(await area.evaluate((element) => element.clientHeight)).toBe(readingHeight);
+        expect(await area.evaluate((element) => element.scrollTop)).toBe(240);
+        await expect(jump.locator('.workspace-icon')).toBeVisible();
+        const box = await jump.boundingBox();
+        expect(box!.height).toBeGreaterThanOrEqual(44);
+        expect(await jump.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return target !== null && element.contains(target);
+        })).toBe(true);
+        await jump.focus();
+        await jump.press('Enter');
+        await expect.poll(() => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(10);
+        await expect(jump).toHaveCount(0);
+        await area.evaluate((element) => { element.scrollTop = 240; });
+        const plain = page.getByRole('button', { name: '回到底部', exact: true });
+        await expect(plain).toBeVisible();
+        await expect(plain.locator('span')).toHaveCount(0);
+        const round = await plain.boundingBox();
+        expect(round!.width).toBe(round!.height);
+        if (capture) {
+          const center = await page.locator('.workspace-main').boundingBox();
+          await page.screenshot({ path: `${capture}/reading-${theme}-${width}.png`, clip: { x: center!.x, y: center!.y + center!.height - 300, width: center!.width, height: 300 }, animations: 'disabled' });
+        }
+        await plain.focus();
+        await plain.press('Space');
+        await expect(plain).toHaveCount(0);
+        await expect(input).toHaveValue('');
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
 
 test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
   await installWorkspaceFixture(page);

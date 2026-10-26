@@ -30,6 +30,7 @@
     <template v-else-if="name === 'send'"><path d="m5 12 7-7 7 7M12 5v14"/></template>
     <template v-else-if="name === 'refresh'"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.5A7 7 0 0 1 18.5 7M17.9 15.5A7 7 0 0 1 5.5 17"/></template>
     <template v-else-if="name === 'arrow-right'"><path d="M5 12h14M14 7l5 5-5 5"/></template>
+    <template v-else-if="name === 'arrow-down'"><path d="M12 5v14M7 14l5 5 5-5"/></template>
     <template v-else-if="name === 'chevron-right'"><path d="m9 6 6 6-6 6"/></template>
     <template v-else-if="name === 'chevron-down'"><path d="m8 10 4 4 4-4"/></template>
     <template v-else-if="name === 'trash'"><path d="M5 7h14M9 7V4h6v3M8 10v8M12 10v8M16 10v8M6.5 7l1 14h9l1-14"/></template>
@@ -46,7 +47,7 @@
 <script setup lang="ts">
 type WorkspaceIconName =
   | 'panel-left' | 'panel-right' | 'close' | 'plus' | 'minus' | 'search' | 'folder' | 'tools'
-  | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list'
+  | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list' | 'arrow-down'
   | 'subagents' | 'agent' | 'file' | 'attachment' | 'send' | 'refresh' | 'arrow-right'
   | 'chevron-right' | 'chevron-down' | 'trash' | 'download' | 'play' | 'stop' | 'pause'
   | 'paper-plane' | 'git' | 'copy' | 'check';

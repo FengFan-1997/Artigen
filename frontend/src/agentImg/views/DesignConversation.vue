@@ -178,7 +178,7 @@
       </div>
 
       <div class="docked-composer">
-        <button v-if="hasUnreadUpdates" class="new-updates" type="button" @click="scrollToBottom(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
+        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="scrollToBottom(true)" />
         <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
         <ComposerBox
           :draft="draft"
@@ -341,6 +341,7 @@ import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import RunConversationStream from '../components/workspace/RunConversationStream.vue';
 import type { WorkspaceFile } from '../services/workspaceFiles';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
+import ConversationJump from '../components/workspace/ConversationJump.vue';
 import ExecutionCard from '../components/designConversation/ExecutionCard.vue';
 import { useLanguageStore } from '@/stores/language';
 import { useAgentImgAuth } from '../composables/useAgentImgAuth';
@@ -1582,8 +1583,7 @@ onBeforeUnmount(() => {
 .conversation-load-state h1 { margin: 0; color: var(--text); font-size: 24px; }
 .conversation-load-state p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .conversation-load-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.conversation-load-actions button,.new-updates { min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; background: var(--surface-raised); cursor: pointer; }
-.new-updates { display: block; margin: 0 auto 10px; color: var(--acid-text); }
+.conversation-load-actions button { min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; background: var(--surface-raised); cursor: pointer; }
 .draft-restored,.docked-composer > .draft-restored { max-width: var(--conversation-max); margin: 8px auto; color: var(--muted); font-size: 12px; line-height: 1.5; text-align: left; }
 @media (max-width: 799px) {
 

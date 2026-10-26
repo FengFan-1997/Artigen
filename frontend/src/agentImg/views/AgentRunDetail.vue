@@ -154,7 +154,7 @@
       <p v-if="loadError || notice" class="run-notice" :role="loadError ? 'alert' : 'status'" aria-live="polite">{{ loadError || notice }}</p>
       <p v-if="draftRestored && !terminal" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿。' : 'Your local draft was restored.' }}</p>
       <div class="run-composer">
-        <button v-if="hasUnreadUpdates" class="run-new-updates" type="button" @click="scrollToLatest(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
+        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="scrollToLatest(true)" />
         <div v-if="terminal && !message.trim()" class="run-ended-bar" role="group" :aria-label="zh ? '任务结束后的操作' : 'Run ended actions'">
           <span class="run-ended-status" :class="run.status" aria-hidden="true">
             <WorkspaceIcon :name="run.status === 'succeeded' ? 'check' : run.status === 'cancelled' ? 'stop' : 'file'" :size="16" />
@@ -332,6 +332,7 @@ import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import RunConversationStream from '../components/workspace/RunConversationStream.vue';
+import ConversationJump from '../components/workspace/ConversationJump.vue';
 import type { WorkspaceFile } from '../services/workspaceFiles';
 import { agentEventSummary, isAgentActivity } from '../utils/agentActivity';
 import {
@@ -1265,9 +1266,7 @@ onBeforeUnmount(() => {
   .phase-track span.active i { animation: none; }
 }
 
-.run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
-.run-new-updates { display: block; min-height: 44px; margin: 0 auto 10px; padding: 9px 14px; color: var(--acid-text); border: 0; border-radius: 9px; font-size: 13px; background: var(--surface-raised); cursor: pointer; }
-.run-new-updates:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.run-composer { position: relative; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
 .run-ended-bar { display: flex; min-height: 68px; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: var(--surface); }
 .run-ended-status { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
 .run-ended-status.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
