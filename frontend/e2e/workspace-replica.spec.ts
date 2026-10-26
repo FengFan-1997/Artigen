@@ -1530,3 +1530,51 @@ test('file notice dismissal without an open document returns to the tree toggle'
   await expect(page.getByRole('tablist', { name: '已打开文件', exact: true }).getByRole('tab')).toHaveCount(0);
   expect(workspace.saves).toHaveLength(0);
 });
+
+test('loading more chats keeps its cursor on failure, prevents duplicate requests and appends without fallback rows', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  const sessions = [
+    { id: inputConversationId, projectId: projectA, title: '首页体验研究', kind: 'conversation', status: 'active', updatedAt: '2026-10-15T03:00:10Z' },
+    { id: inputRunId, projectId: projectA, title: '整理网站审查报告', kind: 'run', status: 'running', updatedAt: '2026-10-15T03:00:10Z' }
+  ];
+  const requests: Array<string | null> = [];
+  const pending: Array<() => void> = [];
+  let fail = true;
+  await page.route('**/api/workspace/navigation**', async route => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    requests.push(cursor);
+    if (cursor) await new Promise<void>(resolve => pending.push(resolve));
+    const bad = Boolean(cursor && fail);
+    await route.fulfill({ status: bad ? 503 : 200, contentType: 'application/json', body: JSON.stringify(bad ? { ok: false, error: { code: 'NAVIGATION_UNAVAILABLE' } } : {
+      ok: true, projects: [{ projectId: projectA, title: '品牌网站' }],
+      sessions: cursor ? [...sessions, { ...sessions[0], id: '99999999-9999-4999-8999-999999999999', title: '新增会话' }] : sessions,
+      nextCursor: cursor ? null : 'fixture-page-2'
+    }) });
+  });
+  try {
+    await page.goto(runPath);
+    const navigation = page.locator('.project-navigation');
+    const more = navigation.getByRole('button', { name: '加载更多会话', exact: true });
+    await expect(more).toBeVisible();
+    await more.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+    const control = navigation.locator('.load-more');
+    await expect(control).toHaveText('正在加载…');
+    await expect(control).toBeDisabled();
+    await expect(control).toHaveAttribute('aria-busy', 'true');
+    await expect.poll(() => requests.length).toBe(2);
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(control).toHaveText('重试加载更多');
+    await expect(navigation.getByRole('status')).toContainText('已加载会话仍保留');
+    await expect(navigation.locator('.session-row')).toHaveCount(2);
+    await expect(navigation.locator('.history-run')).toHaveCount(0);
+    await expect(page.locator('.user-message')).toContainText('调研品牌网站');
+    fail = false;
+    await control.press('Enter');
+    await expect.poll(() => requests.length).toBe(3);
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(control).toHaveCount(0);
+    await expect(navigation.getByRole('status')).toHaveCount(0);
+    await expect(navigation.locator('.session-row')).toHaveCount(3);
+    expect(requests).toEqual([null, 'fixture-page-2', 'fixture-page-2']);
+  } finally { pending.splice(0).forEach(resolve => resolve()); }
+});

@@ -109,8 +109,12 @@
     <p v-if="search && !loading && !error && !visibleProjects.length && !filtered(null).length" class="navigation-empty" role="status">
       {{ zh ? '已加载内容中没有匹配项' : 'No matches in loaded items' }}
     </p>
-    <button v-if="cursor" class="load-more" :disabled="loading" @click="load(true)">
-      {{ zh ? '加载更多会话' : 'Load more chats' }}
+    <p v-if="error === 'more'" class="navigation-more-error" role="status">
+      {{ zh ? '更多会话暂时无法读取，已加载会话仍保留。' : 'Could not load more chats. Your loaded chats are kept.' }}
+    </p>
+    <button v-if="cursor" type="button" class="load-more" :disabled="loading" :aria-busy="loading" @click="load(true)">
+      <span>{{ loading ? (zh ? '正在加载…' : 'Loading…') : error === 'more' ? (zh ? '重试加载更多' : 'Retry loading more') : (zh ? '加载更多会话' : 'Load more chats') }}</span>
+      <WorkspaceIcon :name="error === 'more' ? 'refresh' : 'chevron-down'" :size="14" />
     </button>
     <slot v-if="error === 'load' || (!loading && !sessions.length && !projects.length)" />
   </div>
@@ -131,7 +135,7 @@ const router = useRouter();
 const projects = ref<{ projectId: string; title: string }[]>([]);
 const sessions = ref<WorkspaceSession[]>([]);
 const cursor = ref<string | null>(null);
-const error = ref<'' | 'load' | 'save'>('');
+const error = ref<'' | 'load' | 'more' | 'save'>('');
 const loading = ref(false);
 const collapsed = ref(new Set<string>());
 const editing = ref<WorkspaceSession | null>(null);
@@ -190,6 +194,7 @@ const newChat = (projectId: string) => {
   void router.push({ path: '/artigen/create', query: { projectId } });
 };
 async function load(append: boolean) {
+  if (append && (loading.value || !cursor.value)) return;
   const ticket = ++revision;
   loading.value = true;
   error.value = '';
@@ -201,7 +206,7 @@ async function load(append: boolean) {
     sessions.value = [...new Map(merged.map((s) => [s.kind + s.id, s])).values()];
     cursor.value = data.nextCursor;
   } catch {
-    if (ticket === revision) error.value = 'load';
+    if (ticket === revision) error.value = append ? 'more' : 'load';
   } finally {
     if (ticket === revision) loading.value = false;
   }
@@ -350,8 +355,23 @@ button {
   font-size: 12px;
 }
 .load-more {
-  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 7px;
   color: var(--muted);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+}
+.load-more:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.load-more:disabled { opacity: 1; cursor: progress; }
+.navigation-more-error { margin: 2px 0 0; line-height: 1.6; }
+@media (hover: hover) and (pointer: fine) {
+  .load-more:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 }
 .session-editor {
   display: grid;
