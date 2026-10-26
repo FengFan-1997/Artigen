@@ -267,6 +267,59 @@ test('image zoom controls remain reachable while the enlarged canvas scrolls', a
   }
 });
 
+test('GitHub record rows keep long titles compact with hover feedback and keyboard return', async ({ browser }) => {
+  const title = '完善项目首页、移动端购买流程与登录后草稿恢复，保留用户上下文并补齐完整回归证据'.repeat(3);
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      await installWorkspaceFixture(page, theme);
+      const requests: string[] = [];
+      await page.route('**/github/pulls?*', (route) => {
+        requests.push(route.request().method());
+        return route.fulfill({ json: { items: [
+          { number: 12, title, state: 'open', url: 'https://github.com/example/brand-site/pull/12', updatedAt: '2026-10-15T03:00:10Z' },
+          { number: 11, title: '修复移动端菜单与文件预览', state: 'closed', url: 'https://github.com/example/brand-site/pull/11', updatedAt: '2026-10-14T03:00:10Z' }
+        ], hasMore: false } });
+      });
+      await page.goto(runPath);
+      await resources(page, 'GitHub');
+      const row = page.locator('.git-record').first();
+      const heading = row.locator('b');
+      await expect(heading).toHaveText(title);
+      const idle = await row.evaluate((element) => getComputedStyle(element).backgroundColor);
+      await row.hover();
+      const hover = await row.evaluate((element) => getComputedStyle(element).backgroundColor);
+      if (process.env.ARTIGEN_GITHUB_ROW_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_GITHUB_ROW_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(hover, `${theme} ${viewport.width}px record hover must be visible`).not.toBe(idle);
+      expect.soft(await heading.getAttribute('title'), 'truncated record keeps complete native title').toBe(title);
+      const geometry = await row.evaluate((element) => {
+        const heading = element.querySelector('b')!;
+        const icon = element.querySelector('svg')!.getBoundingClientRect();
+        const text = heading.getBoundingClientRect();
+        return { height: element.getBoundingClientRect().height, titleHeight: text.height, lineHeight: parseFloat(getComputedStyle(heading).lineHeight), alignment: Math.abs((icon.y + icon.height / 2) - (text.y + text.height / 2)) };
+      });
+      expect.soft(geometry.height).toBeLessThanOrEqual(68);
+      expect.soft(geometry.titleHeight).toBeLessThanOrEqual(geometry.lineHeight + 1);
+      expect.soft(geometry.alignment).toBeLessThanOrEqual(1);
+      await row.focus();
+      await expect(row).toBeFocused();
+      await page.keyboard.press('Enter');
+      const back = page.getByRole('button', { name: '返回记录', exact: true });
+      await expect(back).toBeFocused();
+      await back.click();
+      await expect(page.locator('.git-record').first()).toBeFocused();
+      expect(requests).toEqual(['GET']);
+      await page.locator('.github-records nav').getByRole('button', { name: '提交', exact: true }).click();
+      await expect(page.locator('.git-record b')).toHaveText(['修复登录后草稿恢复']);
+      await expect(page.locator('.git-record small')).toContainText('aaaaaaaa');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      if (viewport.width < 800) expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await context.close();
+    }
+  }
+});
+
 test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
   await installWorkspaceFixture(page);
   await page.goto(runPath);

@@ -51,7 +51,7 @@
             @click="inspect(item)"
           >
             <WorkspaceIcon name="git" /><span
-              ><b>{{ item.title }}</b
+              ><b :title="item.title">{{ item.title }}</b
               ><small
                 >{{
                   item.number ? '#' + item.number + ' · ' + item.state : item.sha?.slice(0, 8)
@@ -356,28 +356,43 @@ nav {
 nav button[aria-pressed='true'] {
   background: var(--surface-hover);
 }
-.git-record {
-  display: flex;
+.github-workspace .git-record {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
   width: 100%;
   text-align: left;
   gap: 10px;
-  align-items: flex-start;
-  margin: 5px 0;
-  background: transparent !important;
+  align-items: start;
+  margin: 2px 0;
+  padding: 10px;
+  background: transparent;
+}
+.github-workspace .git-record:hover,
+.github-workspace .git-record:focus-visible {
+  background: var(--surface-hover);
+}
+.git-record > .workspace-icon {
+  margin-top: 2px;
+  color: var(--muted);
 }
 .git-record span {
   min-width: 0;
-  overflow-wrap: anywhere;
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 .git-record b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
   font-weight: 550;
+  line-height: 20px;
 }
 .git-record small {
   color: var(--muted);
   font-size: 12px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
 }
 a {
   color: var(--acid-text);
