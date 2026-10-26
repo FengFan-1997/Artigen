@@ -1077,10 +1077,10 @@ onBeforeUnmount(() => {
 .approval-card code { color: var(--muted); font-size: 12px; }
 .approval-card h2 { margin: 12px 0 6px; font-size: 14px; }
 .approval-card > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.approval-card dl { display: grid; gap: 7px; margin: 12px 0; }
-.approval-card dl div { display: grid; gap: 3px; padding: 8px 10px; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
-.approval-card dt { color: var(--warning); font-size: 12px; font-weight: 700; }
-.approval-card dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.approval-card dl { display: grid; gap: 0; margin: 12px 0 10px; }
+.approval-card dl div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 4px 0; }
+.approval-card dt { color: var(--muted); font-size: 12px; font-weight: 620; }
+.approval-card dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .denial-reason { display: block; margin-bottom: 6px; color: var(--text); font-size: 12px; font-weight: 620; }
 .approval-card > input { width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; }
 .approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }

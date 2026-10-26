@@ -866,6 +866,19 @@ test('approval denial reason is explicitly labelled and keeps one recommended ac
 
   const reason = page.getByLabel('拒绝原因（可选）');
   await expect(reason).toBeVisible();
+  const approvalFacts = page.locator('.approval-card dl > div');
+  await expect(approvalFacts).toHaveCount(3);
+  const factStyles = await approvalFacts.evaluateAll((facts) => facts.map((fact) => {
+    const style = getComputedStyle(fact);
+    return { background: style.backgroundColor, radius: style.borderRadius, columns: style.gridTemplateColumns };
+  }));
+  expect(factStyles.every((fact) => fact.background === 'rgba(0, 0, 0, 0)' && fact.radius === '0px')).toBe(true);
+  expect(factStyles.every((fact) => fact.columns.split(' ').length === 2)).toBe(true);
+  const actionAndScrollBounds = await page.locator('.approval-card footer').evaluate((footer) => ({
+    footerBottom: footer.getBoundingClientRect().bottom,
+    scrollBottom: document.querySelector('.conversation-scroll')!.getBoundingClientRect().bottom
+  }));
+  expect(actionAndScrollBounds.footerBottom).toBeLessThanOrEqual(actionAndScrollBounds.scrollBottom);
   await reason.fill('需要先确认品牌团队意见');
   await expect(page.locator('.approval-card .approval-primary')).toHaveCount(1);
   await expect(page.getByRole('button', { name: '拒绝' })).toBeVisible();
