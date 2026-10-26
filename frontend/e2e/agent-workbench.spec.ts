@@ -459,6 +459,16 @@ test('command palette is global, keyboard trapped, and returns focus on Escape',
   await expect(input).toBeFocused();
   await expect(palette).toContainText('电脑 Agent');
   await expect(options).toHaveCount(5);
+  const close = palette.getByRole('button', { name: '关闭命令面板', exact: true });
+  await input.press('Tab');
+  await expect(close).toBeFocused();
+  await close.press('Shift+Tab');
+  await expect(input).toBeFocused();
+  await close.click();
+  await expect(palette).toBeHidden();
+  await expect(newTask).toBeFocused();
+  await page.keyboard.press('Control+K');
+  await expect(input).toBeFocused();
   await expect(options.nth(0)).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('ArrowUp');
   await expect(options.nth(4)).toHaveAttribute('aria-selected', 'true');

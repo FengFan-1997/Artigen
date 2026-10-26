@@ -213,9 +213,8 @@
 
     <div v-if="commandOpen" class="command-layer" @mousedown.self="closeCommandPalette">
       <section ref="commandPanel" class="command-palette" role="dialog" aria-modal="true" :aria-label="zh ? '命令面板' : 'Command palette'">
-        <label>
+        <div class="command-search">
           <WorkspaceIcon name="search" :size="18" />
-          <span class="sr-only">{{ zh ? '搜索页面或动作' : 'Search pages or actions' }}</span>
           <input
             ref="commandInput"
             v-model="commandQuery"
@@ -231,11 +230,14 @@
             :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'"
             @keydown="onCommandInputKeydown"
           />
-          <kbd aria-hidden="true">Esc</kbd>
-        </label>
+          <button class="command-close" type="button" :aria-label="zh ? '关闭命令面板' : 'Close command palette'" :title="zh ? '关闭命令面板（Esc）' : 'Close command palette (Esc)'" @click="closeCommandPalette">
+            <WorkspaceIcon name="close" :size="18" />
+          </button>
+        </div>
         <div id="workspace-command-options" role="listbox" :aria-label="zh ? '可用操作' : 'Available actions'">
           <button
             v-for="(command, index) in filteredCommands"
+            class="command-option"
             :id="`workspace-command-${command.id}`"
             :key="command.id"
             type="button"
@@ -245,6 +247,7 @@
             @mouseenter="activeCommandIndex = index"
             @click="runCommand(command)"
           >
+            <WorkspaceIcon class="command-icon" :name="command.icon" :size="16" />
             <span><b>{{ command.label }}</b><small>{{ command.hint }}</small></span>
             <kbd v-if="command.shortcut">{{ command.shortcut }}</kbd>
           </button>
@@ -409,11 +412,11 @@ const themeLabel = computed(() => {
   return labels[theme.value];
 });
 const commands = computed(() => [
-  { id: 'new', label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: `${shortcutModifier}N`, action: () => emit('new-task') },
-  { id: 'create', label: props.zh ? '设计 Agent' : 'Design Agent', hint: '/artigen/create', shortcut: '', action: () => router.push('/artigen/create') },
-  { id: 'agent', label: props.zh ? '电脑 Agent' : 'Computer Agent', hint: '/artigen/agent', shortcut: '', action: () => router.push('/artigen/agent') },
-  { id: 'images', label: props.zh ? '高级生图' : 'Image studio', hint: '/artigen/ai', shortcut: '', action: () => router.push('/artigen/ai') },
-  { id: 'theme', label: props.zh ? '切换主题' : 'Cycle theme', hint: themeLabel.value, shortcut: '', action: cycleTheme }
+  { id: 'new', icon: 'plus' as const, label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: `${shortcutModifier}N`, action: () => emit('new-task') },
+  { id: 'create', icon: 'agent' as const, label: props.zh ? '设计 Agent' : 'Design Agent', hint: '/artigen/create', shortcut: '', action: () => router.push('/artigen/create') },
+  { id: 'agent', icon: 'monitor' as const, label: props.zh ? '电脑 Agent' : 'Computer Agent', hint: '/artigen/agent', shortcut: '', action: () => router.push('/artigen/agent') },
+  { id: 'images', icon: 'image' as const, label: props.zh ? '高级生图' : 'Image studio', hint: '/artigen/ai', shortcut: '', action: () => router.push('/artigen/ai') },
+  { id: 'theme', icon: 'moon' as const, label: props.zh ? '切换主题' : 'Cycle theme', hint: themeLabel.value, shortcut: '', action: cycleTheme }
 ]);
 const filteredCommands = computed(() => {
   const query = commandQuery.value.trim().toLowerCase();
@@ -813,15 +816,28 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .drawer-scrim { display: none; }
 .command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
 .command-palette { display:flex; flex-direction:column; max-height:calc(85dvh - 16px); width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
-.command-palette > label { flex:none; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
-.command-palette > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
-.command-palette > label svg { width: 18px; height: 18px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
-.command-palette > label { border-bottom: 1px solid var(--border); }
-.command-palette > div { min-height:0; max-height: 320px; overflow: auto; padding: 6px; }
-.command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; color: var(--text); text-align: left; background: transparent; cursor: pointer; }
-.command-palette button:hover,.command-palette button[aria-selected="true"] { background: var(--surface-raised); }
-.command-palette button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
+.command-search { flex:none; display:flex; align-items:center; gap:10px; min-height:52px; padding:0 10px 0 14px; border-bottom:1px solid var(--border); }
+.command-search:has(input:focus-visible) { outline:2px solid var(--focus); outline-offset:-2px; }
+.command-search > svg { color:var(--muted); }
+.command-palette input { flex:1; min-width:0; border:0; outline:0; color:var(--text); font-size:13px; background:transparent; }
+.command-palette input:focus-visible { outline:0; }
+.command-close { display:grid; flex:none; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:6px; color:var(--muted); background:transparent; cursor:pointer; }
+.command-palette > [role='listbox'] { min-height:0; max-height:320px; overflow:auto; padding:6px; }
+.command-option { display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:10px; width:100%; align-items:start; min-height:48px; padding:7px 10px; border:0; border-radius:8px; color:var(--text); font:inherit; text-align:left; background:transparent; cursor:pointer; }
+.command-option[aria-selected='true'] { background:var(--surface-raised); }
+.command-palette button:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+.command-icon { margin-top:2px; color:var(--muted); }
+.command-option > span { display:grid; min-width:0; gap:2px; overflow-wrap:anywhere; }
+.command-option b { font-size:var(--font-control); font-weight:500; line-height:20px; }
+.command-option small { color:var(--muted); font-size:var(--font-meta); line-height:18px; }
+.command-option > kbd { flex:none; white-space:nowrap; }
+@media (hover:hover) and (pointer:fine) {
+  .command-option:hover, .command-close:hover { background:var(--surface-raised); }
+  .command-close:hover { color:var(--text); }
+}
+@media (max-width:799px), (pointer:coarse) {
+  .command-close { width:44px; height:44px; }
+}
 .command-palette kbd { display: inline-flex; min-width: 22px; min-height: 22px; align-items: center; justify-content: center; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); }
 .command-empty { margin: 0; padding: 15px; color: var(--muted); font-size: var(--font-control); text-align: center; }
 .mobile-only,.mobile-panel-controls,.workspace-account .mobile-only { display: none; }
