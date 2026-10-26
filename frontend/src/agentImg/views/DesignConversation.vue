@@ -123,7 +123,7 @@
         <template v-for="message in conversation?.messages || []" :key="message.messageId">
           <article class="message" :class="message.role">
             <div v-if="message.role === 'assistant'" class="assistant-mark" aria-hidden="true">A</div>
-            <div class="message-body">
+            <div class="message-body" :class="{ 'workspace-user-bubble': message.role === 'user' }">
               <WorkspaceMarkdown :text="message.text" />
               <div v-if="message.attachments.length" class="message-files">
                 <span v-for="file in message.attachments" :key="file.clientId">
@@ -1514,7 +1514,6 @@ onBeforeUnmount(() => {
 .message.user { justify-content: flex-end; }
 .assistant-mark { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 9px; color: var(--text); font-size: 12px; font-weight: 700; background: var(--surface-raised); }
 .message-body { min-width: 0; max-width: 82%; padding: 2px 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.72; }
-.message.user .message-body { max-width: 74%; padding: 10px 13px; border: 0; border-radius: 13px 13px 4px 13px; background: var(--surface-raised); }
 .message-body p { margin: 0; white-space: pre-wrap; }
 .message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }.message-files span { display: inline-flex; max-width: 100%; min-width: 0; align-items: center; gap: 5px; padding: 5px 7px; overflow-wrap: anywhere; border: 0; border-radius: 7px; color: var(--muted); font-size: 12px; background: var(--surface-hover); }.message-files svg { flex: 0 0 auto; width: 12px; }
 .clarification { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }.clarification button { min-height: 34px; padding: 0 10px; border: 0; border-radius: 8px; color: var(--text); font-size: 12px; background: var(--surface-hover); cursor: pointer; }.clarification button:hover { color: var(--acid-text); }.clarification .recommended { color: var(--acid-ink); background: var(--acid); }
@@ -1599,7 +1598,7 @@ onBeforeUnmount(() => {
   .memory-suggestions article > div { align-self: flex-end; }
   .zero-meta span:nth-child(n+2) { display: none; }
   .authorization-strip header,.authorization-strip article { align-items: flex-start; flex-wrap: wrap; }.authorization-strip button { margin-left: auto; }
-  .message-scroll { padding-block: 24px; }.message-body,.message.user .message-body { max-width: 88%; font-size: 14px; }
+  .message-scroll { padding-block: 24px; }.message-body { max-width: 88%; font-size: 14px; }
   .docked-composer { padding-block: 10px 8px; }.docked-composer > p { display: none; }
   :deep(.composer-box textarea) { font-size: 16px; }
   :deep(.composer-box .attach),:deep(.composer-box .send) { min-width: 44px; min-height: 44px; }

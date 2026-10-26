@@ -676,6 +676,22 @@ onBeforeUnmount(() => {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   text-align: left;
 }
+.agent-workspace-shell :deep(.workspace-user-bubble) {
+  max-width: min(90%, 640px);
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--surface-raised);
+}
+.agent-workspace-shell :deep(.workspace-user-bubble > .workspace-markdown > :last-child) {
+  margin-bottom: 0;
+}
+@media (max-width: 799px) {
+  .agent-workspace-shell :deep(.workspace-user-bubble) {
+    max-width: 100%;
+    padding: 12px 14px;
+  }
+}
 .agent-workspace-shell[data-theme="light"] {
   --bg: #f4f5f1;
   --sidebar: #e9ece6;

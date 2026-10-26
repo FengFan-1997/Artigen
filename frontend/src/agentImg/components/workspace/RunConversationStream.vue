@@ -5,7 +5,7 @@
       <button @click="load">{{ zh ? '重试' : 'Retry' }}</button>
     </p>
     <template v-for="row in rows" :key="row.key"
-      ><article v-if="row.kind === 'message'" class="timeline-message" :class="row.message.role">
+      ><article v-if="row.kind === 'message'" class="timeline-message" :class="[row.message.role, { 'workspace-user-bubble': row.message.role === 'user' }]">
         <header>
           <span>{{ row.message.role === 'user' ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span
           ><time>{{
@@ -250,10 +250,6 @@ onBeforeUnmount(() => {
 .timeline-message.user {
   margin-left: auto;
   width: fit-content;
-  max-width: min(100%, 640px);
-  padding: 14px 18px;
-  background: var(--surface);
-  border-radius: 16px;
 }
 .message-error {
   font-size: 12px;
@@ -267,10 +263,6 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 @media (max-width: 799px) {
-  .timeline-message.user {
-    max-width: 100%;
-    padding: 12px;
-  }
   .timeline-message button {
     min-height: 44px;
   }

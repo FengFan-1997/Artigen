@@ -26,6 +26,61 @@ async function openBrief(page: Page) {
 }
 
 for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`user bubbles share readable geometry for objectives and saved messages ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+        const page = await context.newPage();
+        const fixture = await installWorkspaceFixture(page, theme);
+        const request = '请整理这次品牌发布的资料，检查标题层级、移动端布局和文件内容。\n保留原有输入与证据，完成后交付可以继续编辑的报告，不要只给一段结论。';
+        fixture.state.run.objective = request;
+        await page.route(`**/api/agent-runs/${inputRunId}/messages*`, (route) => route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true, nextCursor: null, messages: [{ id: 'user-geometry', role: 'user', kind: 'text', text: request, createdAt: '2026-10-15T03:00:01Z' }] })
+        }));
+        await page.goto(runPath);
+        const objective = page.locator('.conversation-scroll > .user-message');
+        const saved = page.locator('.timeline-message.user');
+        await expect(saved.locator('.workspace-markdown')).toContainText('不要只给一段结论');
+        const area = page.locator('.conversation-scroll');
+        await area.evaluate((element) => { element.scrollTop = 0; });
+        await expect.poll(() => area.evaluate((element) => element.scrollTop)).toBe(0);
+        await page.mouse.move(0, 0);
+        const capture = process.env.ARTIGEN_USER_BUBBLE_CAPTURE;
+        if (capture) {
+          await page.screenshot({ path: `${capture}/${theme}-${width}-run.png`, animations: 'disabled' });
+          await objective.screenshot({ path: `${capture}/${theme}-${width}-objective.png`, animations: 'disabled' });
+        }
+        for (const bubble of [objective, saved]) {
+          const geometry = await bubble.evaluate((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return { radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius], padding: style.padding, right: rect.right, width: rect.width, overflow: element.scrollWidth > element.clientWidth + 1 };
+          });
+          expect.soft(geometry.radii).toEqual(['18px', '18px', '18px', '18px']);
+          expect.soft(geometry.padding).toBe(width === 390 ? '12px 14px' : '14px 18px');
+          expect.soft(geometry.overflow).toBe(false);
+          expect.soft(geometry.width).toBeLessThanOrEqual(640);
+          const parentRight = await area.evaluate((element) => element.getBoundingClientRect().right);
+          expect.soft(Math.abs(geometry.right - parentRight)).toBeLessThanOrEqual(1);
+        }
+        const paragraph = saved.locator('.workspace-markdown > p').last();
+        expect.soft(await paragraph.evaluate((element) => getComputedStyle(element).marginBottom)).toBe('0px');
+        await expect(objective.locator('p')).toHaveText(request);
+        await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as Window & { bubbleCopy?: string }).bubbleCopy = text; } } }));
+        const copy = saved.getByRole('button', { name: '复制消息', exact: true });
+        await copy.focus();
+        await copy.press('Enter');
+        expect(await page.evaluate(() => (window as Window & { bubbleCopy?: string }).bubbleCopy)).toBe(request);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
   for (const width of [1440, 1024, 390]) {
     test(`file view switch groups modes and preserves unsaved edits ${theme} ${width}`, async ({ browser }) => {
       const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width < 1440 });

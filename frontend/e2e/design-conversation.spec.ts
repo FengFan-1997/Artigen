@@ -230,6 +230,38 @@ const installEmptyConversation = async (page: Page) => {
   });
 };
 
+for (const { theme, width } of [{ theme: 'dark', width: 1440 }, { theme: 'light', width: 390 }] as const) {
+  test(`design user bubbles share readable geometry ${theme} ${width}`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+    try {
+      const page = await context.newPage();
+      await page.addInitScript((theme) => localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, theme, rightCollapsed: true })), theme);
+      await installExistingConversation(page);
+      await page.route('**/api/workspace/navigation*', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, projects: [], sessions: [], nextCursor: null }) }));
+      const request = '请整理这次品牌发布的资料，检查标题层级、移动端布局和文件内容。\n保留原有输入与证据，完成后交付可以继续编辑的报告，不要只给一段结论。';
+      await page.route(`**/api/design-conversations/${conversationId}`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, conversation: { ...fullConversation, executions: [], messages: [message(userMessageId, 1, 'user', request)] } }) }));
+      await page.goto(`/artigen/create?c=${conversationId}`);
+      const bubble = page.locator('.message.user .message-body');
+      await expect(bubble).toContainText('不要只给一段结论');
+      await page.evaluate(() => document.fonts.ready);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_USER_BUBBLE_CAPTURE) await page.screenshot({ path: path.join(process.env.ARTIGEN_USER_BUBBLE_CAPTURE, `${theme}-${width}-design.png`) });
+      const geometry = await bubble.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius], padding: style.padding, width: element.getBoundingClientRect().width, overflow: element.scrollWidth > element.clientWidth + 1 };
+      });
+      expect.soft(geometry.radii).toEqual(['18px', '18px', '18px', '18px']);
+      expect.soft(geometry.padding).toBe(width === 390 ? '12px 14px' : '14px 18px');
+      expect.soft(geometry.width).toBeLessThanOrEqual(640);
+      expect.soft(geometry.overflow).toBe(false);
+      expect.soft(await bubble.locator('.workspace-markdown > p').last().evaluate((element) => getComputedStyle(element).marginBottom)).toBe('0px');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test('design conversation shares the floating return control without changing its draft', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await installExistingConversation(page);

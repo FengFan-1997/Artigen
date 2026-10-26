@@ -77,7 +77,7 @@
             <button v-for="option in run.progress.clarification.options || []" :key="option" type="button" @click="submitClarification(option)">{{ option }}</button>
           </div>
         </section>
-        <article class="message user-message">
+        <article class="message user-message workspace-user-bubble">
           <header><span>{{ zh ? '你' : 'You' }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
           <p>{{ run.objective }}</p>
         </article>
@@ -1070,7 +1070,7 @@ onBeforeUnmount(() => {
 .message header span { font-size: 12px; font-weight: 700; }
 .message header time, .message header small { color: var(--muted-2); font-size: 12px; }
 .message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.72; white-space: pre-wrap; }
-.user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 0; border-radius: 12px 12px 3px 12px; background: var(--surface); }
+.user-message { margin-left: auto; }
 .user-message header { justify-content: flex-end; }
 .user-message p { color: var(--text); }
 .agent-message, .event-message { display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
@@ -1248,7 +1248,6 @@ onBeforeUnmount(() => {
 @media (max-width: 800px) {
   .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
   .conversation-scroll { padding-top: 24px; }
-  .user-message { max-width: 88%; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
   .retry-required { align-items: stretch; flex-direction: column; }
   .retry-required button { min-height: 44px; }
