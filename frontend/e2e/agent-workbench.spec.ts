@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { strToU8, zipSync } from 'fflate';
 import { expect, test, type Page } from '@playwright/test';
+import { installAgentInputFixture } from './helpers/agentInputFixtures';
 import { expectWorkspaceGeometry, installDevEnvironmentBadge } from './helpers/workspaceLayoutAudit';
 
 const auditWorkspaceAccessibility = async (page: Page) => page.locator('.agent-workspace-shell').evaluate((root) => {
@@ -1287,4 +1288,46 @@ test('appearance reflects the selected mode across controls and preserves system
   await expect(shell).toHaveAttribute('data-theme', 'light');
   expect(quoteRequests).toBe(0);
   expect(created).toHaveLength(0);
+});
+
+
+test('budget slider announces units and invalidates an earlier quote when changed', async ({ page }) => {
+  const { state } = await installAgentInputFixture(page, { inspector: true });
+  await page.goto('/artigen/agent');
+  await page.getByRole('textbox', { name: '任务目标', exact: true }).fill('修改预算后重新确认报价再启动');
+  const resources = page.getByRole('navigation', { name: '资源面板', exact: true });
+  if (!await resources.isVisible()) await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  await resources.getByRole('button', { name: '任务', exact: true }).click();
+  const budget = page.getByRole('slider', { name: '最高预算点数', exact: true });
+  await expect(budget).toHaveAttribute('aria-valuetext', '50 点');
+  await expect(budget).toHaveAccessibleDescription('按实际使用结算，未使用部分自动释放。');
+  await budget.press('Home');
+  await expect(budget).toHaveValue('10');
+  await budget.press('ArrowLeft');
+  await expect(budget).toHaveValue('10');
+  await budget.press('End');
+  await expect(budget).toHaveValue('500');
+  await budget.press('ArrowRight');
+  await expect(budget).toHaveValue('500');
+  await budget.press('Home');
+  for (let i = 0; i < 5; i++) await budget.press('ArrowRight');
+  await expect(budget).toHaveAttribute('aria-valuetext', '60 点');
+  await page.getByRole('button', { name: '发送任务目标', exact: true }).click();
+  const confirm = page.getByRole('button', { name: '确认并运行', exact: true });
+  await expect(confirm).toBeEnabled();
+  expect(state.quotes.map(body => body.maxCredits)).toEqual([60]);
+  await budget.press('ArrowRight');
+  await expect(budget).toHaveAttribute('aria-valuetext', '70 点');
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByText('任务内容已更新', { exact: true })).toBeVisible();
+  expect(state.quotes).toHaveLength(1);
+  expect(state.creates).toHaveLength(0);
+  await page.getByRole('button', { name: '发送任务目标', exact: true }).click();
+  await expect(confirm).toBeEnabled();
+  expect(state.quotes.map(body => body.maxCredits)).toEqual([60, 70]);
+  await confirm.click();
+  await expect(page).toHaveURL(`/artigen/agent/runs/${runId}`);
+  expect(state.creates).toHaveLength(1);
+  expect(state.creates[0].maxCredits).toBe(70);
+  expect(state.unknown).toEqual([]);
 });

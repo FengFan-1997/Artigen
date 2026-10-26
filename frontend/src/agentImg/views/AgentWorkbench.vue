@@ -176,10 +176,14 @@
             <button v-if="form.profileId" type="button" class="text-danger" @click="revokeSelectedProfile">{{ zh ? '撤销会话' : 'Revoke session' }}</button>
           </section>
         </TechnicalDetails>
-        <section class="inspector-card">
-          <header><span>{{ zh ? '最高预算' : 'Maximum budget' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></header>
-          <input v-model.number="form.maxCredits" name="max-credits" class="budget-range" type="range" min="10" max="500" step="10" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" />
-          <small>{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
+        <section class="inspector-card budget-card">
+          <header>
+            <label for="agent-max-credits">{{ zh ? '最高预算' : 'Maximum budget' }}</label>
+            <output for="agent-max-credits" aria-live="off">{{ form.maxCredits }} <span>{{ zh ? '点' : 'cr' }}</span></output>
+          </header>
+          <input id="agent-max-credits" v-model.number="form.maxCredits" name="max-credits" class="budget-range" type="range" :min="budgetLimits.min" :max="budgetLimits.max" :step="budgetLimits.step" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" :aria-valuetext="`${form.maxCredits} ${zh ? '点' : 'credits'}`" aria-describedby="agent-budget-help" />
+          <div class="budget-scale" aria-hidden="true"><span>{{ budgetLimits.min }} {{ zh ? '点' : 'cr' }}</span><span>{{ budgetLimits.max }} {{ zh ? '点' : 'cr' }}</span></div>
+          <small id="agent-budget-help">{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
@@ -313,6 +317,7 @@ const busy = computed(() => quoting.value || creating.value);
 const hasConversation = computed(() => Boolean(
   submittedObjective.value || quoting.value || quote.value || notice.value
 ));
+const budgetLimits = { min: 10, max: 500, step: 10 };
 const form = reactive({
   objective: '',
   maxCredits: 50,
@@ -911,7 +916,7 @@ onBeforeUnmount(() => {
 @media (hover: hover) { .option-grid label:not(.disabled):hover { background: var(--surface-hover); } }
 .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 0; border-radius: 8px; background: var(--surface-raised); }
 .capability-list label.disabled { opacity: .45; }
-.capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
+.capability-list input, .browser-scope input { accent-color: var(--acid); }
 .capability-list span { display: grid; gap: 2px; }
 .capability-list b { color: var(--text); font-size: 12px; }
 .capability-list small { font-size: 12px; }
@@ -923,7 +928,13 @@ onBeforeUnmount(() => {
 .browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
 .text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
-.budget-range { width: 100%; }
+.budget-card header { margin-bottom: 2px; }
+.budget-card header > label { color: var(--text); font-size: 13px; font-weight: 560; cursor: pointer; }
+.budget-card output { min-width: 64px; padding: 4px 8px; border-radius: 6px; color: var(--text); background: var(--surface-raised); font-size: 13px; font-weight: 560; font-variant-numeric: tabular-nums; text-align: right; }
+.budget-card output span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.budget-range { display: block; width: 100%; height: 44px; margin: 0; accent-color: var(--text); cursor: pointer; }
+.budget-scale { display: flex; justify-content: space-between; gap: 16px; margin: -2px 0 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.budget-card > small { display: block; }
 .execution-spine { position: relative; display: grid; gap: 0; }
 .execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
 .execution-spine article { position: relative; display: grid; grid-template-columns: 17px 1fr; gap: 10px; min-height: 62px; }
@@ -947,7 +958,6 @@ onBeforeUnmount(() => {
 
 .browser-scope > label { color: var(--text); font-size: 13px; line-height: 1.5; }
 .capability-list label { align-items: center; min-height: 44px; }
-.budget-range { height: 44px; margin: 0; }
 @media (max-width: 800px) {
   .agent-conversation:not(.active) { align-content: start; padding-block: 32px 24px; }
   .browser-scope > input,.browser-scope select { min-height: 44px; font-size: 16px; }
