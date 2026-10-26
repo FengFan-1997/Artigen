@@ -34,6 +34,10 @@
     <template v-for="project in visibleProjects" :key="project.projectId">
       <div class="project-heading">
         <button
+          class="project-toggle"
+          type="button"
+          :title="project.title"
+          :aria-controls="`${navigationId}-${project.projectId}`"
           :aria-expanded="!collapsed.has(project.projectId)"
           @click="toggle(project.projectId)"
         >
@@ -42,13 +46,15 @@
             :size="14"
           /><WorkspaceIcon name="folder" /><span>{{ project.title }}</span></button
         ><button
+          class="project-new-chat"
+          type="button"
           :aria-label="zh ? `在${project.title}中新建会话` : `New chat in ${project.title}`"
           @click="newChat(project.projectId)"
         >
           <WorkspaceIcon name="plus" />
         </button>
       </div>
-      <div v-if="!collapsed.has(project.projectId)" class="project-sessions">
+      <div v-show="!collapsed.has(project.projectId)" :id="`${navigationId}-${project.projectId}`" class="project-sessions">
         <div
           v-for="item in filtered(project.projectId)"
           :key="item.id"
@@ -120,7 +126,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import {
@@ -132,6 +138,7 @@ const props = defineProps<{ zh: boolean; search: string }>();
 const emit = defineEmits<{ navigate: [] }>();
 const route = useRoute();
 const router = useRouter();
+const navigationId = useId();
 const projects = ref<{ projectId: string; title: string }[]>([]);
 const sessions = ref<WorkspaceSession[]>([]);
 const cursor = ref<string | null>(null);
@@ -277,26 +284,42 @@ button {
   align-items: center;
   margin-top: 7px;
 }
-.project-heading > button:first-child {
-  display: flex;
+.project-toggle {
+  display: grid;
+  grid-template-columns: 14px 16px minmax(0, 1fr);
   flex: 1;
   min-width: 0;
+  min-height: 32px;
   align-items: center;
   gap: 8px;
-  padding: 7px 5px;
+  padding: 6px 5px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
   text-align: left;
 }
-.project-heading span {
+.project-toggle > .workspace-icon { color: var(--muted); }
+.project-toggle span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
 }
-.project-heading > button:last-child {
+.project-new-chat {
   display: grid;
+  flex: 0 0 auto;
   place-items: center;
-  width: 28px;
+  width: 32px;
   height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.project-heading > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  .project-new-chat { visibility: hidden; }
+  .project-heading:is(:hover, :focus-within) .project-new-chat { visibility: visible; }
+  .project-heading > button:hover { background: var(--surface-hover); color: var(--text); }
 }
 .project-sessions {
   padding-left: 16px;
@@ -455,7 +478,7 @@ button {
   .session-editor :is(input,select,button) { min-height: 44px; }
   .session-editor :is(input,select) { font-size: 16px; }
   .navigation-caption a,
-  .project-heading > button:last-child {
+  .project-new-chat {
     min-width: 44px;
   }
   .session-row > button {

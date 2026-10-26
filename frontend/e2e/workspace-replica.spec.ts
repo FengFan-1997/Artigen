@@ -2009,3 +2009,62 @@ for (const language of ['zh', 'en']) {
     } finally { pending.splice(0).forEach(resolve => resolve()); }
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`project disclosure keeps keyboard access and new chat scope ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const longTitle = '品牌网站 · 首页与购买流程体验研究及上线材料整理';
+    await page.route('**/api/workspace/navigation', route => route.fulfill({ json: {
+      projects: [{ projectId: projectA, title: longTitle }, { projectId: projectB, title: '夏日视觉' }],
+      sessions: [{ id: inputConversationId, projectId: projectA, title: '首页体验研究', kind: 'conversation', status: 'active', updatedAt: '2026-10-15T03:00:00Z' }], nextCursor: null
+    } }));
+    const writes: string[] = [];
+    page.on('request', req => { if (req.method() !== 'GET' && /\/api\/(workspace|agent-runs|design-conversations)/.test(req.url())) writes.push(req.method()); });
+    await page.goto(runPath);
+    const row = page.locator('.project-heading').first();
+    const toggle = row.getByRole('button', { name: longTitle, exact: true });
+    const add = row.getByRole('button', { name: zh ? `在${longTitle}中新建会话` : `New chat in ${longTitle}`, exact: true });
+    await expect(toggle).toHaveAttribute('title', longTitle);
+    const panelId = await toggle.getAttribute('aria-controls');
+    expect(panelId).toBeTruthy();
+    const panel = page.locator(`[id="${panelId}"]`);
+    await expect(panel.getByRole('link', { name: '首页体验研究', exact: true })).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(add).toBeHidden();
+    const originalWidth = (await toggle.boundingBox())!.width;
+    await toggle.focus();
+    await expect(add).toBeVisible();
+    expect((await toggle.boundingBox())!.width).toBe(originalWidth);
+    await toggle.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(panel).toBeHidden();
+    await expect(toggle).toBeFocused();
+    await toggle.press('Tab');
+    await expect(add).toBeFocused();
+    await add.press('Shift+Tab');
+    await expect(toggle).toBeFocused();
+    await toggle.press('Space');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(panel).toBeVisible();
+    const second = page.locator('.project-heading').nth(1).getByRole('button', { name: '夏日视觉', exact: true });
+    expect(await second.getAttribute('aria-controls')).not.toBe(panelId);
+    await second.focus(); await second.press('Enter');
+    await expect(second).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const search = page.getByRole('searchbox', { name: zh ? '搜索任务' : 'Search tasks', exact: true });
+    await search.fill('首页体验');
+    await expect(page.locator('.project-heading')).toHaveCount(1);
+    await expect(panel.getByRole('link', { name: '首页体验研究', exact: true })).toBeVisible();
+    await search.fill('');
+    await expect(page.locator('.project-heading')).toHaveCount(2);
+    await expect(second).toHaveAttribute('aria-expanded', 'false');
+    await second.focus(); await second.press('Tab');
+    const secondAdd = page.locator('.project-heading').nth(1).getByRole('button', { name: zh ? '在夏日视觉中新建会话' : 'New chat in 夏日视觉', exact: true });
+    await expect(secondAdd).toBeFocused();
+    await secondAdd.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`/artigen/create\\?projectId=${projectB}$`));
+    expect(writes).toEqual([]);
+  });
+}
