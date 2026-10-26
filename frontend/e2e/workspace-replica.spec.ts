@@ -2468,3 +2468,45 @@ for (const language of ['zh', 'en']) {
     await expect(draft).toHaveValue('保留下一条未发送的要求'); expect(fixture.state.inputs).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub patch file rows keep paths and counts readable with native disclosure ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const filename = 'frontend/src/components/very-long-generated-directory/'.repeat(5) + '说明.ts';
+    const patch = '@@ -1,2 +1,2 @@\n-<button>旧内容</button>\n+<button>新内容</button>';
+    const reads: string[] = [], writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/github') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(/\/github\/(?:pull-files|commit)\?/, route => {
+      reads.push(route.request().method());
+      return route.fulfill({ json: { items: [{ filename, additions: 123456, deletions: 78901, patch }, { filename: 'preview.png', additions: 0, deletions: 0, patch: null }], hasMore: false } });
+    });
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的审查意见');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace');
+    for (const kind of ['pulls', 'commits']) {
+      if (kind === 'commits') await root.getByRole('button', { name: zh ? '提交' : 'Commits', exact: true }).click();
+      await root.locator('.git-record').click();
+      const details = root.locator('.github-record-detail details'), summary = details.first().locator('summary');
+      await expect(details).toHaveCount(2); await expect(summary.locator('.patch-filename')).toHaveText(filename);
+      await expect(summary.locator('.patch-filename')).toHaveAttribute('title', filename);
+      await expect(summary.locator('.patch-counts')).toHaveText('+123456−78901');
+      await summary.focus(); await summary.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(summary).toBeFocused();
+      expect(await summary.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+      expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await summary.press('Enter'); await expect(details.first()).toHaveAttribute('open', '');
+      await expect(details.first().locator('pre')).toHaveText(patch); await expect(details.first().locator('pre button')).toHaveCount(0);
+      await summary.press('Space'); await expect(details.first()).not.toHaveAttribute('open');
+      await details.nth(1).locator('summary').press('Enter');
+      await expect(details.nth(1).locator('pre')).toHaveText(zh ? '此文件没有可用文本差异。' : 'No text patch is available.');
+      await root.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true }).click();
+    }
+    expect(reads).toEqual(['GET', 'GET']); expect(writes).toEqual([]); expect(fixture.workspace.saves).toHaveLength(0);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的审查意见'); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}

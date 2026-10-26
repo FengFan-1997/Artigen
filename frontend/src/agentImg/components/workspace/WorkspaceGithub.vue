@@ -78,8 +78,9 @@
           <h3>{{ selected.title }}</h3>
           <details v-for="file in patches" :key="file.filename">
             <summary>
-              {{ file.filename }} <span class="added">+{{ file.additions }}</span>
-              <span class="removed">−{{ file.deletions }}</span>
+              <WorkspaceIcon name="chevron-right" :size="16" />
+              <span class="patch-filename" :title="file.filename">{{ file.filename }}</span>
+              <span class="patch-counts"><span class="added">+{{ file.additions }}</span><span class="removed">−{{ file.deletions }}</span></span>
             </summary>
             <pre>{{
               file.patch || (zh ? '此文件没有可用文本差异。' : 'No text patch is available.')
@@ -470,12 +471,29 @@ a {
   color: var(--acid-text);
 }
 details {
-  padding: 12px 0;
+  min-width: 0;
+  padding: 4px 0;
 }
 summary {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  list-style: none;
   cursor: pointer;
-  overflow-wrap: anywhere;
 }
+summary::-webkit-details-marker { display: none; }
+summary > .workspace-icon { color: var(--muted); }
+details[open] > summary > .workspace-icon { transform: rotate(90deg); }
+summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.patch-filename { min-width: 0; overflow: hidden; color: var(--text); font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.patch-counts { display: inline-flex; align-items: center; gap: 8px; font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { summary:hover { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { summary { min-height: 44px; } }
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
