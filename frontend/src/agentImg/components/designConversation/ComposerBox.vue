@@ -17,8 +17,8 @@
     ></textarea>
     <div v-if="attachments.length" class="attachment-list">
       <span v-for="file in attachments" :key="file.clientId">
-        <WorkspaceIcon name="attachment" />
-        <b>{{ file.name }}</b>
+        <WorkspaceIcon name="attachment" :size="16" />
+        <b :title="file.name">{{ file.name }}</b>
         <small>{{ formatBytes(file.byteSize) }}</small>
         <button type="button" :disabled="disabled || busy" :aria-label="`${removeAttachmentLabel} ${file.name}`" @click="emit('remove-attachment', file.clientId)">
           <WorkspaceIcon name="close" :size="14" />
@@ -133,10 +133,11 @@ textarea { display: block; width: 100%; min-height: 78px; max-height: min(180px,
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 64px; }
 .attachment-list { max-height: min(160px, 24dvh); overflow-y:auto; overscroll-behavior:contain; scrollbar-color:var(--border) transparent; display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
-.attachment-list > span { flex-shrink:1; display: inline-flex; min-width: 0; align-items: center; gap: 7px; max-width: 100%; padding: 7px 9px; border: 0; border-radius: 9px; font-size: 12px; background: var(--surface-hover); }
-.attachment-list b { min-width:0; flex:1; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attachment-list small { color: var(--muted); white-space: nowrap; }
-.attachment-list button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
+.attachment-list > span { flex-shrink:1; display: inline-flex; min-width: 0; align-items: center; gap: 6px; max-width: 100%; padding: 6px 8px; border: 0; border-radius: 9px; font-size: 12px; background: var(--surface-hover); }
+.attachment-list b { min-width:0; flex:1; max-width: 180px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-list small { flex: 0 0 auto; color: var(--muted); font-size: 11px; line-height: 1.4; white-space: nowrap; }
+.attachment-list button { display: grid; flex: 0 0 auto; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 6px; color: var(--muted); background: transparent; cursor: pointer; }
+.attachment-list button:hover:not(:disabled) { color: var(--text); background: var(--surface-raised); }
 .composer-actions { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .attach { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 9px; border: 0; border-radius: 10px; color: var(--muted); font-size: 13px; font-weight: 610; background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .attach:hover { color: var(--text); background: var(--surface-raised); }
