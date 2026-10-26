@@ -6,7 +6,8 @@
         ><WorkspaceIcon name="plus"
       /></router-link>
     </div>
-    <form v-if="editing" ref="sessionEditor" class="session-editor" @submit.prevent="save">
+    <form v-if="editing" ref="sessionEditor" class="session-editor" :aria-label="zh ? '编辑会话' : 'Edit chat'" :aria-busy="saving" @submit.prevent="save">
+      <h2><WorkspaceIcon name="settings" :size="16" />{{ zh ? '编辑会话' : 'Edit chat' }}</h2>
       <label
         >{{ zh ? '会话名称' : 'Chat title' }}<input v-model="title" required maxlength="160"
       /></label>
@@ -19,13 +20,14 @@
           </option>
         </select></label
       >
+      <p v-if="error === 'save'" class="session-save-error" role="alert">{{ zh ? '会话未保存，输入内容已保留，请重试。' : 'Chat was not saved. Your edits are kept; try again.' }}</p>
       <div>
-        <button type="button" :disabled="saving" @click="editing = null">
+        <button class="session-cancel" type="button" :disabled="saving" @click="editing = null">
           {{ zh ? '取消' : 'Cancel' }}</button
-        ><button :disabled="saving">{{ zh ? '保存' : 'Save' }}</button>
+        ><button class="session-save" type="submit" :disabled="saving">{{ zh ? '保存' : 'Save' }}</button>
       </div>
     </form>
-    <p v-if="error" role="status">
+    <p v-if="error === 'load'" role="status">
       {{ zh ? '项目目录暂时无法读取。' : 'Could not load projects.' }}
       <button @click="load(false)">{{ zh ? '重试' : 'Retry' }}</button>
     </p>
@@ -110,7 +112,7 @@
     <button v-if="cursor" class="load-more" :disabled="loading" @click="load(true)">
       {{ zh ? '加载更多会话' : 'Load more chats' }}
     </button>
-    <slot v-if="error || (!loading && !sessions.length && !projects.length)" />
+    <slot v-if="error === 'load' || (!loading && !sessions.length && !projects.length)" />
   </div>
 </template>
 <script setup lang="ts">
@@ -129,13 +131,14 @@ const router = useRouter();
 const projects = ref<{ projectId: string; title: string }[]>([]);
 const sessions = ref<WorkspaceSession[]>([]);
 const cursor = ref<string | null>(null);
-const error = ref('');
+const error = ref<'' | 'load' | 'save'>('');
 const loading = ref(false);
 const collapsed = ref(new Set<string>());
 const editing = ref<WorkspaceSession | null>(null);
 const sessionEditor = ref<HTMLFormElement | null>(null);
 watch(editing, async (value) => {
   if (!value) return;
+  if (error.value === 'save') error.value = '';
   await nextTick();
   const input = sessionEditor.value?.querySelector('input');
   input?.focus({ preventScroll: true });
@@ -197,8 +200,8 @@ async function load(append: boolean) {
     const merged = append ? [...sessions.value, ...data.sessions] : data.sessions;
     sessions.value = [...new Map(merged.map((s) => [s.kind + s.id, s])).values()];
     cursor.value = data.nextCursor;
-  } catch (e) {
-    if (ticket === revision) error.value = String(e);
+  } catch {
+    if (ticket === revision) error.value = 'load';
   } finally {
     if (ticket === revision) loading.value = false;
   }
@@ -206,6 +209,7 @@ async function load(append: boolean) {
 async function save() {
   if (!editing.value || saving.value) return;
   saving.value = true;
+  error.value = '';
   const ticket = revision;
   try {
     await updateWorkspaceConversation(editing.value.id, {
@@ -215,8 +219,8 @@ async function save() {
     if (ticket !== revision) return;
     editing.value = null;
     await load(false);
-  } catch (e) {
-    if (ticket === revision) error.value = String(e);
+  } catch {
+    if (ticket === revision) error.value = 'save';
   } finally {
     saving.value = false;
   }
@@ -351,27 +355,66 @@ button {
 }
 .session-editor {
   display: grid;
+  min-width: 0;
   gap: 12px;
-  padding: 12px 4px;
+  margin: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface);
 }
+.session-editor h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.session-editor h2 .workspace-icon { color: var(--muted); }
 .session-editor label {
   display: grid;
-  gap: 5px;
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
   font-size: 12px;
+  line-height: 18px;
 }
 .session-editor input,
 .session-editor select {
+  box-sizing: border-box;
   min-width: 0;
   width: 100%;
-  background: var(--surface);
+  min-height: 36px;
+  padding: 7px 9px;
   border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
   color: var(--text);
-  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
 }
 .session-editor > div {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 6px;
+}
+.session-editor button {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.session-editor .session-cancel { color: var(--muted); }
+.session-editor .session-save { color: var(--text); background: var(--surface-raised); font-weight: 500; }
+.session-editor :is(input,select,button):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.session-editor button:disabled { opacity: .5; cursor: progress; }
+.session-save-error { margin: 0; color: var(--danger); font-size: 12px; line-height: 1.6; }
+@media (hover: hover) and (pointer: fine) {
+  .session-editor button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 }
 .navigation-empty {
   margin: 8px 0;
@@ -389,10 +432,8 @@ button {
   select {
     min-height: 44px;
   }
-  input,
-  select {
-    font-size: 16px;
-  }
+  .session-editor :is(input,select,button) { min-height: 44px; }
+  .session-editor :is(input,select) { font-size: 16px; }
   .navigation-caption a,
   .project-heading > button:last-child {
     min-width: 44px;

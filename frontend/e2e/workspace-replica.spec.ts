@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
-import { activityEvents, inputRunId } from './helpers/agentInputFixtures';
+import { activityEvents, inputRunId, inputConversationId } from './helpers/agentInputFixtures';
 const runPath = `/artigen/agent/runs/${inputRunId}`;
 async function resources(page: Page, mode = '文件') {
   await expect(page.locator('.workspace-topbar')).toBeVisible();
@@ -969,6 +969,55 @@ test('public run messages expose a keyboard and touch friendly copy action with 
   expect(target?.height).toBeGreaterThanOrEqual(44);
   await expect.poll(() => mobileCopy.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
   await mobileContext.close();
+});
+
+test('project navigation load failures keep their own retry and readable run fallback', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  let fail = true;
+  await page.route('**/api/workspace/navigation', (route) => fail
+    ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'NAVIGATION_UNAVAILABLE' } }) })
+    : route.fallback());
+  await page.goto(runPath);
+  const navigation = page.locator('.project-navigation');
+  await expect(navigation.getByRole('status')).toContainText('项目目录暂时无法读取');
+  await expect(navigation.locator('.history-run')).not.toHaveCount(0);
+  await expect(page.locator('.user-message')).toContainText('调研品牌网站');
+  fail = false;
+  await navigation.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(navigation.getByRole('status')).toHaveCount(0);
+  await expect(navigation.getByRole('button', { name: '编辑会话 首页体验研究', exact: true })).toBeAttached();
+  await expect(page.locator('.user-message')).toContainText('调研品牌网站');
+});
+
+test('chat save failures keep edits and report the failed save inside the editor', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  let patches = 0;
+  await page.route(`**/api/workspace/conversations/${inputConversationId}`, (route) => {
+    patches++;
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'SAVE_UNAVAILABLE' } }) });
+  });
+  await page.goto(runPath);
+  const open = page.getByRole('button', { name: '编辑会话 首页体验研究', exact: true });
+  await open.focus();
+  await open.press('Enter');
+  const form = page.locator('.session-editor');
+  const title = form.getByRole('textbox', { name: '会话名称', exact: true });
+  await expect(title).toBeFocused();
+  await title.fill('保存失败也保留这份会话名称');
+  await form.getByRole('combobox', { name: '所属项目', exact: true }).selectOption(projectB);
+  const save = form.getByRole('button', { name: '保存', exact: true });
+  await save.click();
+  await expect.poll(() => patches).toBe(1);
+  await expect(save).toBeEnabled();
+  await expect(title).toHaveValue('保存失败也保留这份会话名称');
+  await expect(form.getByRole('combobox')).toHaveValue(projectB);
+  await expect(form.getByRole('alert')).toContainText('会话未保存');
+  await expect(page.locator('.project-navigation')).not.toContainText('项目目录暂时无法读取');
+  await form.getByRole('button', { name: '取消', exact: true }).click();
+  await open.focus();
+  await open.press('Enter');
+  await expect(form.getByRole('alert')).toHaveCount(0);
+  await expect(title).toHaveValue('首页体验研究');
 });
 
 test('project new chats keep project scope and account changes remove private messages', async ({
