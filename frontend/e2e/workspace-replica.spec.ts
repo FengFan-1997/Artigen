@@ -993,7 +993,7 @@ test('GitHub type loading errors stay distinct from an empty list and refresh re
   await records.locator('nav').getByRole('button', { name: '提交', exact: true }).click();
   await expect(panel.getByRole('status')).toContainText('读取失败');
   await expect(records.locator('.git-record')).toHaveCount(0);
-  await expect(records.getByText('暂无记录', { exact: true })).toHaveCount(0);
+  await expect(records.locator('.github-empty')).toHaveCount(0);
   fail = false;
   await panel.locator(':scope > header').getByRole('button', { name: '刷新', exact: true }).click();
   await expect(records.locator('.git-record b')).toHaveText(['修复登录后草稿恢复']);
@@ -2069,5 +2069,57 @@ for (const language of ['zh', 'en']) {
     await secondAdd.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/artigen/create\\?projectId=${projectB}$`));
     expect(writes).toEqual([]);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub empty records keep category links separate from pending and failed reads ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    let fail = false, empty = true, hold = false, commitReads = 0;
+    const pending: Array<() => void> = [], methods: string[] = [];
+    page.on('request', req => { if (req.url().includes('/github')) methods.push(req.method()); });
+    await page.route('**/github/pulls?*', route => route.fulfill({ json: { items: [], hasMore: false } }));
+    await page.route('**/github/commits?*', async route => {
+      commitReads++;
+      if (hold) await new Promise<void>(resolve => pending.push(resolve));
+      if (fail) return route.fulfill({ status: 503, json: { error: { code: 'UNAVAILABLE' } } });
+      return route.fulfill({ json: { items: empty ? [] : [{ sha: 'a'.repeat(40), title: '合成提交记录', url: 'https://github.com/example/brand-site/commit/' + 'a'.repeat(40), updatedAt: '2026-10-15T03:00:00Z' }], hasMore: false } });
+    });
+    try {
+      await page.goto(runPath);
+      await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true }).getByRole('button', { name: 'GitHub', exact: true }).click();
+      const panel = page.locator('.github-workspace'), records = panel.locator('.github-records');
+      const notice = records.locator('.github-empty');
+      await expect(notice.getByRole('heading')).toHaveText(zh ? '暂无拉取请求' : 'No pull requests yet');
+      await expect(notice.getByRole('link')).toHaveAttribute('href', 'https://github.com/example/brand-site/pulls');
+      await expect(notice.getByRole('link')).toHaveAttribute('target', '_blank');
+      await expect(notice.getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer');
+      hold = true;
+      const commits = records.locator('nav').getByRole('button', { name: zh ? '提交' : 'Commits', exact: true });
+      await commits.click();
+      await expect.poll(() => commitReads).toBe(1);
+      await expect(records).toHaveAttribute('aria-busy', 'true');
+      await expect(notice).toHaveCount(0);
+      await expect(records.getByRole('status')).toHaveText(zh ? '正在读取…' : 'Loading…');
+      hold = false; pending.splice(0).forEach(resolve => resolve());
+      await expect(notice.getByRole('heading')).toHaveText(zh ? '暂无提交记录' : 'No commits yet');
+      await expect(notice.getByRole('link')).toHaveAttribute('href', 'https://github.com/example/brand-site/commits');
+      await commits.click();
+      expect(commitReads).toBe(1);
+      fail = true;
+      const refresh = panel.locator(':scope > header').getByRole('button', { name: zh ? '刷新' : 'Refresh', exact: true });
+      await refresh.click();
+      await expect(panel.getByRole('status')).toContainText(zh ? '读取失败' : 'Request failed');
+      await expect(notice).toHaveCount(0);
+      fail = false; empty = false;
+      await refresh.click();
+      await expect(records.locator('.git-record b')).toHaveText(['合成提交记录']);
+      await expect(notice).toHaveCount(0);
+      expect(commitReads).toBe(3);
+      expect(methods.length).toBeGreaterThan(0);
+      expect(methods.every(method => method === 'GET')).toBe(true);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
   });
 }

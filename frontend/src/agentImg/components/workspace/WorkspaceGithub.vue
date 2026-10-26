@@ -35,7 +35,14 @@
             </button>
           </nav>
           <p v-if="busy" role="status">{{ zh ? '正在读取…' : 'Loading…' }}</p>
-          <p v-else-if="!items.length && !notice">{{ zh ? '暂无记录' : 'No records' }}</p>
+          <div v-else-if="!items.length && !notice" class="github-empty" role="status">
+            <WorkspaceIcon name="git" :size="20" />
+            <div>
+              <h2>{{ kind === 'pulls' ? (zh ? '暂无拉取请求' : 'No pull requests yet') : (zh ? '暂无提交记录' : 'No commits yet') }}</h2>
+              <p>{{ kind === 'pulls' ? (zh ? '查看提交记录，或前往 GitHub 查看仓库。' : 'Check commits, or open the repository on GitHub.') : (zh ? '查看拉取请求，或前往 GitHub 查看仓库。' : 'Check pull requests, or open the repository on GitHub.') }}</p>
+              <a class="github-empty-link" :href="recordPageUrl" target="_blank" rel="noopener noreferrer">{{ zh ? '在 GitHub 查看' : 'View on GitHub' }}<WorkspaceIcon name="arrow-right" :size="16" /></a>
+            </div>
+          </div>
           <button
             v-for="item in items"
             :key="item.sha || item.number"
@@ -87,7 +94,7 @@
   </section>
 </template>
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import { workspaceRequest } from '../../services/workspace';
@@ -108,6 +115,10 @@ const repositoryInput = ref('');
 const notice = ref('');
 const busy = ref(false);
 const kind = ref<'pulls' | 'commits'>('pulls');
+const recordPageUrl = computed(() => {
+  const repo = repository.value;
+  return repo ? `https://github.com/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repository)}/${kind.value}` : '';
+});
 const items = ref<RecordItem[]>([]);
 const selected = ref<RecordItem | null>(null);
 const patches = ref<Patch[]>([]);
@@ -319,6 +330,15 @@ onBeforeUnmount(() => revision++);
   font: inherit;
   cursor: pointer;
 }
+.github-empty { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 12px; width: min(100%, 380px); margin-top: 24px; }
+.github-empty > .workspace-icon { margin-top: 1px; color: var(--muted); }
+.github-empty > div { display: grid; min-width: 0; gap: 10px; }
+.github-empty h2 { margin: 0; color: var(--text); font-size: 15px; font-weight: 500; line-height: 1.5; }
+.github-empty p { margin: 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.github-empty-link { display: inline-flex; align-items: center; justify-self: start; gap: 6px; box-sizing: border-box; max-width: 100%; min-height: 32px; padding: 6px 10px; border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; line-height: 20px; text-decoration: none; }
+.github-empty-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .github-empty-link:hover { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .github-empty-link { min-height: 44px; } }
 .repository-form {
   display: grid;
   min-width: 0;
