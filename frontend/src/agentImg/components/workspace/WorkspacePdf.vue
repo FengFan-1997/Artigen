@@ -1,12 +1,12 @@
 <template>
   <div class="pdf-document">
-    <div class="pdf-controls" role="group" aria-label="PDF 页面导航">
+    <div class="pdf-controls" role="group" :aria-label="zh ? 'PDF 页面导航' : 'PDF page navigation'">
       <button
         class="pdf-page-step"
         type="button"
-        aria-label="上一页"
-        title="上一页"
-        :disabled="loading || Boolean(error) || pageNumber <= 1"
+        :aria-label="zh ? '上一页' : 'Previous page'"
+        :title="zh ? '上一页' : 'Previous page'"
+        :disabled="loading || error || pageNumber <= 1"
         @click="pageNumber--"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 4-6 6 6 6" /></svg>
@@ -15,14 +15,14 @@
         class="pdf-page-counter"
         :aria-label="
           loading
-            ? '正在加载 PDF'
+            ? (zh ? '正在加载 PDF' : 'Loading PDF')
             : error
-              ? 'PDF 预览不可用'
-              : `第 ${pageNumber} 页，共 ${count} 页`
+              ? (zh ? 'PDF 预览不可用' : 'PDF preview unavailable')
+              : (zh ? `第 ${pageNumber} 页，共 ${count} 页` : `Page ${pageNumber} of ${count}`)
         "
         aria-live="polite"
       >
-        <template v-if="loading"><span class="pdf-loading">载入中</span></template>
+        <template v-if="loading"><span class="pdf-loading">{{ zh ? '载入中' : 'Loading' }}</span></template>
         <template v-else-if="error"><span class="pdf-loading">— / —</span></template>
         <template v-else>
           <strong>{{ pageNumber }}</strong
@@ -33,26 +33,33 @@
       <button
         class="pdf-page-step"
         type="button"
-        aria-label="下一页"
-        title="下一页"
-        :disabled="loading || Boolean(error) || pageNumber >= count"
+        :aria-label="zh ? '下一页' : 'Next page'"
+        :title="zh ? '下一页' : 'Next page'"
+        :disabled="loading || error || pageNumber >= count"
         @click="pageNumber++"
       >
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4 6 6-6 6" /></svg>
       </button>
     </div>
-    <p v-if="error" role="status">{{ error }}</p>
-    <div class="pdf-page-scroll"><canvas ref="canvas"></canvas></div>
+    <div v-if="error" class="pdf-error" role="status">
+      <WorkspaceIcon name="file" :size="20" />
+      <div>
+        <h3>{{ zh ? 'PDF 暂时无法预览' : 'PDF preview unavailable' }}</h3>
+        <p>{{ zh ? '可从上方下载原文件，在本机 PDF 阅读器中检查。' : 'Download the original file above to check it in a local PDF reader.' }}</p>
+      </div>
+    </div>
+    <div v-show="!error" class="pdf-page-scroll"><canvas ref="canvas"></canvas></div>
   </div>
 </template>
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
-const props = defineProps<{ blob: Blob }>();
+import WorkspaceIcon from './WorkspaceIcon.vue';
+const props = defineProps<{ blob: Blob; zh: boolean }>();
 const canvas = ref<HTMLCanvasElement | null>(null);
 const pageNumber = ref(1);
 const count = ref(0);
-const error = ref('');
+const error = ref(false);
 const loading = ref(true);
 let doc: PDFDocumentProxy | null = null;
 let task: RenderTask | null = null;
@@ -70,7 +77,7 @@ async function render() {
     task = page.render({ canvasContext: canvas.value.getContext('2d')!, viewport });
     await task.promise;
   } catch (e) {
-    if (active && String(e).indexOf('cancel') < 0) error.value = 'PDF 暂时无法预览，可下载后打开。';
+    if (active && String(e).indexOf('cancel') < 0) error.value = true;
   }
 }
 onMounted(async () => {
@@ -95,7 +102,7 @@ onMounted(async () => {
   } catch {
     if (active) {
       loading.value = false;
-      error.value = 'PDF 暂时无法预览，可下载后打开。';
+      error.value = true;
     }
   }
 });
@@ -193,9 +200,10 @@ canvas {
   height: auto;
   margin: auto;
 }
-p {
-  color: var(--muted);
-}
+.pdf-error { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 12px; margin: 24px 4px; text-align: left; }
+.pdf-error > .workspace-icon { margin-top: 1px; color: var(--muted); }
+.pdf-error h3 { margin: 0; color: var(--text); font-size: 15px; font-weight: 500; line-height: 22px; overflow-wrap: anywhere; }
+.pdf-error p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 @media (pointer: coarse) {
   .pdf-page-step {
     width: 44px;

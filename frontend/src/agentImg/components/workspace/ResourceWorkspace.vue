@@ -261,6 +261,7 @@
               v-else-if="active.file.mimeType === 'application/pdf' && active.blob"
               :key="active.key"
               :blob="active.blob"
+              :zh="zh"
             />
             <div
               v-else-if="active.text !== undefined && /\.(md|markdown)$/i.test(active.file.path)"

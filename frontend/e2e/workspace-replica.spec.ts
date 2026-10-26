@@ -1333,7 +1333,7 @@ test('PDF preview failure does not present an invalid page count', async ({ page
   await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
 
   const controls = page.getByRole('group', { name: 'PDF 页面导航' });
-  await expect(page.locator('p[role="status"]')).toContainText('PDF 暂时无法预览');
+  await expect(page.locator('.pdf-error')).toContainText('PDF 暂时无法预览');
   await expect(controls.locator('output')).toHaveAttribute('aria-label', 'PDF 预览不可用');
   await expect(controls.locator('output')).toHaveText('— / —');
   await expect(controls.getByRole('button', { name: '上一页' })).toBeDisabled();
@@ -2508,5 +2508,47 @@ for (const language of ['zh', 'en']) {
     expect(reads).toEqual(['GET', 'GET']); expect(writes).toEqual([]); expect(fixture.workspace.saves).toHaveLength(0);
     await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
     await expect(draft).toHaveValue('保留未发送的审查意见'); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`PDF failures follow workspace language and keep original downloads intact ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = 'not a PDF: preserve bytes\n含中文原始内容';
+    let broken = true;
+    await page.route('**/api/assets/80000000-0000-4000-8000-000000000005', route => broken ? route.fulfill({ contentType: 'application/pdf', body: original }) : route.fallback());
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的文件检查意见');
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+    const pdf = page.locator('.pdf-document'); const error = pdf.locator('.pdf-error');
+    await expect(error.getByRole('heading', { name: zh ? 'PDF 暂时无法预览' : 'PDF preview unavailable' })).toBeVisible();
+    await expect(error).toHaveAttribute('role', 'status'); await expect(error.locator('button,a')).toHaveCount(0);
+    await expect(pdf.locator('.pdf-page-scroll')).toBeHidden();
+    const controls = pdf.getByRole('group', { name: zh ? 'PDF 页面导航' : 'PDF page navigation' });
+    await expect(controls.locator('output')).toHaveText('— / —');
+    await expect(controls.getByRole('button', { name: zh ? '上一页' : 'Previous page' })).toBeDisabled();
+    await expect(controls.getByRole('button', { name: zh ? '下一页' : 'Next page' })).toBeDisabled();
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: zh ? '下载 report.pdf' : 'Download report.pdf', exact: true }).click();
+    const download = await downloaded; expect(download.suggestedFilename()).toBe('report.pdf');
+    const stream = await download.createReadStream(); expect(stream).not.toBeNull();
+    const bytes: Buffer[] = []; for await (const chunk of stream!) bytes.push(Buffer.from(chunk));
+    expect(Buffer.concat(bytes)).toEqual(Buffer.from(original)); await download.delete();
+    await page.getByRole('button', { name: zh ? '关闭 report.pdf' : 'Close report.pdf', exact: true }).click();
+    await expect(pdf).toHaveCount(0); broken = false;
+    if (await page.locator('.tree-toggle').getAttribute('aria-pressed') === 'false')
+      await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+    await expect(pdf.locator('output')).toHaveText('1 / 1'); await expect(error).toHaveCount(0);
+    await expect(pdf.locator('.pdf-page-scroll canvas')).toBeVisible();
+    await expect(pdf.locator('output')).toHaveAttribute('aria-label', zh ? '第 1 页，共 1 页' : 'Page 1 of 1');
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的文件检查意见');
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
   });
 }
