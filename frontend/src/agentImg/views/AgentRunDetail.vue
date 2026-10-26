@@ -70,11 +70,12 @@
             <span v-for="stage in phaseStages" :key="stage.id" :class="{ active: stage.active, done: stage.done }"><i></i>{{ stage.label }}</span>
           </div>
         </details>
-        <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive">
+        <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive" :aria-busy="sending">
           <span class="progress-kicker">{{ zh ? '需要你的输入' : 'Needs your input' }}</span>
           <h2>{{ run.progress.clarification.question }}</h2>
-          <div class="quick-answers">
-            <button v-for="option in run.progress.clarification.options || []" :key="option" type="button" @click="submitClarification(option)">{{ option }}</button>
+          <p v-if="run.progress.clarification.options?.length" class="clarification-hint">{{ zh ? '选择一项直接回复，也可在下方输入其他要求。' : 'Choose an answer to send it, or type another response below.' }}</p>
+          <div class="quick-answers" role="group" :aria-label="zh ? '快捷回复' : 'Quick replies'">
+            <button v-for="option in run.progress.clarification.options || []" :key="option" type="button" :disabled="sending" @click="submitClarification(option)"><span>{{ option }}</span><WorkspaceIcon name="arrow-right" :size="16" /></button>
           </div>
         </section>
         <article class="message user-message workspace-user-bubble">
@@ -670,6 +671,7 @@ const sendInput = async () => {
 };
 
 const submitClarification = async (answer: string) => {
+  if (sending.value || terminal.value) return;
   message.value = answer;
   await sendInput();
 };
@@ -1050,7 +1052,7 @@ onBeforeUnmount(() => {
 .run-progress-panel { margin-bottom: 26px; padding: 0; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
 .run-progress-header { display: flex; min-height: 48px; align-items: center; padding: 12px 14px; list-style: none; cursor: pointer; justify-content: space-between; gap: 12px; }
 .run-progress-header div { display: grid; gap: 4px; }
-.progress-kicker { color: var(--acid-text); font-size: 12px; font-weight: 760; letter-spacing: .06em; text-transform: uppercase; }
+.progress-kicker { color:var(--muted); font-size:12px; font-weight:500; }
 .run-progress-header strong { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .run-progress-header > span { color: var(--muted); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .phase-track { display: grid; gap: 12px; padding: 6px 14px 14px; }
@@ -1059,11 +1061,16 @@ onBeforeUnmount(() => {
 .phase-track span.active { color: var(--text); }
 .phase-track span.active i { background: var(--acid); box-shadow: 0 0 12px color-mix(in srgb, var(--acid) 44%, transparent); animation: progress-flow 1.6s ease-in-out infinite; }
 .phase-track span.done i { background: var(--success); }
-.clarification-card { display: grid; gap: 10px; margin: 0 0 26px; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
-.clarification-card h2 { margin: 0; color: var(--text); font-size: 15px; line-height: 1.45; }
-.quick-answers { display: flex; flex-wrap: wrap; gap: 7px; }
-.quick-answers button { min-height: 34px; padding: 0 11px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; cursor: pointer; }
-.quick-answers button:hover, .quick-answers button:focus-visible { border-color: var(--acid); }
+.clarification-card { display:grid; gap:10px; margin:0 0 26px; padding:16px; border:0; border-radius:10px; background:var(--surface); }
+.clarification-card h2 { margin:0; color:var(--text); font-size:15px; font-weight:600; line-height:1.6; }
+.clarification-hint { margin:0; color:var(--muted); font-size:12px; line-height:1.6; }
+.quick-answers { display:grid; gap:4px; }
+.quick-answers button { display:grid; grid-template-columns:minmax(0,1fr) 16px; align-items:center; gap:12px; min-width:0; min-height:40px; padding:10px 12px; color:var(--text); border:0; border-radius:7px; background:var(--surface-raised); font:inherit; font-size:13px; line-height:1.6; text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+.quick-answers button > svg { color:var(--muted); }
+.quick-answers button:disabled { opacity:.5; cursor:progress; }
+@media (hover:hover) and (pointer:fine) {
+  .quick-answers button:hover:not(:disabled) { background:var(--surface-hover); }
+}
 @keyframes progress-flow { 50% { opacity: .45; } }
 .message { margin-bottom: 26px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }

@@ -63,6 +63,33 @@ for (const [route, label, kind] of [
   });
 }
 
+test('clarification replies protect a newer draft while sending and reuse failed request ids', async ({ page }) => {
+  const fixture = await installAgentInputFixture(page);
+  fixture.state.run.status = 'waiting_user';
+  fixture.state.run.progress.clarificationRequired = true;
+  fixture.state.run.progress.clarification = { id: 'audience', question: '主要面向谁？', options: ['设计团队', '运营团队'] };
+  fixture.state.inputDelay = 600;
+  fixture.state.inputFail = true;
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  const card = page.locator('.clarification-card');
+  const first = card.getByRole('button', { name: '设计团队', exact: true });
+  await first.click();
+  await expect.poll(() => fixture.state.inputs.length).toBe(1);
+  const input = page.getByRole('textbox', { name: '补充要求', exact: true });
+  await input.fill('下一条草稿');
+  await card.getByRole('button', { name: '运营团队', exact: true }).dispatchEvent('click');
+  await expect(input).toHaveValue('下一条草稿');
+  await expect(first).toBeDisabled();
+  expect(fixture.state.inputs).toHaveLength(1);
+  await expect(first).toBeEnabled();
+  await expect(input).toHaveValue('下一条草稿');
+  await first.click();
+  await expect.poll(() => fixture.state.inputs.length).toBe(2);
+  await expect(first).toBeEnabled();
+  expect(fixture.state.inputs[1].inputId).toBe(fixture.state.inputs[0].inputId);
+  await expect(input).toHaveValue('设计团队');
+});
+
 test('a Run acknowledgement preserves a newer draft, including after reload', async ({ page }) => {
   const fixture = await installAgentInputFixture(page);
   fixture.state.inputDelay = 650;
