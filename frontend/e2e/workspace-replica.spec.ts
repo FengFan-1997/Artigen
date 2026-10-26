@@ -27,6 +27,71 @@ async function openBrief(page: Page) {
 
 for (const theme of ['dark', 'light']) {
   for (const width of [1440, 1024, 390]) {
+    test(`file view switch groups modes and preserves unsaved edits ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width < 1440 });
+      try {
+        const page = await context.newPage();
+        const { workspace } = await installWorkspaceFixture(page, theme);
+        await page.goto(runPath);
+        await openBrief(page);
+        const toolbar = page.locator('.file-toolbar');
+        const preview = toolbar.getByRole('button', { name: '预览', exact: true });
+        const source = toolbar.getByRole('button', { name: '源码', exact: true });
+        await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
+        await page.mouse.move(0, 0);
+        const capture = width === 1024 ? '' : process.env.ARTIGEN_FILE_VIEW_CAPTURE;
+        if (capture) await toolbar.screenshot({ path: `${capture}/${theme}-${width}-toolbar.png`, animations: 'disabled' });
+        await source.click();
+        const editor = page.getByRole('textbox', { name: '文件编辑器' });
+        await expect(editor).toBeVisible();
+        await page.mouse.move(0, 0);
+        if (capture) await page.screenshot({ path: `${capture}/${theme}-${width}-source.png`, animations: 'disabled' });
+        const group = toolbar.getByRole('group', { name: '文件显示方式' });
+        await expect(group).toBeVisible({ timeout: 500 });
+        await expect(group.getByRole('button')).toHaveCount(2);
+        await expect(group.getByRole('button', { pressed: true })).toHaveCount(1);
+        await expect(source).toHaveAttribute('aria-pressed', 'true');
+        const [previewBox, sourceBox] = await Promise.all([preview.boundingBox(), source.boundingBox()]);
+        expect(Math.abs(previewBox!.y + previewBox!.height / 2 - sourceBox!.y - sourceBox!.height / 2)).toBeLessThanOrEqual(0.5);
+        expect(previewBox!.height).toBe(sourceBox!.height);
+        if (width < 1440) {
+          expect(sourceBox!.height).toBeGreaterThanOrEqual(44);
+          expect(previewBox!.width).toBeGreaterThanOrEqual(44);
+        }
+        const [selected, inactive] = await Promise.all([
+          source.evaluate((element) => getComputedStyle(element).backgroundColor),
+          preview.evaluate((element) => getComputedStyle(element).backgroundColor)
+        ]);
+        expect(selected).not.toBe(inactive);
+        expect(await source.evaluate((element) => Number(getComputedStyle(element).fontWeight))).toBeGreaterThanOrEqual(500);
+        await editor.fill('# 未保存的检查结果\n\n保留这段中文草稿。');
+        await preview.focus();
+        await preview.press('Enter');
+        await expect(preview).toBeFocused();
+        await expect(preview).toHaveAttribute('aria-pressed', 'true');
+        await expect(group.getByRole('button', { pressed: true })).toHaveCount(1);
+        await expect(page.locator('.document-preview')).toContainText('保留这段中文草稿。');
+        await source.focus();
+        await source.press('Space');
+        await expect(source).toBeFocused();
+        await expect(source).toHaveAttribute('aria-pressed', 'true');
+        await expect(editor.locator('.cm-line')).toHaveText(['# 未保存的检查结果', '', '保留这段中文草稿。']);
+        expect(await source.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return target !== null && element.contains(target);
+        })).toBe(true);
+        expect(workspace.saves).toHaveLength(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 1024, 390]) {
     test(`technical disclosures use a quiet leading caret and unique targets ${theme} ${width}`, async ({ browser }) => {
       const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width < 1440 });
       try {

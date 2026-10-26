@@ -78,19 +78,24 @@
               {{ active.file.path }}</span
             >
             <div class="viewer-actions">
+              <div
+                v-if="active.text !== undefined"
+                class="view-mode-switch"
+                role="group"
+                :aria-label="zh ? '文件显示方式' : 'File view'"
+              >
+                <button
+                  type="button"
+                  :aria-pressed="active.view === 'preview'"
+                  @click="active.view = 'preview'"
+                >{{ zh ? '预览' : 'Preview' }}</button>
+                <button
+                  type="button"
+                  :aria-pressed="active.view === 'source'"
+                  @click="active.view = 'source'"
+                >{{ zh ? '源码' : 'Source' }}</button>
+              </div>
               <button
-                v-if="active.text !== undefined"
-                :aria-pressed="active.view === 'preview'"
-                @click="active.view = 'preview'"
-              >
-                {{ zh ? '预览' : 'Preview' }}</button
-              ><button
-                v-if="active.text !== undefined"
-                :aria-pressed="active.view === 'source'"
-                @click="active.view = 'source'"
-              >
-                {{ zh ? '源码' : 'Source' }}</button
-              ><button
                 v-if="active.text !== undefined"
                 :disabled="!canSave(active) || saving"
                 @click="save(active)"
@@ -1471,8 +1476,31 @@ onBeforeUnmount(() => {
   font-size: 12px;
   cursor: pointer;
 }
-.viewer-actions button[aria-pressed='true'] {
+.view-mode-switch {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
   background: var(--surface-hover);
+}
+.view-mode-switch > button {
+  min-width: 48px;
+  min-height: 28px;
+  padding: 4px 10px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 500;
+}
+.view-mode-switch > button[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--surface);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+@media (hover: hover) and (pointer: fine) {
+  .view-mode-switch > button:hover { color: var(--text); }
 }
 button:disabled {
   opacity: 0.45;
