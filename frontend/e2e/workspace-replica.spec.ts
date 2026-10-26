@@ -971,6 +971,61 @@ test('public run messages expose a keyboard and touch friendly copy action with 
   await mobileContext.close();
 });
 
+test('GitHub type loading errors stay distinct from an empty list and refresh retries', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  let fail = true, reads = 0;
+  await page.route('**/github/commits?*', (route) => {
+    reads++;
+    expect(route.request().method()).toBe('GET');
+    return fail
+      ? route.fulfill({ status: 503, json: { ok: false, error: { code: 'GITHUB_UNAVAILABLE' } } })
+      : route.fallback();
+  });
+  await page.goto(runPath);
+  await resources(page, 'GitHub');
+  const panel = page.locator('.github-workspace');
+  const records = panel.locator('.github-records');
+  await expect(records.locator('.git-record')).toHaveCount(1);
+  await records.locator('nav').getByRole('button', { name: '提交', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('读取失败');
+  await expect(records.locator('.git-record')).toHaveCount(0);
+  await expect(records.getByText('暂无记录', { exact: true })).toHaveCount(0);
+  fail = false;
+  await panel.locator(':scope > header').getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(records.locator('.git-record b')).toHaveText(['修复登录后草稿恢复']);
+  await expect(records.locator('nav').getByRole('button', { name: '提交', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(reads).toBe(2);
+  expect(workspace.githubRequests.every((method) => method === 'GET')).toBe(true);
+});
+
+test('GitHub type changes hide stale records and repeated selection does not reload', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  let finish = () => {};
+  const gate = new Promise<void>((resolve) => { finish = resolve; });
+  let commitReads = 0;
+  await page.route('**/github/commits?*', async (route) => {
+    commitReads++;
+    await gate;
+    await route.fulfill({ json: { items: [{ sha: 'a'.repeat(40), title: '只属于提交列表的记录', url: 'https://github.com/example/brand-site/commit/' + 'a'.repeat(40), updatedAt: '2026-10-15T03:00:10Z' }], hasMore: false } });
+  });
+  try {
+    await page.goto(runPath);
+    await resources(page, 'GitHub');
+    const records = page.locator('.github-records');
+    await expect(records.locator('.git-record b')).toHaveText(['完善首页按钮与移动端布局']);
+    const commits = records.locator('nav').getByRole('button', { name: '提交', exact: true });
+    await commits.click();
+    await expect.poll(() => commitReads).toBe(1);
+    expect(await records.locator('.git-record').count()).toBe(0);
+    await expect(records).toHaveAttribute('aria-busy', 'true');
+    finish();
+    await expect(records.locator('.git-record b')).toHaveText(['只属于提交列表的记录']);
+    await commits.click();
+    expect(commitReads).toBe(1);
+    await expect(commits).toHaveAttribute('aria-pressed', 'true');
+  } finally { finish(); }
+});
+
 test('binary preview contains long metadata and downloads the original bytes on touch screens', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
   try {

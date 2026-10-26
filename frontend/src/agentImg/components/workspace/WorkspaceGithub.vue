@@ -34,15 +34,15 @@
           <b>{{ repository.owner }}/{{ repository.repository }}</b
           ><button :disabled="busy" @click="unlink">{{ zh ? '解除关联' : 'Unlink' }}</button>
         </div>
-        <div v-if="!selected" ref="recordList" class="github-records">
-          <nav>
-            <button :aria-pressed="kind === 'pulls'" @click="select('pulls')">Pull requests</button
-            ><button :aria-pressed="kind === 'commits'" @click="select('commits')">
+        <div v-if="!selected" ref="recordList" class="github-records" :aria-busy="busy">
+          <nav class="github-record-types" :aria-label="zh ? 'GitHub 记录类型' : 'GitHub record type'">
+            <button type="button" :aria-pressed="kind === 'pulls'" @click="select('pulls')">{{ zh ? '拉取请求' : 'Pull requests' }}</button
+            ><button type="button" :aria-pressed="kind === 'commits'" @click="select('commits')">
               {{ zh ? '提交' : 'Commits' }}
             </button>
           </nav>
           <p v-if="busy" role="status">{{ zh ? '正在读取…' : 'Loading…' }}</p>
-          <p v-else-if="!items.length">{{ zh ? '暂无记录' : 'No records' }}</p>
+          <p v-else-if="!items.length && !notice">{{ zh ? '暂无记录' : 'No records' }}</p>
           <button
             v-for="item in items"
             :key="item.sha || item.number"
@@ -250,7 +250,10 @@ async function load(append = false) {
   }
 }
 const select = (next: 'pulls' | 'commits') => {
+  if (kind.value === next) return;
   kind.value = next;
+  items.value = [];
+  hasMore.value = false;
   selected.value = null;
   patches.value = [];
   void load(false);
@@ -348,13 +351,35 @@ onBeforeUnmount(() => revision++);
   gap: 8px;
   overflow-wrap: anywhere;
 }
-nav {
+.github-record-types {
   display: flex;
-  gap: 8px;
+  width: max-content;
+  max-width: 100%;
+  gap: 2px;
   margin: 16px 0;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--surface-raised);
 }
-nav button[aria-pressed='true'] {
-  background: var(--surface-hover);
+.github-record-types button {
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 13px;
+  line-height: 20px;
+}
+.github-record-types button[aria-pressed='true'] {
+  color: var(--text);
+  background: var(--surface);
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+.github-record-types button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .github-record-types button:hover { color: var(--text); }
 }
 .github-workspace .git-record {
   display: grid;
@@ -418,6 +443,7 @@ pre {
   color: var(--danger);
 }
 @media (max-width: 799px), (pointer: coarse) {
+  .github-record-types button { min-height: 44px; }
   input {
     min-height: 44px;
     font-size: 16px;
