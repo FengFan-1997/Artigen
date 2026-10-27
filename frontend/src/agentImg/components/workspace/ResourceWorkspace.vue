@@ -139,7 +139,7 @@
             <template v-if="active?.text !== undefined"
               ><header>
                 <b>{{ filename(active.file.path) }}</b
-                ><template v-if="hasChanges"><span class="added">+{{ statistics.added }}</span
+                ><template v-if="hasChanges && statistics"><span class="added">+{{ statistics.added }}</span
                 ><span class="removed">−{{ statistics.removed }}</span></template>
               </header>
               <p :id="`${comparisonPickerId}-description`">{{ comparisonDescription }}</p>
@@ -588,7 +588,7 @@ const treeVisible = ref(true);
 const zoom = ref(1);
 const versions = ref<Array<{ revision: number; createdAt: string; sha256: string }>>([]);
 const proposal = ref<{ text: string; candidateId: string; baseHash: string } | null>(null);
-const statistics = ref({ added: 0, removed: 0 });
+const statistics = ref<{ added: number; removed: number } | null>(null);
 let revision = 0;
 let openRevision = 0;
 let disposed = false;
@@ -1382,18 +1382,21 @@ watch(activeKey, async () => {
   }
 });
 watch(
-  () => [props.mode, active.value?.text, active.value?.baseline, proposal.value?.text],
-  async () => {
-    if (props.mode !== 'changes') return;
+  () => [props.mode, activeKey.value, active.value?.text, active.value?.baseline, proposal.value?.text],
+  async (_value, _previous, onCleanup) => {
+    statistics.value = null;
     const doc = active.value;
-    if (!doc) {
-      statistics.value = { added: 0, removed: 0 };
-      return;
-    }
+    if (props.mode !== 'changes' || !doc || !hasChanges.value) return;
+    let current = true;
+    onCleanup(() => { current = false; });
     const a = doc.baseline,
       b = proposal.value?.text ?? doc.text ?? '';
-    const { changedLineCounts } = await import('../../services/workspaceChanges');
-    if (doc === active.value) statistics.value = changedLineCounts(a, b);
+    try {
+      const { changedLineCounts } = await import('../../services/workspaceChanges');
+      if (current) statistics.value = changedLineCounts(a, b);
+    } catch {
+      // Optional totals must not prevent reading or applying the comparison.
+    }
   }
 );
 watch(
