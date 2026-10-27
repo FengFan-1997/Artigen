@@ -2902,3 +2902,56 @@ for (const language of ['zh', 'en']) {
     expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.designMessages).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`explicit retry notice preserves drafts and coalesces control requests ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    fixture.state.run.status = 'waiting_user'; fixture.state.run.progress.retryRequired = true;
+    const budget = structuredClone(fixture.state.run.budget);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    let release: (() => void) | undefined; let fail = true;
+    const requests: string[] = [];
+    await page.route(`**/api/agent-runs/${inputRunId}/resume`, async route => {
+      requests.push(route.request().method());
+      await new Promise<void>(resolve => { release = resolve; });
+      if (fail) return route.fulfill({ status: 503, json: { error: { code: 'AGENT_CONTROL_FAILED' } } });
+      fixture.state.run.status = 'running'; fixture.state.run.progress.retryRequired = false;
+      return route.fulfill({ json: { ok: true, run: fixture.state.run } });
+    });
+    try {
+      await page.goto(runPath);
+      const notice = page.locator('.retry-required'); const action = notice.getByRole('button');
+      await expect(notice).toHaveAttribute('role', 'status');
+      await expect(notice.locator('b')).toHaveText(zh ? '这次调用结果无法确认' : 'This call could not be confirmed');
+      await expect(notice.locator('p')).toHaveText(zh ? '系统没有自动重试，也没有把这次未落账调用计入费用。你可以确认后安全重试。' : 'It was not retried automatically or charged without a receipt. You can explicitly retry it now.');
+      const draft = page.locator('.run-composer textarea'); await draft.fill('保留尚未发送的后续检查意见');
+      expect(requests).toEqual([]);
+      await action.focus(); await expect(action).toBeFocused();
+      await action.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+      await expect.poll(() => requests).toEqual(['POST']);
+      await expect(action).toBeDisabled(); await expect(action).toHaveAttribute('aria-busy', 'true');
+      await expect(action).toHaveText(zh ? '正在处理…' : 'Working…');
+      await expect(page.locator('.run-controls').getByRole('button', { name: zh ? '重试' : 'Retry', exact: true })).toBeDisabled();
+      await expect(draft).toHaveValue('保留尚未发送的后续检查意见');
+      release!(); release = undefined;
+      await expect(action).toBeEnabled(); await expect(action).toHaveAttribute('aria-busy', 'false');
+      await expect(action).toHaveText(zh ? '确认重试' : 'Retry now');
+      await expect(page.locator('.run-notice')).toContainText(zh ? '控制请求没有成功' : 'The control request failed');
+      await expect(notice).toBeVisible(); expect(fixture.state.run.status).toBe('waiting_user');
+      fail = false; await action.focus(); await action.press('Enter');
+      await expect.poll(() => requests).toEqual(['POST', 'POST']);
+      await expect(action).toBeDisabled(); release!(); release = undefined;
+      await expect(notice).toHaveCount(0);
+      await expect(page.locator('.run-controls').getByRole('button', { name: zh ? '暂停' : 'Pause', exact: true })).toBeEnabled();
+      await expect(page.locator('.run-notice')).toHaveCount(0); await expect(draft).toHaveValue('保留尚未发送的后续检查意见');
+      expect(fixture.state.run.budget).toEqual(budget);
+      expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.creates).toHaveLength(0);
+      // Ordinary waiting-for-user tasks must never show a retry-required warning.
+      fixture.state.run.status = 'waiting_user'; fixture.state.run.progress.retryRequired = false;
+      await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9909', type: 'context.compacted', summary: '普通等待输入状态' }]);
+      await expect(page.locator('.workspace-topbar .runtime-pill')).toHaveText(zh ? '等待你确认' : 'Needs your input');
+      await expect(notice).toHaveCount(0); expect(requests).toEqual(['POST','POST']);
+    } finally { release?.(); }
+  });
+}

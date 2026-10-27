@@ -106,13 +106,15 @@
         </ExpiredApprovalsNotice>
 
         <article v-if="retryRequired" class="retry-required" role="status">
+          <WorkspaceIcon name="refresh" :size="18" />
           <div>
             <b>{{ zh ? '这次调用结果无法确认' : 'This call could not be confirmed' }}</b>
             <p>{{ zh ? '系统没有自动重试，也没有把这次未落账调用计入费用。你可以确认后安全重试。' : 'It was not retried automatically or charged without a receipt. You can explicitly retry it now.' }}</p>
+            <button type="button" :disabled="controlBusy" :aria-busy="controlBusy" @click="control('resume')">
+              <span>{{ controlBusy ? (zh ? '正在处理…' : 'Working…') : (zh ? '确认重试' : 'Retry now') }}</span>
+              <WorkspaceIcon name="arrow-right" :size="16" />
+            </button>
           </div>
-          <button type="button" :disabled="controlBusy" @click="control('resume')">
-            {{ zh ? '确认重试' : 'Retry now' }}
-          </button>
         </article>
 
         <article v-for="approval in pendingApprovals" :key="approval.approvalId" class="approval-card">
@@ -650,6 +652,7 @@ const cancelChild = async (subagentId: string) => {
 };
 
 const control = async (action: 'pause' | 'resume' | 'cancel') => {
+  if (controlBusy.value) return;
   const targetRunId = runId.value;
   controlBusy.value = true;
   try {
@@ -1151,11 +1154,17 @@ onBeforeUnmount(() => {
 .approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface); font-size: 12px; }
 .approval-card .approval-primary { color: var(--acid-ink); background: var(--acid); font-weight: 720; }
-.retry-required { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 26px 0; padding: 15px 16px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
-.retry-required div { display: grid; gap: 5px; }
-.retry-required b { color: var(--text); font-size: 13px; }
-.retry-required p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.retry-required button { min-height: 36px; flex: 0 0 auto; padding: 0 12px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 12px; font-weight: 720; }
+.retry-required { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; margin: 26px 0; padding: 14px; border-radius: 8px; background: var(--surface); }
+.retry-required > .workspace-icon { margin-top: 2px; color: var(--muted); }
+.retry-required > div { display: grid; min-width: 0; gap: 6px; }
+.retry-required b { color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.retry-required p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.retry-required button { display: inline-flex; justify-self: start; align-items: center; gap: 6px; max-width: calc(100% + 10px); min-height: 32px; margin: 4px 0 0 -10px; padding: 6px 10px; color: var(--text); border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }
+.retry-required button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.retry-required button:disabled { color: var(--muted); cursor: progress; }
+.retry-required button:active:not(:disabled) { background: var(--surface-hover); }
+@media (hover: hover) and (pointer: fine) { .retry-required button:hover:not(:disabled) { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .retry-required button { min-width: 44px; min-height: 44px; } }
 .delivery-summary { padding: 14px; border: 0; border-radius: 10px; background: var(--surface); }
 .delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--text); font-size: 12px; font-weight: 600; }
 .delivery-summary > header b { color: var(--muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -1317,8 +1326,6 @@ onBeforeUnmount(() => {
   .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
   .conversation-scroll { padding-top: 24px; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
-  .retry-required { align-items: stretch; flex-direction: column; }
-  .retry-required button { min-height: 44px; }
   .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 18px; }
   .run-controls button span { display: none; }
