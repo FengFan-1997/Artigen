@@ -2849,3 +2849,56 @@ for (const language of ['zh', 'en']) {
     expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`Markdown heading rhythm preserves six native levels across messages and previews ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const titles = ['审查结论', '视觉层级', '移动体验', '交互记录', '核验范围', 'evidence/long-heading-without-spaces-'.repeat(12)];
+    let text = titles.map((title, i) => '#'.repeat(i + 1) + ' ' + title).join('\n\n');
+    const fileText = '###### 文件验收记录\n\n保留文件原文与未发送的要求。';
+    fixture.workspace.files[0].text = fileText;
+    await page.route(`**/api/agent-runs/${inputRunId}/messages*`, route => route.fulfill({ json: { ok: true, messages: [{ id: 'heading-rhythm-message', role: 'assistant', kind: 'text', text, createdAt: '2026-10-15T03:00:10Z' }], nextCursor: null } }));
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的排版检查意见');
+    const markdown = page.locator('.timeline-message.assistant .workspace-markdown');
+    const headings = markdown.getByRole('heading');
+    await expect(headings).toHaveText(titles);
+    expect(await headings.evaluateAll(nodes => nodes.map(node => node.tagName))).toEqual(['H1','H2','H3','H4','H5','H6']);
+    const metrics = await headings.evaluateAll(nodes => nodes.map(node => {
+      const style = getComputedStyle(node);return { size: parseFloat(style.fontSize), weight: style.fontWeight, bottom: style.marginBottom };
+    }));
+    expect(metrics.map(m => m.size)).toEqual([22,19,17,15,15,15]);
+    expect(metrics.every(m => m.weight === '650')).toBe(true);
+    expect(metrics.at(-1)!.bottom).toBe('0px');
+    expect(await markdown.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    expect(await headings.last().evaluate(el => el.getBoundingClientRect().height > parseFloat(getComputedStyle(el).lineHeight))).toBe(true);
+    for (let level = 1; level <= 6; level++) {
+      text = '#'.repeat(level) + ' 首段标题-' + level;
+      await fixture.emit([{ ...activityEvents(1)[0]!, eventId: String(9900 + level), type: 'message.created', summary: '标题排版测试更新' }]);
+      await expect(markdown.getByRole('heading', { level })).toHaveText('首段标题-' + level);
+      const spacing = await markdown.getByRole('heading').evaluate(el => ({ top: getComputedStyle(el).marginTop, bottom: getComputedStyle(el).marginBottom }));
+      expect(spacing).toEqual({ top: '0px', bottom: '0px' });
+    }
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click(); await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    const preview = page.locator('.document-preview .workspace-markdown');
+    await expect(preview.getByRole('heading', { level: 6 })).toHaveText('文件验收记录');
+    const first = await preview.locator('h6').evaluate(el => ({ size: getComputedStyle(el).fontSize, top: getComputedStyle(el).marginTop }));
+    expect(first).toEqual({ size: '15px', top: '0px' });
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    await expect(page.locator('.cm-content .cm-line')).toHaveText(fileText.split('\n'));
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的排版检查意见');
+    // The design conversation calls the same renderer; check its first h4 too.
+    await page.route(`**/api/design-conversations/${inputConversationId}`, route => route.fulfill({ json: { ok: true, conversation: { conversationId: inputConversationId, projectId: null, title: '标题排版验收', status: 'active', autoCreditCap: 50, clarificationRounds: 0, expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z', updatedAt: '2026-10-15T03:00:00Z', uploads: [], executions: [], messages: [{ messageId: 'heading-design-message', sequence: 1, role: 'assistant', kind: 'text', status: 'complete', text: '#### 设计审查记录', attachments: [], questions: [], assumptions: [], memoryCandidates: [], createdAt: '2026-10-15T03:00:00Z' }] } } }));
+    await page.goto(`/artigen/create?c=${inputConversationId}`);
+    const design = page.locator('.message-body .workspace-markdown h4'); await expect(design).toHaveText('设计审查记录');
+    expect(await design.evaluate(el => ({ size: getComputedStyle(el).fontSize, top: getComputedStyle(el).marginTop, bottom: getComputedStyle(el).marginBottom }))).toEqual({ size: '15px', top: '0px', bottom: '0px' });
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.designMessages).toHaveLength(0);
+  });
+}

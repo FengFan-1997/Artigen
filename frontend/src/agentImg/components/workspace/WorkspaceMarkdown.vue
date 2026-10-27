@@ -135,21 +135,28 @@ const onMarkdownClick = (event: MouseEvent) => {
 .workspace-markdown :deep(li > p) { margin-block: 0 8px; }
 .workspace-markdown :deep(li > :last-child) { margin-block-end: 0; }
 .workspace-markdown :deep(h1) {
-  font-size: 26px;
+  font-size: 22px;
 }
 .workspace-markdown :deep(h2) {
-  font-size: 21px;
+  font-size: 19px;
 }
 .workspace-markdown :deep(h3) {
   font-size: 17px;
 }
-.workspace-markdown :deep(:is(h1, h2, h3, h4)) {
-  margin: 25px 0 10px;
-  font-weight: 650;
-  line-height: 1.4;
+.workspace-markdown :deep(:is(h4, h5, h6)) {
+  font-size: 15px;
 }
-.workspace-markdown :deep(:is(h1, h2, h3):first-child) {
+.workspace-markdown :deep(:is(h1, h2, h3, h4, h5, h6)) {
+  margin: 24px 0 8px;
+  color: var(--text);
+  font-weight: 650;
+  line-height: 1.45;
+}
+.workspace-markdown :deep(:is(h1, h2, h3, h4, h5, h6):first-child) {
   margin-top: 0;
+}
+.workspace-markdown :deep(:is(h1, h2, h3, h4, h5, h6):last-child) {
+  margin-bottom: 0;
 }
 .workspace-markdown :deep(pre) {
   overflow: auto;
