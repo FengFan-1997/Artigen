@@ -420,9 +420,22 @@
                 <WorkspaceIcon name="close" :size="14" />
               </button>
             </div>
-            <button v-if="!permission" @click="reauthorize">
-              {{ zh ? '重新授权目录' : 'Authorize folder again' }}</button
-            ><WorkspaceFileTree
+            <div v-if="!permission" class="local-permission">
+              <strong>{{ zh ? '需要重新授权' : 'Folder access needed' }}</strong>
+              <p>{{ zh ? '允许后可继续读取本机文件。' : 'Allow access to read local files again.' }}</p>
+              <button
+                type="button"
+                class="local-permission-action"
+                :disabled="connecting"
+                :aria-busy="connecting"
+                @click="reauthorize"
+              >
+                <span>{{ connecting ? (zh ? '正在授权…' : 'Authorizing…') : (zh ? '重新授权目录' : 'Authorize folder again') }}</span>
+                <WorkspaceIcon :name="connecting ? 'refresh' : 'arrow-right'" :size="16" />
+              </button>
+              <p v-if="permissionError" role="status">{{ permissionError }}</p>
+            </div>
+            <WorkspaceFileTree
               v-else
               :key="localRootRevision"
               :nodes="localNodes"
@@ -552,6 +565,7 @@ const connecting = ref(false);
 const root = ref<LocalDirectory | null>(null);
 const rootIdentity = ref('');
 const permission = ref(false);
+const permissionError = ref('');
 const localNodes = ref<TreeNode[]>([]);
 const localRootRevision = ref(0);
 const search = ref('');
@@ -684,6 +698,7 @@ async function reset() {
   activeKey.value = '';
   root.value = null;
   permission.value = false;
+  permissionError.value = '';
   localNodes.value = [];
   files.value = [];
   proposal.value = null;
@@ -717,14 +732,15 @@ function disposeDocument(doc: Document) {
 async function readRoot() {
   if (!root.value) return;
   const ticket = revision;
+  const handle = root.value;
   const nodes = await readLocalDirectory({
     id: 'local-root',
-    name: root.value.name,
+    name: handle.name,
     path: '',
     directory: true,
-    handle: root.value
+    handle
   });
-  if (ticket === revision) {
+  if (ticket === revision && root.value === handle) {
     localNodes.value = nodes;
     localRootRevision.value++;
   }
@@ -739,6 +755,7 @@ async function connectFolder() {
   const ticket = revision;
   const current = scope();
   connecting.value = true;
+  permissionError.value = '';
   try {
     const handle = await chooseLocalRoot(owner.value, project.value);
     if (ticket !== revision || scope() !== current) return;
@@ -759,15 +776,26 @@ async function connectFolder() {
   }
 }
 async function reauthorize() {
-  if (!root.value) return;
+  if (!root.value || connecting.value) return;
+  const handle = root.value;
   const ticket = revision;
+  connecting.value = true;
+  permissionError.value = '';
   try {
-    const granted = await verifyLocalPermission(root.value, false, true);
-    if (ticket !== revision) return;
-    permission.value = granted;
-    if (permission.value) await readRoot();
+    const granted = await verifyLocalPermission(handle, false, true);
+    if (ticket !== revision || root.value !== handle) return;
+    if (!granted) {
+      permissionError.value = props.zh
+        ? '尚未获得目录访问权限，请重试。'
+        : 'Folder access was not granted. Try again.';
+      return;
+    }
+    await readRoot();
+    if (ticket === revision && root.value === handle) permission.value = true;
   } catch (error) {
-    notice.value = errorText(error);
+    if (ticket === revision && root.value === handle) permissionError.value = errorText(error);
+  } finally {
+    if (ticket === revision && root.value === handle) connecting.value = false;
   }
 }
 async function disconnectFolder() {
@@ -787,6 +815,8 @@ async function disconnectFolder() {
   root.value = null;
   localNodes.value = [];
   permission.value = false;
+  permissionError.value = '';
+  connecting.value = false;
 }
 async function fetchBlob(file: WorkspaceFile) {
   if (!/^\/api\/assets\/[a-f0-9-]+$/i.test(file.url)) throw new Error('WORKSPACE_FILE_URL_INVALID');
@@ -1657,6 +1687,36 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.local-permission {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 2px 4px 12px 26px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.local-permission strong { font-size: 13px; font-weight: 500; }
+.resource-tree .local-permission p { margin: 0; padding: 0; }
+.local-permission-action {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 6px;
+  max-width: calc(100% + 8px);
+  min-height: 32px;
+  margin-left: -8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.local-permission-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.local-permission-action:active:not(:disabled) { background: var(--surface-hover); }
 .local-root button {
   width: 28px;
   height: 28px;
@@ -1667,6 +1727,7 @@ onBeforeUnmount(() => {
     color: var(--text);
     background: var(--surface-hover);
   }
+  .local-permission-action:hover:not(:disabled) { background: var(--surface-hover); }
 }
 .file-toolbar {
   display: flex;
@@ -2078,6 +2139,7 @@ button:disabled {
   .tree-section-heading button,
   .image-viewer button,
   .local-root button,
+  .local-permission-action,
   .file-status select,
   .file-search {
     min-width: 44px;

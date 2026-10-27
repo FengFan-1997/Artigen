@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
 import { installLazyDirectoryFixture } from './helpers/lazyDirectoryFixture';
+import { installLocalPermissionFixture } from './helpers/localPermissionFixture';
 import { activityEvents, inputRunId, inputConversationId } from './helpers/agentInputFixtures';
 const runPath = `/artigen/agent/runs/${inputRunId}`;
 async function resources(page: Page, mode = '文件') {
@@ -2779,5 +2780,72 @@ for (const language of ['zh', 'en']) {
     expect(workspace.saves).toHaveLength(0);
     await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click(); await expect(draft).toHaveValue('保留尚未发送的审查意见');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`local folder permission recovery stays scoped and never duplicates requests ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    const permission = await installLocalPermissionFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const open = async () => {
+      const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+      await expect(nav).toBeVisible();
+      await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    };
+    await page.goto(runPath);
+    await open();
+    await permission.prepare();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: zh ? '连接本机文件夹' : 'Connect local folder', exact: true }).click();
+    await expect(tree.getByRole('button', { name: 'permission-note.txt', exact: true })).toBeVisible();
+    await page.reload(); await open();
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的目录检查意见');
+    const action = tree.locator('.local-permission-action');
+    const status = tree.locator('.local-permission [role="status"]');
+    await expect(action).toHaveText(zh ? '重新授权目录' : 'Authorize folder again');
+    expect(await permission.requests()).toEqual([]);
+    expect(await permission.reads()).toBe(0);
+    await action.focus(); await action.press('Enter');
+    await expect(action).toBeDisabled(); await expect(action).toHaveAttribute('aria-busy', 'true');
+    await expect(action).toHaveText(zh ? '正在授权…' : 'Authorizing…');
+    await action.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+    expect(await permission.requests()).toEqual(['read']);
+    await permission.release('denied');
+    await expect(status).toHaveText(zh ? '尚未获得目录访问权限，请重试。' : 'Folder access was not granted. Try again.');
+    await expect(action).toBeEnabled();
+    await action.press('Enter');
+    await expect.poll(permission.requests).toEqual(['read', 'read']);
+    await expect(status).toHaveCount(0);
+    await permission.release('error');
+    await expect(status).toHaveText(zh ? '文件访问权限不足，请重新授权后重试。' : 'Authorize file access and retry.');
+    await expect(action).toBeEnabled();
+    await permission.failRead(true);
+    await action.click();
+    await expect.poll(permission.requests).toEqual(['read', 'read', 'read']);
+    await permission.release('granted');
+    await expect(status).toHaveText(zh ? '文件访问权限不足，请重新授权后重试。' : 'Authorize file access and retry.');
+    await expect(action).toBeEnabled();
+    await expect(tree.getByRole('button', { name: 'permission-note.txt', exact: true })).toHaveCount(0);
+    await permission.failRead(false); await action.click();
+    await expect(action).toHaveCount(0);
+    await expect(status).toHaveCount(0);
+    expect(await permission.requests()).toEqual(['read', 'read', 'read']);
+    const file = tree.getByRole('button', { name: 'permission-note.txt', exact: true });
+    await expect(file).toBeVisible(); await file.click();
+    await expect(page.locator('.cm-content')).toHaveText('Local permission UI fixture.');
+    await page.reload(); await open();
+    await expect(action).toBeVisible(); await action.click();
+    await expect.poll(permission.requests).toEqual(['read']);
+    await tree.getByRole('button', { name: zh ? '断开文件夹 local-permission-fixture' : 'Disconnect folder local-permission-fixture', exact: true }).click();
+    await expect(tree.locator('.local-root')).toHaveCount(0);
+    await permission.release('error');
+    await page.waitForTimeout(100);
+    await expect(status).toHaveCount(0);
+    await expect(page.locator('.resource-notice')).toHaveCount(0);
+    await expect(tree.getByRole('button', { name: zh ? '连接本机文件夹' : 'Connect local folder', exact: true })).toBeEnabled();
+    await expect(draft).toHaveValue('保留未发送的目录检查意见');
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
   });
 }
