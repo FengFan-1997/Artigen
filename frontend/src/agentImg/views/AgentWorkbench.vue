@@ -66,7 +66,10 @@
                   <p>{{ scopeReceipt }}</p>
                   <p v-if="form.capabilities.browser">{{ zh ? '允许访问：' : 'Allowed sites: ' }}{{ browserConfig().allowedOrigins?.join(' · ') || '—' }}</p>
                   <p v-if="selectedFiles.length">{{ zh ? '参考文件：' : 'References: ' }}{{ selectedFiles.map(file => file.name).join(' · ') }}</p>
-                  <button type="button" :disabled="busy" @click="editQuotedRequest">{{ zh ? '修改要求与附件' : 'Edit request and references' }}</button>
+                  <button class="quote-edit" type="button" :disabled="busy" @click="editQuotedRequest">
+                    <span>{{ zh ? '修改要求与附件' : 'Edit request and references' }}</span>
+                    <WorkspaceIcon name="arrow-right" :size="16" />
+                  </button>
                 </section>
                 <dl class="quote-summary">
                   <div><dt>{{ zh ? '预计' : 'Estimate' }}</dt><dd>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</dd></div>
@@ -997,7 +1000,11 @@ onBeforeUnmount(() => {
 .quote-scope { display: grid; gap: 7px; margin: 3px 0 9px; }
 .quote-scope > b { color: var(--text); font-size: 13px; font-weight: 600; }
 .quote-scope p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
-.quote-scope button { justify-self: start; min-height: 36px; padding: 7px 10px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface-raised); font-size: 13px; cursor: pointer; }
-.quote-scope button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-@media (max-width: 799px) { .quote-scope button { min-height: 44px; } }
+.quote-edit { display: inline-flex; align-items: center; justify-self: start; gap: 8px; margin-inline-start: -10px; max-width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; color: var(--muted); border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; font-weight: 500; line-height: 20px; text-align: left; cursor: pointer; }
+.quote-edit > span { min-width: 0; overflow-wrap: anywhere; }
+.quote-edit:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.quote-edit:active:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.quote-edit:disabled { opacity: .45; cursor: not-allowed; }
+@media (hover: hover) and (pointer: fine) { .quote-edit:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .quote-edit { min-height: 44px; } }
 </style>

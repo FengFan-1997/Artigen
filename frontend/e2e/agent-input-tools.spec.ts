@@ -518,3 +518,34 @@ test('mobile approval and child controls retain their 44px targets after replaci
   expect(childBox!.width).toBeGreaterThanOrEqual(44);
   expect(childBox!.height).toBeGreaterThanOrEqual(44);
 });
+
+for (const language of ['zh', 'en']) {
+  test(`quote edit action keeps references and requires an explicit new quote ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installAgentInputFixture(page, { inspector: false });
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/artigen/agent'); await references(page, ['brief.txt', 'notes.txt']);
+    const request = '整理品牌网站证据，交付 PDF 报告。';
+    const input = page.getByRole('textbox', { name: zh ? '任务目标' : 'Task objective', exact: true });
+    await input.fill(request);
+    const send = page.getByRole('button', { name: zh ? '发送任务目标' : 'Send task objective', exact: true });
+    await send.click();
+    const scope = page.locator('.quote-scope');
+    const edit = scope.getByRole('button', { name: zh ? '修改要求与附件' : 'Edit request and references', exact: true });
+    await expect(scope).toContainText('brief.txt · notes.txt'); await expect(edit).toBeEnabled();
+    await expect(edit.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+    expect((await edit.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await edit.focus(); await edit.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(edit).toBeFocused();
+    expect(await edit.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await edit.press('Enter');
+    await expect(input).toBeFocused(); await expect(input).toHaveValue(request);
+    await expect(page.locator('.quote-summary')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: zh ? '确认并运行' : 'Confirm and run', exact: true })).toHaveCount(0);
+    await expect(page.locator('.attachment-list > span')).toHaveCount(2);
+    expect(fixture.state.quotes).toHaveLength(1); expect(fixture.state.uploads).toBe(0); expect(fixture.state.creates).toHaveLength(0);
+    await input.fill(request + '保留引用来源。'); await send.click();
+    await expect(edit).toBeVisible(); await expect(scope).toContainText('brief.txt · notes.txt');
+    expect(fixture.state.quotes).toHaveLength(2); expect(fixture.state.uploads).toBe(0); expect(fixture.state.creates).toHaveLength(0);
+    await expect(input).toHaveValue(request + '保留引用来源。');
+  });
+}
