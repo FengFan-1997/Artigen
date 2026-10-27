@@ -2552,3 +2552,53 @@ for (const language of ['zh', 'en']) {
     expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`image decode failures keep original downloads and other document state intact ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = Buffer.from('not a PNG\n保留原始字节\u0000\u0001'); let broken = true;
+    let reads = 0;
+    await page.route('**/api/assets/80000000-0000-4000-8000-000000000004', route => {
+      reads++;
+      return broken ? route.fulfill({ contentType: 'image/png', body: original }) : route.fallback();
+    });
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的图片检查意见');
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'outputs', exact: true }).click();
+    await tree.getByRole('button', { name: 'preview.png', exact: true }).click();
+    const viewer = page.locator('.image-viewer'), error = viewer.getByRole('status');
+    await expect(error.getByRole('heading', { name: zh ? '图片暂时无法预览' : 'Image preview unavailable' })).toBeVisible();
+    await expect(viewer.locator('img,.image-controls,.image-canvas')).toHaveCount(0);
+    await expect(error.locator('button,a')).toHaveCount(0);
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: zh ? '下载 preview.png' : 'Download preview.png', exact: true }).click();
+    const download = await downloaded; expect(download.suggestedFilename()).toBe('preview.png');
+    const stream = await download.createReadStream(); expect(stream).not.toBeNull();
+    const chunks: Buffer[] = []; for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(original); await download.delete();
+    if (await page.locator('.tree-toggle').getAttribute('aria-pressed') === 'false')
+      await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
+    await expect(viewer).toHaveCount(0);
+    await page.getByRole('tab', { name: 'preview.png', exact: true }).click();
+    await expect(error).toBeVisible(); expect(reads).toBe(1);
+    await page.getByRole('button', { name: zh ? '关闭 preview.png' : 'Close preview.png', exact: true }).click();
+    broken = false;
+    if (await page.locator('.tree-toggle').getAttribute('aria-pressed') === 'false')
+      await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    await tree.getByRole('button', { name: 'preview.png', exact: true }).click();
+    const image = viewer.locator('img'); await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(el => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect(error).toHaveCount(0);
+    await viewer.getByRole('button', { name: zh ? '放大图片' : 'Zoom in', exact: true }).click();
+    await expect(viewer.locator('.image-zoom-reset')).toHaveText('125%'); expect(reads).toBe(2);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的图片检查意见');
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
+  });
+}

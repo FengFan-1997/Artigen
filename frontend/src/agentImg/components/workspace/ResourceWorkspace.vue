@@ -227,35 +227,46 @@
               "
               class="image-viewer"
             >
-              <div class="image-controls" role="group" :aria-label="zh ? '图片缩放' : 'Image zoom'">
-                <button
-                  :aria-label="zh ? '缩小图片' : 'Zoom out'"
-                  :disabled="zoom <= 0.25"
-                  @click="zoom = Math.max(0.25, zoom - 0.25)"
-                >
-                  <WorkspaceIcon name="minus" :size="18" />
-                </button>
-                <button
-                  class="image-zoom-reset"
-                  :aria-label="zh ? `适合宽度，当前 ${Math.round(zoom * 100)}%` : `Fit to width, currently ${Math.round(zoom * 100)}%`"
-                  :title="zh ? '适合宽度' : 'Fit to width'"
-                  @click="zoom = 1"
-                >{{ Math.round(zoom * 100) }}%</button>
-                <button
-                  :aria-label="zh ? '放大图片' : 'Zoom in'"
-                  :disabled="zoom >= 4"
-                  @click="zoom = Math.min(4, zoom + 0.25)"
-                >
-                  <WorkspaceIcon name="plus" :size="18" />
-                </button>
+              <div v-if="active.imageError" class="image-preview-error" role="status">
+                <WorkspaceIcon name="image" :size="20" />
+                <div>
+                  <h2>{{ zh ? '图片暂时无法预览' : 'Image preview unavailable' }}</h2>
+                  <p>{{ zh ? '可以使用上方下载按钮，下载原文件后打开。' : 'Use Download above to open the original file on your device.' }}</p>
+                </div>
               </div>
-              <div class="image-canvas">
-                <img
-                  :src="active.objectUrl"
-                  :alt="filename(active.file.path)"
-                  :style="{ width: 100 * zoom + '%', maxWidth: zoom === 1 ? '100%' : 'none' }"
-                />
-              </div>
+              <template v-else>
+                <div class="image-controls" role="group" :aria-label="zh ? '图片缩放' : 'Image zoom'">
+                  <button
+                    :aria-label="zh ? '缩小图片' : 'Zoom out'"
+                    :disabled="zoom <= 0.25"
+                    @click="zoom = Math.max(0.25, zoom - 0.25)"
+                  >
+                    <WorkspaceIcon name="minus" :size="18" />
+                  </button>
+                  <button
+                    class="image-zoom-reset"
+                    :aria-label="zh ? `适合宽度，当前 ${Math.round(zoom * 100)}%` : `Fit to width, currently ${Math.round(zoom * 100)}%`"
+                    :title="zh ? '适合宽度' : 'Fit to width'"
+                    @click="zoom = 1"
+                  >{{ Math.round(zoom * 100) }}%</button>
+                  <button
+                    :aria-label="zh ? '放大图片' : 'Zoom in'"
+                    :disabled="zoom >= 4"
+                    @click="zoom = Math.min(4, zoom + 0.25)"
+                  >
+                    <WorkspaceIcon name="plus" :size="18" />
+                  </button>
+                </div>
+                <div class="image-canvas">
+                  <img
+                    :key="active.objectUrl"
+                    :src="active.objectUrl"
+                    :alt="filename(active.file.path)"
+                    @error="imagePreviewFailed"
+                    :style="{ width: 100 * zoom + '%', maxWidth: zoom === 1 ? '100%' : 'none' }"
+                  />
+                </div>
+              </template>
             </div>
             <WorkspacePdf
               v-else-if="active.file.mimeType === 'application/pdf' && active.blob"
@@ -519,6 +530,7 @@ type Document = {
   view: 'preview' | 'source';
   loading: boolean;
   error: string;
+  imageError: boolean;
   undo?: string;
   draftTimer?: ReturnType<typeof setTimeout>;
 };
@@ -827,7 +839,8 @@ async function openFile(file: WorkspaceFile, handle?: LocalFile) {
     baselineHash: '',
     view: 'preview',
     loading: false,
-    error: ''
+    error: '',
+    imageError: false
   });
   documents.value.push(doc);
   activeKey.value = key;
@@ -848,6 +861,7 @@ async function reloadDocument(doc: Document) {
   const current = scope();
   doc.loading = true;
   doc.error = '';
+  doc.imageError = false;
   try {
     let blob: Blob;
     let text: string | undefined;
@@ -925,6 +939,11 @@ async function reloadDocument(doc: Document) {
       }
     }
   }
+}
+function imagePreviewFailed(event: Event) {
+  const url = (event.currentTarget as HTMLImageElement).src;
+  const doc = documents.value.find((item) => item.objectUrl === url);
+  if (doc) doc.imageError = true;
 }
 const keyForDraft = (doc: Document) => ':' + doc.key;
 async function flushDraft(doc: Document) {
@@ -1811,6 +1830,10 @@ button:disabled {
   min-height: 0;
   overflow: hidden;
 }
+.image-preview-error { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 12px; margin: 24px; text-align: left; }
+.image-preview-error > .workspace-icon { margin-top: 1px; color: var(--muted); }
+.image-preview-error h2 { margin: 0; color: var(--text); font-size: 15px; font-weight: 500; line-height: 22px; overflow-wrap: anywhere; }
+.image-preview-error p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .image-controls {
   display: flex;
   flex: none;
