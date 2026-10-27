@@ -2602,3 +2602,99 @@ for (const language of ['zh', 'en']) {
     expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub pagination keeps read content and retries the same record and patch page ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const reads: Record<string, number[]> = {}; const writes: string[] = [];
+    let release: (() => void) | undefined;
+    page.on('request', req => { if (req.url().includes('/github') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(/\/github\/(pulls|commits|pull-files|commit)\?/, async route => {
+      const url = new URL(route.request().url()), endpoint = url.pathname.split('/').pop()!;
+      const n = Number(url.searchParams.get('page'));
+      const pages = reads[endpoint] ||= []; pages.push(n);
+      if (n === 2 && pages.filter(p => p === 2).length === 1)
+        return route.fulfill({ status: 503, json: { error: { code: 'GITHUB_UNAVAILABLE' } } });
+      if (n === 2) await new Promise<void>(resolve => { release = resolve; });
+      const patch = endpoint === 'pull-files' || endpoint === 'commit';
+      const item = patch ? { filename: `src/Review${n}.vue`, additions: n, deletions: 0, patch: `@@ -0 +1 @@\n+<button>Review ${n}</button>` }
+        : { ...(endpoint === 'pulls' ? { number: n, state: 'open' } : { sha: 'a'.repeat(39) + n }), title: `Read-only review ${n}`, url: 'https://github.com/example/brand-site', updatedAt: '2026-10-15T03:00:00Z' };
+      return route.fulfill({ json: { items: [item], hasMore: n === 1 } });
+    });
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的审查意见');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace'); const notice = root.locator(':scope > p[role=status]');
+    for (const kind of ['pulls', 'commits']) {
+      if (kind === 'commits') await root.getByRole('button', { name: zh ? '提交' : 'Commits', exact: true }).click();
+      const records = root.locator('.github-records'), recordMore = records.locator('.github-load-more');
+      await expect(records.locator('.git-record')).toHaveCount(1); await expect(recordMore).toBeEnabled();
+      await recordMore.focus(); await recordMore.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(recordMore).toBeFocused();
+      expect(await recordMore.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+      await recordMore.press('Enter');
+      await expect(notice).toContainText(zh ? '读取失败' : 'Request failed');
+      await expect(records.locator('.git-record')).toHaveCount(1); await expect(recordMore).toBeEnabled();
+      await recordMore.click(); await expect.poll(() => Boolean(release)).toBe(true);
+      await expect(recordMore).toBeDisabled(); await expect(recordMore).toHaveAttribute('aria-busy', 'true');
+      await expect(recordMore).toHaveText(zh ? '正在读取更多…' : 'Loading more…');
+      await expect(notice).toHaveCount(0); await expect(records.getByRole('status')).toHaveCount(0);
+      await expect(records.locator('.git-record')).toHaveCount(1);
+      await recordMore.evaluate(el => (el as HTMLButtonElement).click()); expect(reads[kind]).toEqual([1, 2, 2]);
+      release!(); release = undefined;
+      await expect(records.locator('.git-record')).toHaveCount(2); await expect(recordMore).toHaveCount(0);
+      await records.locator('.git-record').first().click();
+      const detail = root.locator('.github-record-detail'), patchMore = detail.locator('.github-load-more');
+      await expect(detail.locator('details')).toHaveCount(1); await expect(patchMore).toBeEnabled();
+      await patchMore.click(); await expect(notice).toContainText(zh ? '读取失败' : 'Request failed');
+      await expect(detail.locator('details')).toHaveCount(1); await expect(patchMore).toBeEnabled();
+      await patchMore.click(); await expect.poll(() => Boolean(release)).toBe(true);
+      await expect(patchMore).toBeDisabled(); await expect(patchMore).toHaveAttribute('aria-busy', 'true');
+      await expect(patchMore).toHaveText(zh ? '正在读取更多文件…' : 'Loading more files…'); await expect(notice).toHaveCount(0);
+      const key = kind === 'pulls' ? 'pull-files' : 'commit'; expect(reads[key]).toEqual([1, 2, 2]);
+      release!(); release = undefined;
+      await expect(detail.locator('details')).toHaveCount(2); await expect(patchMore).toHaveCount(0); await expect(notice).toHaveCount(0);
+      await detail.locator('summary').last().press('Enter');
+      await expect(detail.locator('pre').last()).toHaveText('@@ -0 +1 @@\n+<button>Review 2</button>'); await expect(detail.locator('pre button')).toHaveCount(0);
+      await root.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true }).click();
+      await expect(records.locator('.git-record')).toHaveCount(2);
+    }
+    expect(writes).toEqual([]); expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的审查意见');
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub initial reload failures do not expose stale pagination ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    let failRecords = false, failPatches = false;
+    await page.route('**/github/pulls?*', route => failRecords
+      ? route.fulfill({ status: 503, json: { error: { code: 'GITHUB_UNAVAILABLE' } } })
+      : route.fulfill({ json: { items: [{ number: 1, title: 'Review records', state: 'open', url: 'https://github.com/example/brand-site/pull/1' }], hasMore: true } }));
+    await page.route('**/github/pull-files?*', route => failPatches
+      ? route.fulfill({ status: 503, json: { error: { code: 'GITHUB_UNAVAILABLE' } } })
+      : route.fulfill({ json: { items: [{ filename: 'src/Home.vue', additions: 1, deletions: 0, patch: '+Review' }], hasMore: true } }));
+    await page.goto(runPath);
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace'), more = root.locator('.github-load-more');
+    const refresh = root.locator(':scope > header').getByRole('button', { name: zh ? '刷新' : 'Refresh', exact: true });
+    await expect(more).toBeVisible(); failRecords = true; await refresh.click();
+    await expect(root.getByRole('status')).toContainText(zh ? '读取失败' : 'Request failed');
+    await expect(root.locator('.git-record')).toHaveCount(0); await expect(more).toHaveCount(0);
+    failRecords = false; await refresh.click(); await expect(root.locator('.git-record')).toHaveCount(1);
+    await root.locator('.git-record').click(); await expect(more).toBeVisible();
+    await expect(root.locator('details')).toHaveCount(1);
+    await root.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true }).click();
+    failPatches = true; await root.locator('.git-record').click();
+    await expect(root.getByRole('status')).toContainText(zh ? '读取失败' : 'Request failed');
+    await expect(root.locator('details')).toHaveCount(0); await expect(more).toHaveCount(0);
+    expect(fixture.workspace.githubRequests.every(method => method === 'GET')).toBe(true);
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}

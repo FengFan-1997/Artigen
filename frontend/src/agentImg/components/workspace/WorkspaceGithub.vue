@@ -34,7 +34,7 @@
               {{ zh ? '提交' : 'Commits' }}
             </button>
           </nav>
-          <p v-if="busy" role="status">{{ zh ? '正在读取…' : 'Loading…' }}</p>
+          <p v-if="busy && !items.length" role="status">{{ zh ? '正在读取…' : 'Loading…' }}</p>
           <div v-else-if="!items.length && !notice" class="github-empty" role="status">
             <WorkspaceIcon name="git" :size="20" />
             <div>
@@ -59,8 +59,9 @@
                 · {{ item.updatedAt ? new Date(item.updatedAt).toLocaleDateString() : '' }}</small
               ></span
             ></button
-          ><button v-if="hasMore" :disabled="busy" @click="load(true)">
-            {{ zh ? '加载更多' : 'Load more' }}
+          ><button v-if="hasMore" class="github-load-more" type="button" :disabled="busy" :aria-busy="busy" @click="load(true)">
+            <WorkspaceIcon name="chevron-down" :size="16" />
+            <span>{{ busy ? (zh ? '正在读取更多…' : 'Loading more…') : (zh ? '加载更多' : 'Load more') }}</span>
           </button>
         </div>
         <section v-if="selected" class="github-record-detail">
@@ -86,8 +87,9 @@
               file.patch || (zh ? '此文件没有可用文本差异。' : 'No text patch is available.')
             }}</pre>
           </details>
-          <button v-if="patchMore" :disabled="busy" @click="loadPatch(true)">
-            {{ zh ? '加载更多文件' : 'Load more files' }}
+          <button v-if="patchMore" class="github-load-more" type="button" :disabled="busy" :aria-busy="busy" @click="loadPatch(true)">
+            <WorkspaceIcon name="chevron-down" :size="16" />
+            <span>{{ busy ? (zh ? '正在读取更多文件…' : 'Loading more files…') : (zh ? '加载更多文件' : 'Load more files') }}</span>
           </button>
         </section>
       </template></template
@@ -242,6 +244,7 @@ async function unlink() {
   }
 }
 async function load(append = false) {
+  if (!append) hasMore.value = false;
   const ticket = ++revision;
   const currentPage = append ? page + 1 : 1;
   busy.value = true;
@@ -278,12 +281,14 @@ const inspect = (item: RecordItem) => {
 };
 async function loadPatch(append = false) {
   if (!selected.value) return;
+  if (!append) patchMore.value = false;
   const ticket = ++revision;
   busy.value = true;
   const current = append ? patchPage + 1 : 1;
   const query = selected.value.number
     ? `pull-files?number=${selected.value.number}`
     : `commit?sha=${selected.value.sha}`;
+  notice.value = '';
   try {
     const result = await workspaceRequest<{ items: Patch[]; hasMore: boolean }>(
       endpoint() + `/${query}&page=${current}`
@@ -337,6 +342,12 @@ onBeforeUnmount(() => revision++);
   font: inherit;
   cursor: pointer;
 }
+.github-workspace .github-load-more { display: inline-flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; min-height: 36px; margin-top: 8px; padding: 7px 10px; background: transparent; color: var(--muted); font-size: 13px; line-height: 20px; text-align: left; }
+.github-load-more > span { min-width: 0; overflow-wrap: anywhere; }
+.github-load-more:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.github-load-more:disabled { cursor: progress; }
+@media (hover: hover) and (pointer: fine) { .github-workspace .github-load-more:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); } }
+@media (max-width: 799px), (pointer: coarse) { .github-workspace .github-load-more { min-height: 44px; } }
 .github-empty { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 12px; width: min(100%, 380px); margin-top: 24px; }
 .github-empty > .workspace-icon { margin-top: 1px; color: var(--muted); }
 .github-empty > div { display: grid; min-width: 0; gap: 10px; }
