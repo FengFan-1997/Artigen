@@ -19,10 +19,12 @@
 
 1. 安装 Git、Node.js 24、pnpm 10.33.0、Python 3、Docker Desktop，启动 Docker。用项目所有者授权的账号取得仓库，在持久目录检出 **DEV 当前部署的完整 SHA**；不要用会随临时任务清理的目录。API 的 `/api/meta.gitSha` 与 Render live deployment 都要核对。
 2. 在检出目录运行 `pnpm install --frozen-lockfile`，然后执行 `python3 -m venv backend/.venv-agent`、`backend/.venv-agent/bin/python -m pip install -r backend/agent_runtime/requirements.txt` 和 `backend/.venv-agent/bin/python -m pip check`。运行 `pnpm build:cua-image` 准备仓库固定的 CUA 镜像；构建过程需要网络和足够磁盘空间，失败时不得用不明镜像代替。
-3. 通过 macOS 钥匙串安全地为 `artigen-agent-dev-worker` 建立第 2 节列出的 DEV 条目，并将 DEV 外层访问口令放入项目既有的独立钥匙串条目。条目名和读取方式以当前 `backend/scripts/run-agent-worker-macos.js` 与账号报告为准；从真实运行环境检查所需的值，不复用生产凭据。
+3. 打开 macOS「钥匙串访问」，在登录钥匙串中为第 2 节每个所需变量创建通用密码条目：名称为 `artigen-agent-dev-worker`，账户为变量名，密码为该变量对应的值；DEV 外层访问口令使用名称 `Artigen Dev Access Password`、账户 `artigen-dev` 的独立条目。通过接管者认可的安全渠道逐项获取值，勿粘贴到聊天、终端历史或仓库。条目和读取方式以当前 `backend/scripts/run-agent-worker-macos.js` 与账号报告为准，不复用生产凭据。
 4. 核对系统到 DEV PostgreSQL 的严格 TLS、对象存储、模型服务和 Render 中继的网络访问。确认旧 Worker 已停止，且没有未完成的活动 Run、有效租约或不明预算占用后，按 [Agent 运维手册](../AGENT_OPERATIONS_RUNBOOK.zh-CN.md#工作目录丢失后的恢复)先前台运行 `pnpm --filter backend start:agent-worker:dev-mac` 并核验，然后退出前台进程并安装 DEV LaunchAgent：`pnpm --filter backend install:agent-worker:dev-mac`。按安装器输出加载并按需启动，DEV 默认不会开机自动运行。
 5. 检查 `/healthz`、受保护的 `/api/meta`、`/readyz` 和 `/api/agent/status`：API SHA 与 Worker checkout 相同，数据库迁移就绪，唯一 Worker 在线，model、browser、egress、desktop relay 就绪，队列和预算状态合理。以合成数据执行经批准的登录、项目、上传/回读和 Agent 文件交付，再验证下载与任务收尾。平台密钥存在、接口返回 200 或 Worker 心跳均不能代替真实链路。
 6. 失败时停止新 Worker，核对活动任务和租约后恢复旧配置；不能在两个 Worker 同时执行时强行切换。更改凭据、账号、平台或存放机制时，同步账号报告和受影响手册。
+
+安装 Docker Desktop 前核对其[许可证条件](https://docs.docker.com/subscription-billing/desktop-license/)；部分组织的商业用途需要付费订阅，个人或符合条件的小企业用途可免费使用。是否符合条件由实际使用方确认。
 
 ## Windows 使用与接手边界
 
