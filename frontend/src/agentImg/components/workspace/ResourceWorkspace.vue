@@ -145,7 +145,7 @@
               <p :id="`${comparisonPickerId}-description`">{{ comparisonDescription }}</p>
               <div v-if="candidateFiles.length" class="comparison-picker">
                 <label :for="comparisonPickerId">{{ zh ? '比较来源' : 'Comparison source' }}</label>
-                <select
+                <select class="workspace-select"
                   :id="comparisonPickerId"
                   :value="proposal?.candidateId || ''"
                   :title="comparisonSourceLabel"
@@ -318,7 +318,7 @@
                   {{ zh ? '查看变更' : 'View changes' }}</button
                 ><label v-if="versions.length" class="file-version-control">
                   <span>{{ zh ? '比较版本' : 'Compare version' }}</span>
-                  <select
+                  <select class="workspace-select"
                     :aria-label="zh ? '查看文件版本' : 'View file versions'"
                     @change="
                       ($event.target as HTMLSelectElement).value !== '' &&
@@ -1995,22 +1995,9 @@ button:disabled {
   padding-inline-start: 6px;
   white-space: nowrap;
 }
-.file-version-control select {
-  min-width: 82px;
-  max-width: 120px;
-  min-height: 30px;
-  font: inherit;
-  color: var(--text);
-  background: var(--surface-raised);
-  border: 0;
-  border-radius: 6px;
-  padding: 4px 6px;
-  cursor: pointer;
-}
-.file-version-control select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.file-version-control select { min-width: 82px; max-width: 120px; }
 @media (hover: hover) and (pointer: fine) {
-  .file-status button:hover:not(:disabled),
-  .file-version-control select:hover {
+  .file-status button:hover:not(:disabled) {
     color: var(--text);
     background: var(--surface-hover);
   }
@@ -2082,10 +2069,7 @@ button:disabled {
 }
 .comparison-picker { display: grid; min-width: 0; gap: 8px; padding: 10px 16px; }
 .comparison-picker label { color: var(--text); font-size: 13px; line-height: 20px; }
-.comparison-picker select { box-sizing: border-box; min-width: 0; width: 100%; max-width: 100%; min-height: 36px; padding: 7px 10px; color: var(--text); background: var(--surface-raised); border: 0; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
-.comparison-picker select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-@media (hover: hover) and (pointer: fine) { .comparison-picker select:hover { background: var(--surface-hover); } }
-@media (max-width: 799px), (pointer: coarse) { .comparison-picker select { min-height: 44px; font-size: 16px; } }
+.comparison-picker select { width: 100%; }
 .changes-panel > .workspace-code-editor {
   flex: 1 0 180px;
 }
@@ -2145,7 +2129,6 @@ button:disabled {
     min-width: 44px;
     min-height: 44px;
   }
-  .file-version-control select { font-size: 16px; }
   .file-toolbar {
     padding: 6px;
   }

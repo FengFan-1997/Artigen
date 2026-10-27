@@ -133,6 +133,9 @@ const run = {
 };
 
 const installCommonApi = async (page: Page, authenticated = true) => {
+  await page.route('**/api/workspace/navigation*', route => route.fulfill({ json: { ok: true, projects: [], sessions: [], nextCursor: null } }));
+  await page.route('**/api/agent-runs/*/messages*', route => route.fulfill({ json: { ok: true, messages: [], nextCursor: null } }));
+  await page.route('**/api/agent-runs/*/activity*', route => route.fulfill({ json: { ok: true, events: [] } }));
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: authenticated ? 200 : 401,
     contentType: 'application/json',
@@ -314,6 +317,7 @@ test('finishes the executor readiness check when the backend is unavailable', as
   await expect(page.getByText('服务暂时不可用，草稿会保留，请稍后重试。', { exact: true })).toBeVisible();
   await expect(page.getByText('正在检查执行器', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('navigation', { name: '资源面板', exact: true }).getByRole('button', { name: '任务', exact: true }).click();
   await expect(page.locator('.workspace-right').getByText('暂不可用', { exact: true })).toBeVisible();
 });
 
@@ -436,6 +440,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await expect(page.locator('.authorization-scope')).toContainText('https://brand.example');
   await expect(page.locator('.authorization-scope')).toContainText('发布');
   await expect(page.locator('.authorization-scope')).toContainText('30 分钟');
+  await page.getByRole('navigation', { name: '资源面板', exact: true }).getByRole('button', { name: '任务', exact: true }).click();
   const environment = page.locator('#workspace-panel-environment');
   await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
   await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
@@ -461,7 +466,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await expect(page.locator('.authorization-strip')).toHaveCount(0);
   await page.getByRole('button', { name: '折叠左栏' }).click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-collapsed/);
-  await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(64);
+  await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(0);
   const expandLeft = page.getByRole('button', { name: '展开左栏' });
   await expect(expandLeft).toBeVisible();
   await expect(expandLeft).toHaveAttribute('aria-expanded', 'false');
@@ -699,6 +704,7 @@ test('long messages and verified filenames remain readable without mobile overfl
   await page.goto(`/artigen/create?c=${conversationId}`);
   await expect(page.locator('.message-body').first()).toContainText('请保留品牌调性');
   await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('navigation', { name: '资源面板', exact: true }).getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('tab', { name: /文件/ }).click();
   await expect(page.locator('.file-panel')).toContainText(longFilename);
   await expectWorkspaceGeometry(page, { mobile: true });

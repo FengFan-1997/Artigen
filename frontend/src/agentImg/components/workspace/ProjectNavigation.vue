@@ -13,7 +13,7 @@
       /></label>
       <label
         >{{ zh ? '所属项目' : 'Project'
-        }}<select v-model="projectChoice">
+        }}<select class="workspace-select" v-model="projectChoice">
           <option value="">{{ zh ? '未归类' : 'Ungrouped' }}</option>
           <option v-for="p in projects" :key="p.projectId" :value="p.projectId">
             {{ p.title }}
@@ -423,8 +423,8 @@ button {
   font-size: 12px;
   line-height: 18px;
 }
-.session-editor input,
-.session-editor select {
+.session-editor select { width: 100%; }
+.session-editor input {
   box-sizing: border-box;
   min-width: 0;
   width: 100%;

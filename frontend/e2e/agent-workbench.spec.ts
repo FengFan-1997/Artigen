@@ -1032,7 +1032,7 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: /文件/ }).click();
   await expect(page.locator('#workspace-panel-files')).toContainText('artigen-design-audit.pdf');
-  await expect(page.locator('#workspace-panel-files')).toContainText('passed');
+  await expect(page.locator('#workspace-panel-files')).toContainText('验证通过');
   await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: '环境' }).click();
   await expect(page.locator('.workspace-topbar .task-cost')).toHaveText('已用 12.5 / 50 点');

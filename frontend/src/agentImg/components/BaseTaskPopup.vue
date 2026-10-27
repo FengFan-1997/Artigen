@@ -159,12 +159,14 @@ function onDialogKeydown(event: KeyboardEvent): void {
 }
 
 .header-left {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
 .header-icon {
+  flex: none;
   font-family: 'JetBrains Mono', monospace;
   border: 1px solid #fff;
   padding: 2px 6px;
@@ -174,6 +176,7 @@ function onDialogKeydown(event: KeyboardEvent): void {
 }
 
 .header-title {
+  overflow-wrap: anywhere;
   margin: 0;
   font-size: 18px;
   font-weight: 700;
@@ -201,12 +204,15 @@ function onDialogKeydown(event: KeyboardEvent): void {
 }
 
 .modal-body {
+  min-width: 0;
   display: flex;
   gap: 24px;
   height: 500px;
 }
 
 .config-panel {
+  box-sizing: border-box;
+  min-width: 0;
   width: 300px;
   background: #161616;
   border-radius: 8px;

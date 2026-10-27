@@ -230,9 +230,7 @@
             :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'"
             @keydown="onCommandInputKeydown"
           />
-          <button class="command-close" type="button" :aria-label="zh ? '关闭命令面板' : 'Close command palette'" :title="zh ? '关闭命令面板（Esc）' : 'Close command palette (Esc)'" @click="closeCommandPalette">
-            <WorkspaceIcon name="close" :size="18" />
-          </button>
+          <CloseButton class="command-close" :label="zh ? '关闭命令面板' : 'Close command palette'" :title="zh ? '关闭命令面板（Esc）' : 'Close command palette (Esc)'" @click="closeCommandPalette" />
         </div>
         <div id="workspace-command-options" role="listbox" :aria-label="zh ? '可用操作' : 'Available actions'">
           <button
@@ -265,6 +263,7 @@ import ProjectNavigation from './ProjectNavigation.vue';
 import ResourceWorkspace from './ResourceWorkspace.vue';
 import type { AgentArtifact } from '../../services/agentRuns';
 import WorkspaceIcon from './WorkspaceIcon.vue';
+import CloseButton from '../CloseButton.vue';
 
 type InspectorTab = 'environment' | 'plan' | 'subagents' | 'computer' | 'files';
 type ThemeMode = 'dark' | 'light' | 'system';
@@ -679,6 +678,29 @@ onBeforeUnmount(() => {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   text-align: left;
 }
+.agent-workspace-shell :deep(.workspace-select) {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-raised);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.agent-workspace-shell :deep(.workspace-select:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.agent-workspace-shell :deep(.workspace-select:disabled) { opacity: 0.5; cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .agent-workspace-shell :deep(.workspace-select:hover:not(:disabled)) { background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .agent-workspace-shell :deep(.workspace-select) { min-height: 44px; font-size: 16px; }
+}
 .agent-workspace-shell :deep(.workspace-user-bubble) {
   max-width: min(90%, 640px);
   padding: 14px 18px;
@@ -821,7 +843,6 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .command-search > svg { color:var(--muted); }
 .command-palette input { flex:1; min-width:0; border:0; outline:0; color:var(--text); font-size:13px; background:transparent; }
 .command-palette input:focus-visible { outline:0; }
-.command-close { display:grid; flex:none; place-items:center; width:32px; height:32px; padding:0; border:0; border-radius:6px; color:var(--muted); background:transparent; cursor:pointer; }
 .command-palette > [role='listbox'] { min-height:0; max-height:320px; overflow:auto; padding:6px; }
 .command-option { display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:10px; width:100%; align-items:start; min-height:48px; padding:7px 10px; border:0; border-radius:8px; color:var(--text); font:inherit; text-align:left; background:transparent; cursor:pointer; }
 .command-option[aria-selected='true'] { background:var(--surface-raised); }
@@ -832,11 +853,7 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .command-option small { color:var(--muted); font-size:var(--font-meta); line-height:18px; }
 .command-option > kbd { flex:none; white-space:nowrap; }
 @media (hover:hover) and (pointer:fine) {
-  .command-option:hover, .command-close:hover { background:var(--surface-raised); }
-  .command-close:hover { color:var(--text); }
-}
-@media (max-width:799px), (pointer:coarse) {
-  .command-close { width:44px; height:44px; }
+  .command-option:hover { background:var(--surface-raised); }
 }
 .command-palette kbd { display: inline-flex; min-width: 22px; min-height: 22px; align-items: center; justify-content: center; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); }
 .command-empty { margin: 0; padding: 15px; color: var(--muted); font-size: var(--font-control); text-align: center; }

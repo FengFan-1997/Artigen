@@ -558,9 +558,11 @@ test('a short viewport keeps command actions and keyboard focus inside the dialo
   await expect(page.getByRole('dialog', { name: '命令面板' })).toBeVisible();
   const last = page.locator('.command-palette button').last();
   await last.focus();
-  expect(await hit(page, '.command-palette button:last-child')).toBe(true);
+  expect(await hit(page, '#workspace-command-options > .command-option:last-child')).toBe(true);
+  // Options use roving aria-activedescendant; the close button is the final Tab stop.
+  await page.locator('.command-close').focus();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('searchbox', { name: '搜索页面或动作' })).toBeFocused();
+  await expect(page.getByRole('combobox', { name: '搜索页面或动作' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });

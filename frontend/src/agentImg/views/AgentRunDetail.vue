@@ -331,7 +331,7 @@
     </template>
 
     <dialog v-if="previewHtml" ref="previewModal" class="preview-modal" aria-modal="true" aria-labelledby="preview-modal-title" @keydown.stop @cancel.prevent="closePreview">
-      <header><strong id="preview-modal-title" :title="previewName">{{ previewName }}</strong><button ref="previewCloseButton" type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
+      <header><strong id="preview-modal-title" :title="previewName">{{ previewName }}</strong><CloseButton ref="previewCloseButton" :label="zh ? '关闭预览' : 'Close preview'" @click="closePreview" /></header>
       <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
     </dialog>
   </AgentWorkspaceShell>
@@ -349,6 +349,7 @@ import { approvalIsAvailable, useAgentApprovals } from '../composables/useAgentA
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import CloseButton from '../components/CloseButton.vue';
 import MessageTimestamp from '../components/workspace/MessageTimestamp.vue';
 import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
 import ExpiredApprovalsNotice from '../components/workspace/ExpiredApprovalsNotice.vue';
@@ -431,7 +432,7 @@ const desktopScreen = ref<HTMLDivElement | null>(null);
 const previewHtml = ref('');
 const previewName = ref('');
 const previewModal = ref<HTMLDialogElement | null>(null);
-const previewCloseButton = ref<HTMLButtonElement | null>(null);
+const previewCloseButton = ref<InstanceType<typeof CloseButton> | null>(null);
 let previewReturnFocus: HTMLElement | null = null;
 let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
@@ -1290,10 +1291,8 @@ onBeforeUnmount(() => {
 .preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto minmax(0, 1fr); box-sizing: border-box; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0; overflow: hidden; color: var(--text); border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
 .preview-modal:not([open]) { display: none; }
 .preview-modal::backdrop { background: rgb(0 0 0 / 25%); }
-.preview-modal header { display: flex; box-sizing: border-box; min-width: 0; min-height: 52px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.preview-modal header { display: flex; box-sizing: border-box; min-width: 0; min-height: 52px; align-items: center; gap: 12px; padding: 4px 12px; border-bottom: 1px solid var(--border); }
 .preview-modal header strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
-.preview-modal header button { display: grid; flex: 0 0 auto; width: 32px; height: 32px; padding: 0; place-items: center; color: var(--muted); border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
-.preview-modal header button:hover { color: var(--text); background: var(--surface); }
 .preview-modal iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: #fff; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 

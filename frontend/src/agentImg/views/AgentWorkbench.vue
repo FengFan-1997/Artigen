@@ -172,7 +172,7 @@
             <small id="agent-origin-help">{{ zh ? '填写完整 HTTPS 站点，不含路径；多个站点用逗号分隔。' : 'Use HTTPS origins without paths. Separate sites with commas.' }}</small>
             <label><input v-model="form.persistSession" name="persist-browser-session" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
             <label v-if="browserProfiles.length" for="agent-browser-profile">{{ zh ? '恢复已保存的会话' : 'Restore saved session' }}</label>
-            <select v-if="browserProfiles.length" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
+            <select class="workspace-select" v-if="browserProfiles.length" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
               <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
               <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
             </select>
@@ -928,8 +928,8 @@ onBeforeUnmount(() => {
 .runtime-settings { padding-inline: 0; }
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
-.browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
-.browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.browser-scope > input { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
+.browser-scope > input:focus-visible, .budget-range:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
 .text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
 .budget-card header { margin-bottom: 2px; }
@@ -964,7 +964,7 @@ onBeforeUnmount(() => {
 .capability-list label { align-items: center; min-height: 44px; }
 @media (max-width: 800px) {
   .agent-conversation:not(.active) { align-content: start; padding-block: 32px 24px; }
-  .browser-scope > input,.browser-scope select { min-height: 44px; font-size: 16px; }
+  .browser-scope > input { min-height: 44px; font-size: 16px; }
   .conversation-empty { padding-bottom: 8px; }
   .conversation-empty h1 { font-size: 26px; }
   .conversation-empty > p, .conversation-message p { font-size: 14px; }

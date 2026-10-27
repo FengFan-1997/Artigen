@@ -17,14 +17,10 @@
         <div class="section-title">{{ ui.sectionTitle }}</div>
 
         <div class="form-item">
-          <label>{{ ui.typeLabel }}</label>
-          <div class="select-wrapper">
-            <CyberDropdown
-              v-model="selectedType"
-              :options="photoTypes"
-              @change="(val) => trackEvent('ID_Photo', 'select_type', val)"
-            />
-          </div>
+          <label :for="styleId">{{ ui.typeLabel }}</label>
+          <select :id="styleId" v-model="selectedType" class="portrait-style" @change="trackEvent('ID_Photo', 'select_type', selectedType)">
+            <option v-for="option in photoTypes" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
         </div>
 
         <div class="type-desc">
@@ -85,13 +81,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import CyberDropdown from './CyberDropdown.vue';
+import { computed, ref, watch, useId } from 'vue';
 import BaseTaskPopup from './BaseTaskPopup.vue';
 import { trackEvent } from '../../utils/analytics';
 import { useLanguageStore } from '@/stores/language';
 import { storeToRefs } from 'pinia';
 
+const styleId = useId();
 const props = defineProps<{
   visible: boolean;
   creditsCost?: number;
@@ -237,8 +233,20 @@ const handleGenerate = () => {
   margin-bottom: 8px;
 }
 
-.select-wrapper {
-  position: relative;
+.portrait-style {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: #fff;
+  color-scheme: dark;
+  background: #202020;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
 }
 
 .type-desc {

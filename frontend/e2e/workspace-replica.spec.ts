@@ -1801,6 +1801,7 @@ test('new text file form clears when project or account scope changes', async ({
   const form = page.getByRole('form', { name: '新建文本文件', exact: true });
   await trigger.click();
   await form.getByRole('textbox').fill('notes/project-a.md');
+  await page.getByRole('button', { name: '夏日视觉', exact: true }).hover();
   await page.getByRole('button', { name: '在夏日视觉中新建会话', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`projectId=${projectB}`));
   await expect(form).toHaveCount(0);

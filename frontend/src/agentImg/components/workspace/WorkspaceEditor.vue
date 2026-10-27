@@ -104,7 +104,12 @@ async function mountEditor() {
     ])
   ];
   if (props.compareTo !== undefined) {
-    const readonly = [...extensions, EditorState.readOnly.of(true), EditorView.editable.of(false)];
+    const readonly = [
+      ...extensions,
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorView.contentAttributes.of({ tabindex: '0', 'aria-readonly': 'true' })
+    ];
     merge = new MergeView({
       parent: host.value,
       a: { doc: props.compareTo, extensions: readonly },
