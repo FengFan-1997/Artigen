@@ -79,7 +79,7 @@
           </div>
         </section>
         <article class="message user-message workspace-user-bubble">
-          <header><span>{{ zh ? '你' : 'You' }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
+          <header><span>{{ zh ? '你' : 'You' }}</span><MessageTimestamp :value="run.createdAt" :zh="zh" /></header>
           <p :id="objectiveTextId" ref="objectiveText" class="objective-text" :class="{ 'objective-expanded': objectiveExpanded }" :style="{ '--objective-preview-lines': objectivePreviewLines }">{{ run.objective }}</p>
           <button v-if="objectiveOverflow" class="objective-toggle" type="button" :aria-expanded="objectiveExpanded" :aria-controls="objectiveTextId" @click="toggleObjective">{{ objectiveExpanded ? (zh ? '收起' : 'Show less') : (zh ? '显示更多' : 'Show more') }}<WorkspaceIcon name="chevron-down" :size="16" /></button>
         </article>
@@ -347,6 +347,7 @@ import { approvalIsAvailable, useAgentApprovals } from '../composables/useAgentA
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import MessageTimestamp from '../components/workspace/MessageTimestamp.vue';
 import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
 import ExpiredApprovalsNotice from '../components/workspace/ExpiredApprovalsNotice.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
@@ -1119,7 +1120,7 @@ onBeforeUnmount(() => {
 .message { margin-bottom: 26px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 .message header span { font-size: 12px; font-weight: 700; }
-.message header time, .message header small { color: var(--muted-2); font-size: 12px; }
+.event-message header time, .message header small { color: var(--muted-2); font-size: 12px; }
 .message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.72; white-space: pre-wrap; }
 .user-message { margin-left: auto; }
 .user-message header { justify-content: flex-end; }

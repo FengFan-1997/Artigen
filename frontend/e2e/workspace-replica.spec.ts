@@ -2698,3 +2698,45 @@ for (const language of ['zh', 'en']) {
     expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
   });
 }
+
+for (const language of ['zh', 'en']) for (const timezoneId of ['Asia/Shanghai', 'America/Los_Angeles']) {
+  test(`public message timestamps keep full dates with compact local clocks ${language} ${timezoneId}`, async ({ browser }) => {
+    const zh = language === 'zh';
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId, isMobile: true, hasTouch: true });
+    try {
+      const page = await context.newPage(); const fixture = await installWorkspaceFixture(page);
+      if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+      const stamp = '2026-10-15T03:04:05Z'; fixture.state.run.createdAt = stamp;
+      const messages = [
+        { id: 'clock-first', role: 'assistant', kind: 'commentary', text: '第一天的原始消息。', createdAt: stamp },
+        { id: 'clock-second', role: 'user', kind: 'text', text: '第二天的补充内容。', createdAt: '2026-10-16T03:04:05Z' },
+        { id: 'clock-invalid', role: 'assistant', kind: 'commentary', text: '没有有效时间的旧记录仍保留。', createdAt: 'invalid-date' }
+      ];
+      await page.route(`**/api/agent-runs/${inputRunId}/messages*`, route => route.fulfill({ json: { messages, nextCursor: null } }));
+      await page.goto(runPath);
+      const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的时间核对意见');
+      const objectiveTime = page.locator('article.message.user-message > header time');
+      const clock = page.locator('.timeline-message').filter({ hasText: '第一天的原始消息。' }).locator('header time');
+      const expected = await page.evaluate(({ stamp, zh }) => {
+        const d = new Date(stamp), locale = zh ? 'zh-CN' : 'en-US';
+        return { short: d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }), full: d.toLocaleString(locale, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }) };
+      }, { stamp, zh });
+      await expect(objectiveTime).toHaveText(expected.short); await expect(clock).toHaveText(expected.short);
+      for (const time of [objectiveTime, clock]) {
+        await expect(time).toHaveAttribute('datetime', stamp); await expect(time).toHaveAttribute('title', expected.full);
+        expect(await time.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('nowrap');
+        expect(await time.evaluate(el => getComputedStyle(el).fontVariantNumeric)).toBe('tabular-nums');
+      }
+      const nextDay = page.locator('.timeline-message').filter({ hasText: '第二天的补充内容。' }).locator('header time');
+      await expect(nextDay).toHaveText(expected.short); expect(await nextDay.getAttribute('title')).not.toBe(expected.full);
+      const invalid = page.locator('.timeline-message').filter({ hasText: '没有有效时间的旧记录仍保留。' }).locator('header time');
+      await expect(invalid).toHaveText('—'); await expect(invalid).not.toHaveAttribute('datetime');
+      await expect(invalid).toHaveAttribute('title', zh ? '时间不可用' : 'Time unavailable');
+      await expect(page.locator('.timeline-message .workspace-markdown')).toHaveText(messages.map(m => m.text));
+      await expect(page.locator('.timeline-message .copy-message')).toHaveCount(3);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await expect(draft).toHaveValue('保留未发送的时间核对意见');
+      expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
+    } finally { await context.close(); }
+  });
+}

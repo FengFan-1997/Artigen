@@ -12,12 +12,7 @@
       ><article v-if="row.kind === 'message'" class="timeline-message" :class="[row.message.role, { 'workspace-user-bubble': row.message.role === 'user' }]">
         <header>
           <span>{{ row.message.role === 'user' ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span
-          ><time>{{
-            new Date(row.message.createdAt).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', {
-              hour: '2-digit',
-              minute: '2-digit'
-            })
-          }}</time>
+          ><MessageTimestamp :value="row.message.createdAt" :zh="zh" />
           <button
             class="copy-message"
             type="button"
@@ -48,6 +43,7 @@ import { getCurrentUserId } from '@/login/session';
 const WorkspaceMarkdown = defineAsyncComponent(() => import('./WorkspaceMarkdown.vue'));
 import AgentActivity from './AgentActivity.vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
+import MessageTimestamp from './MessageTimestamp.vue';
 import { buildAgentActivity } from '../../utils/agentActivity';
 import {
   getRunMessages,
