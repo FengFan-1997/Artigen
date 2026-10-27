@@ -24,6 +24,7 @@
 | [`PRODUCTION_RUNBOOK.zh-CN.md`](../PRODUCTION_RUNBOOK.zh-CN.md) | 生产发布、核验、排障、备份和回滚 |
 | [`RELEASE_V0_CHECKLIST.zh-CN.md`](./RELEASE_V0_CHECKLIST.zh-CN.md) | 邀请制 Web Beta 的能力范围、提交门禁、部署 smoke 和恢复验收 |
 | [`AGENT_OPERATIONS_RUNBOOK.zh-CN.md`](../AGENT_OPERATIONS_RUNBOOK.zh-CN.md) | Mac Worker、Docker/CUA、状态、清理和 Runtime 验收 |
+| [`WORKER_DEVICE_HANDOFF.zh-CN.md`](./WORKER_DEVICE_HANDOFF.zh-CN.md) | 换电脑前的账号接管、Mac Worker 恢复和 Windows 边界 |
 | [`AGENT_BROWSER_SECURITY_MODEL.zh-CN.md`](../AGENT_BROWSER_SECURITY_MODEL.zh-CN.md) | 浏览器 Agent 威胁模型与安全不变量 |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | 分支、提交、Review、门禁和 Handoff 纪律 |
 | [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md) | 直接运行时依赖、许可证和来源 |

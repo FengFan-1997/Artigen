@@ -165,7 +165,8 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
     }
     const agentExecution = planned.executions.at(-1);
     assert.equal(agentExecution.routeKind, 'agent_run');
-    assert.equal(agentExecution.plan.taskSpec.goal, '调研公开资料，制作机密新品报告和演示文稿');
+    assert.match(agentExecution.plan.taskSpec.goal, /^调研公开资料，制作机密新品报告和演示文稿/u);
+    assert.match(agentExecution.plan.taskSpec.goal, /\[用户\] 为新款柚子气泡水生成一张夏日主视觉/u);
     assert.deepEqual(agentExecution.plan.taskSpec.deliverables, ['report', 'presentation']);
     const plannerRequests = capturedModelRequests.filter((request) => request.phase === 'planner');
     assert.equal(plannerRequests.length, 2);
@@ -222,6 +223,64 @@ test('PostgreSQL conversation lifecycle encrypts, isolates, plans, authorizes an
       await pool.query('DELETE FROM design_conversations WHERE id=$1', [conversationId]).catch(() => {});
     }
     await pool.query('DELETE FROM users WHERE id=ANY($1::uuid[])', [[userA, userB]]).catch(() => {});
+    await pool.end();
+  }
+});
+
+test('expired final planning attempt becomes retryable once without calling the model', {
+  skip: !enabled
+}, async () => {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const inserted = await pool.query(
+    `INSERT INTO users (legacy_user_id,display_name,status)
+     VALUES ($1,$2,'active') RETURNING id`,
+    [`design-expired-${suffix}`, 'Design expired lease']
+  );
+  const userId = inserted.rows[0].id;
+  const env = {
+    ...process.env,
+    DESIGN_CONVERSATION_ENABLED: 'true',
+    DESIGN_CONVERSATION_WORKER_ENABLED: 'false',
+    AGENT_PAYLOAD_ENCRYPTION_KEY: `hex:${'75'.repeat(32)}`
+  };
+  const setup = createDesignConversationService({ pool, env });
+  let calls = 0;
+  const workerEnv = { ...env, DESIGN_CONVERSATION_WORKER_ENABLED: 'true' };
+  const workers = ['a', 'b'].map((name) => createDesignConversationService({
+    pool, env: workerEnv, workerId: `expired-${name}:${suffix}`,
+    chatGenerate: async () => { calls += 1; throw new Error('unexpected model call'); }
+  }));
+  let conversationId;
+  try {
+    const conversation = await setup.createConversation({ userId });
+    conversationId = conversation.conversationId;
+    const message = await setup.addMessage({ userId, conversationId, message: '测试过期租约', attachments: [] });
+    await pool.query(
+      `UPDATE design_planning_jobs SET status='running',attempt_count=3,
+       lease_owner='live-worker',lease_expires_at=clock_timestamp()+interval '1 minute'
+       WHERE message_id=$1`, [message.messageId]
+    );
+    await Promise.all(workers.map((worker) => worker.processNextJob()));
+    const live = await pool.query('SELECT status FROM design_planning_jobs WHERE message_id=$1', [message.messageId]);
+    assert.equal(live.rows[0].status, 'running');
+    await pool.query(
+      `UPDATE design_planning_jobs SET lease_owner='lost-worker',
+       lease_expires_at=clock_timestamp()-interval '1 minute' WHERE message_id=$1`, [message.messageId]
+    );
+    await Promise.all(workers.map((worker) => worker.processNextJob()));
+    const job = await pool.query('SELECT status,error_code FROM design_planning_jobs WHERE message_id=$1', [message.messageId]);
+    assert.deepEqual(job.rows[0], { status: 'failed', error_code: 'DESIGN_PLANNING_LEASE_EXPIRED' });
+    const hydrated = await setup.getConversation({ userId, conversationId });
+    const failures = hydrated.messages.filter((item) => item.kind === 'error');
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].retryableMessageId, message.messageId);
+    assert.equal(calls, 0);
+  } finally {
+    workers.forEach((worker) => worker.stopWorker());
+    setup.stopWorker();
+    if (conversationId) await pool.query('DELETE FROM design_conversations WHERE id=$1', [conversationId]).catch(() => {});
+    await pool.query('DELETE FROM users WHERE id=$1', [userId]).catch(() => {});
     await pool.end();
   }
 });
