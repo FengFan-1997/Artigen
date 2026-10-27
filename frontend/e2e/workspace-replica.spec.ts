@@ -2955,3 +2955,49 @@ for (const language of ['zh', 'en']) {
     } finally { release?.(); }
   });
 }
+
+for (const language of ['zh', 'en']) {
+  test(`native editor search keeps replace undo and close behavior in narrow panes ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 }); await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的文件查找要求');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click(); await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    const content = page.locator('.cm-content');
+    const original = 'alpha first\nalpha second\nAlpha third\nalphabet fourth';
+    await content.fill(original); await content.press('ControlOrMeta+f');
+    const panel = page.locator('.cm-search'); const find = panel.getByRole('textbox', { name: 'Find', exact: true });
+    await expect(find).toBeFocused(); await find.fill(''); await find.pressSequentially('alpha');
+    await expect(page.locator('.cm-searchMatch')).toHaveCount(4);
+    await panel.locator('button[name="next"]').click();
+    await expect(page.locator('.cm-line:has(.cm-searchMatch-selected)')).toHaveText('alpha first');
+    await panel.locator('button[name="prev"]').click();
+    await expect(page.locator('.cm-line:has(.cm-searchMatch-selected)')).toHaveText('alphabet fourth');
+    await panel.locator('input[name="case"]').check(); await expect(page.locator('.cm-searchMatch')).toHaveCount(3);
+    await panel.locator('input[name="word"]').check(); await expect(page.locator('.cm-searchMatch')).toHaveCount(2);
+    await panel.locator('input[name="word"]').uncheck(); await panel.locator('input[name="case"]').uncheck();
+    const replacement = panel.getByRole('textbox', { name: 'Replace', exact: true }); await replacement.fill(''); await replacement.pressSequentially('omega');
+    await panel.locator('button[name="replaceAll"]').click();
+    await expect(content.locator('.cm-line')).toHaveText(['omega first','omega second','omega third','omegabet fourth']);
+    const close = panel.getByRole('button', { name: 'close', exact: true }); await close.click();
+    await expect(panel).toHaveCount(0); await expect(content).toBeFocused();
+    await content.press('ControlOrMeta+z'); await expect(content.locator('.cm-line')).toHaveText(original.split('\n'));
+    await content.press('ControlOrMeta+Shift+z'); await expect(content.locator('.cm-line').first()).toHaveText('omega first');
+    await content.press('ControlOrMeta+z'); await content.press('ControlOrMeta+f');
+    await expect(find).toHaveValue('alpha'); await find.press('Escape');
+    await expect(panel).toHaveCount(0); await expect(content).toBeFocused();
+    // The same layout must fit each read-only MergeView column too.
+    await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
+    const compare = page.locator('.cm-mergeView'); await expect(compare).toBeVisible();
+    for (const pane of await compare.locator('.cm-content').all()) await expect(pane).toHaveAttribute('contenteditable', 'false');
+    expect(await compare.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的文件查找要求');
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
