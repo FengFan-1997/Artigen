@@ -330,7 +330,7 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   workspace.conflict = false;
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await resources(page, '变更');
-  await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
+  await page.getByLabel('比较来源').selectOption('66666666-6666-4666-8666-666666666666');
   await expect(page.locator('.cm-mergeView')).toBeVisible();
   await page.getByRole('button', { name: '应用到当前文件', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销最近一次应用' })).toBeVisible();
@@ -1209,7 +1209,7 @@ test('capture actual before and after application surfaces', async ({ browser })
           if (scene === 'diff') {
             await resources(page, '变更');
             await page
-              .getByLabel('选择 Agent 候选文件')
+              .getByLabel('比较来源')
               .selectOption('66666666-6666-4666-8666-666666666666');
             await expect(page.locator('.cm-mergeView')).toBeVisible();
           }
@@ -1345,7 +1345,7 @@ test('a stale candidate cannot be applied to a different file', async ({ page })
   await page.goto(runPath);
   await openBrief(page);
   await resources(page, '变更');
-  await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
+  await page.getByLabel('比较来源').selectOption('66666666-6666-4666-8666-666666666666');
   await expect(page.locator('.resource-notice').getByRole('status')).toContainText('候选基于另一个文件或旧版本');
   await expect(page.getByRole('button', { name: '应用到当前文件' })).toHaveCount(0);
   expect(workspace.saves).toHaveLength(0);
@@ -2738,5 +2738,46 @@ for (const language of ['zh', 'en']) for (const timezoneId of ['Asia/Shanghai', 
       await expect(draft).toHaveValue('保留未发送的时间核对意见');
       expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
     } finally { await context.close(); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`comparison source keeps historical selection explicit without writing ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const { workspace } = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const candidate = workspace.files[2]!;
+    candidate.path = 'outputs/review/'.repeat(10) + '品牌网站审查-revised.md';
+    await page.setViewportSize({ width: 390, height: 844 }); await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留尚未发送的审查意见');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    const files = nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true });
+    await files.click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click(); await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
+    const panel = page.locator('.changes-panel'); const select = panel.getByRole('combobox', { name: zh ? '比较来源' : 'Comparison source', exact: true });
+    await expect(select).toHaveValue(''); await expect(select).toHaveAttribute('title', zh ? '当前编辑' : 'Current edits');
+    await select.selectOption(candidate.id); await expect(panel.locator('.cm-mergeView')).toBeVisible();
+    await expect(select).toHaveAttribute('title', candidate.path);
+    await expect(select.locator('option:checked')).toHaveText(candidate.path);
+    for (const editor of await panel.locator('.cm-content').all()) await expect(editor).toHaveAttribute('contenteditable', 'false');
+    expect(workspace.saves).toHaveLength(0);
+    await files.click();
+    await page.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true }).selectOption('1');
+    await expect(select).toHaveValue('version:1');
+    await expect(select.locator('option:checked')).toHaveText(zh ? '历史版本 v1' : 'Version v1');
+    await expect(select.locator('option:checked')).toBeDisabled();
+    const describedBy = await select.getAttribute('aria-describedby'); expect(describedBy).toBeTruthy();
+    await expect(page.locator(`[id="${describedBy}"]`)).toHaveText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
+    await select.focus(); await select.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(select).toBeFocused();
+    expect(await select.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await select.selectOption(''); await expect(panel.locator(':scope > p')).toHaveText(zh ? '当前编辑与打开时版本的比较。' : 'Current edits compared with the opened version.');
+    await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+    await expect(select).toHaveValue(''); await expect(select).toBeFocused();
+    expect(workspace.saves).toHaveLength(0);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click(); await expect(draft).toHaveValue('保留尚未发送的审查意见');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   });
 }

@@ -142,19 +142,23 @@
                 ><template v-if="hasChanges"><span class="added">+{{ statistics.added }}</span
                 ><span class="removed">−{{ statistics.removed }}</span></template>
               </header>
-              <p>{{ comparisonDescription }}</p>
-              <label v-if="candidateFiles.length"
-                >{{ zh ? '选择 Agent 候选文件' : 'Choose an Agent candidate'
-                }}<select
+              <p :id="`${comparisonPickerId}-description`">{{ comparisonDescription }}</p>
+              <div v-if="candidateFiles.length" class="comparison-picker">
+                <label :for="comparisonPickerId">{{ zh ? '比较来源' : 'Comparison source' }}</label>
+                <select
+                  :id="comparisonPickerId"
                   :value="proposal?.candidateId || ''"
+                  :title="comparisonSourceLabel"
+                  :aria-describedby="`${comparisonPickerId}-description`"
                   @change="chooseProposal(($event.target as HTMLSelectElement).value)"
                 >
                   <option value="">{{ zh ? '当前编辑' : 'Current edits' }}</option>
+                  <option v-if="comparisonVersion" :value="proposal?.candidateId" disabled>{{ comparisonSourceLabel }}</option>
                   <option v-for="file in candidateFiles" :key="file.id" :value="file.id">
                     {{ file.path }}
                   </option>
-                </select></label
-              >
+                </select>
+              </div>
               <div v-if="hasChanges || active.undo !== undefined" class="change-actions">
                 <button v-if="proposal && hasChanges" :disabled="saving" @click="applyProposal">
                   {{ zh ? '应用到当前文件' : 'Apply to current file' }}</button
@@ -583,8 +587,10 @@ const project = computed(() => props.projectId || '');
 const scope = () => JSON.stringify([owner.value, project.value]);
 const active = computed(() => documents.value.find((d) => d.key === activeKey.value));
 const hasChanges = computed(() => active.value?.text !== undefined && (proposal.value?.text ?? active.value.text) !== active.value.baseline);
+const comparisonPickerId = useId();
+const comparisonVersion = computed(() => proposal.value?.candidateId.startsWith('version:') ? proposal.value.candidateId.slice(8) : '');
 const comparisonDescription = computed(() => {
-  const version = proposal.value?.candidateId.startsWith('version:') ? proposal.value.candidateId.slice(8) : '';
+  const version = comparisonVersion.value;
   if (version) return props.zh ? `历史版本 v${version} 与打开时版本的比较。` : `Version v${version} compared with the opened version.`;
   if (proposal.value) return props.zh ? 'Agent 候选内容，尚未写入文件。' : 'Agent proposal; not yet applied.';
   return props.zh ? '当前编辑与打开时版本的比较。' : 'Current edits compared with the opened version.';
@@ -601,6 +607,11 @@ const candidateFiles = computed(() =>
       (/^text\//.test(f.mimeType) || /\.(md|txt|json|html|css|js|ts|csv)$/i.test(f.path))
   )
 );
+const comparisonSourceLabel = computed(() => {
+  if (comparisonVersion.value) return props.zh ? `历史版本 v${comparisonVersion.value}` : `Version v${comparisonVersion.value}`;
+  if (!proposal.value) return props.zh ? '当前编辑' : 'Current edits';
+  return candidateFiles.value.find(file => file.id === proposal.value?.candidateId)?.path || (props.zh ? 'Agent 候选内容' : 'Agent proposal');
+});
 const dirty = (doc: Document) => doc.text !== undefined && doc.text !== doc.baseline;
 const editable = (doc: Document) =>
   doc.text !== undefined && (doc.source === 'local' || Boolean(project.value));
@@ -2008,22 +2019,12 @@ button:disabled {
   color: var(--muted);
   padding: 0 16px;
 }
-.changes-panel > label {
-  display: grid;
-  gap: 6px;
-  padding: 10px 16px;
-  font-size: 12px;
-}
-.changes-panel select {
-  min-width: 0;
-  width: 100%;
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  padding: 7px;
-  border-radius: 6px;
-  max-width: 100%;
-}
+.comparison-picker { display: grid; min-width: 0; gap: 8px; padding: 10px 16px; }
+.comparison-picker label { color: var(--text); font-size: 13px; line-height: 20px; }
+.comparison-picker select { box-sizing: border-box; min-width: 0; width: 100%; max-width: 100%; min-height: 36px; padding: 7px 10px; color: var(--text); background: var(--surface-raised); border: 0; border-radius: 6px; font: inherit; font-size: 13px; cursor: pointer; }
+.comparison-picker select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .comparison-picker select:hover { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .comparison-picker select { min-height: 44px; font-size: 16px; } }
 .changes-panel > .workspace-code-editor {
   flex: 1 0 180px;
 }
