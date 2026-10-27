@@ -1,5 +1,13 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-27 DEV 恢复与设备交接
+
+- DEV Aiven Free PostgreSQL 曾处于 Powered off，恢复后严格 TLS 只读检查通过；Render DEV 重启后 `/healthz`、`/api/meta`、`/readyz` 均返回 200，迁移 032 就绪。DEV 邮箱验证码登录和合成项目创建成功；平台套餐、生产和支付未改动。
+- DEV Mac Worker 原有 Node 依赖路径失效，已在与 DEV 部署相同的代码版本准备独立依赖和持久 checkout，沿用原有 CUA 虚拟环境与 DEV 专用 Keychain；启动项路径已更新并保留回滚副本。Worker、模型、浏览器、出口及桌面中继 readiness 已通过，不以其代替真实任务验收。
+- 真实 DEV 合成报告任务已使用 Cloudflare 免费文本模型成功完成；Markdown 与 PDF 产物经 S3 回读并校验大小与 SHA-256。任务已结算、租约已释放，测试钱包冻结点数为零；浏览器上传入口未验收。该结果不证明共桶环境隔离或生产流程通过。
+- 新增[换电脑与 Worker 接手手册](docs/WORKER_DEVICE_HANDOFF.zh-CN.md)，说明旧设备交接、Mac 接手步骤和 Windows / WSL2 尚未验收的边界。平台账号、权限、凭据存放机制、供应商和实际资源归属没有变化；账号报告不需要因本次恢复而修改。
+- DEV 排查发现规划任务的最后一次尝试中断并租约过期后，原领取条件不再处理它，页面会持续显示运行中。候选修复在事务内将此类记录标为失败并写入可重试消息；未过期租约不受影响，并发恢复不会重复写入。隔离 PostgreSQL 回归覆盖该路径；候选尚未部署，真实 DEV 记录尚待部署后验证。
+
 ## 2026-10-12 DEV 发布与主要工作流状态
 
 - PR #237 的登录 OTP Turnstile fallback、PR #238 的 CUA Sandbox SDK 依赖收敛、PR #239 的 LaunchAgent CUA Python PATH 修复、PR #240 的 Runtime V1 检查点修复、PR #241 的“不生成图片”意图修复、PR #242 的普通文本文件交付恢复和 PR #243 的 DEV Worker Docker CLI 隔离均已通过 required CI 并合入 `dev`。Render DEV `/api/meta.gitSha`、DEV Worker checkout 与 Worker 代码精确匹配 PR #243 merge SHA `13ab03d93cbf2177fb29d0dddd26e45082930da4`；`/healthz`、`/readyz`、`/api/agent/status` 均 HTTP 200，readiness 全绿。

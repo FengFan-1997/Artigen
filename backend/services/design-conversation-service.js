@@ -1572,21 +1572,8 @@ const createDesignConversationService = ({
     return publicExecution(execution.rows[0], env);
   });
 
-  const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
-    const code = sanitizeText(error?.code || error?.message || 'DESIGN_PLANNER_FAILED', 100);
-    const terminalCloudflareFailure = isTerminalCloudflareFailure(error);
-    const state = await client.query(
-      `UPDATE design_planning_jobs
-          SET status=CASE WHEN attempt_count>=3 OR $4::boolean THEN 'failed' ELSE 'queued' END,
-              next_attempt_at=clock_timestamp()+
-                (CASE WHEN attempt_count>=3 OR $4::boolean THEN 0 ELSE attempt_count*2 END * interval '1 second'),
-              lease_owner=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
-        WHERE message_id=$1 AND lease_owner=$2
-        RETURNING status,attempt_count`,
-      [job.message_id, workerId, code, terminalCloudflareFailure]
-    );
-    if (state.rows[0]?.status !== 'failed') return;
-    const userMessage = error?.code === 'AGENT_CLOUDFLARE_RATE_LIMITED'
+  const recordPlanningFailure = async (client, job, code) => {
+    const userMessage = code === 'AGENT_CLOUDFLARE_RATE_LIMITED'
       ? '文本模型当前受到限流或容量限制，暂时无法分析这次需求。规划阶段没有创建 Agent 任务或冻结点数；请稍后重试。'
       : '这次需求没有完成分析。你可以直接重试，系统不会因此创建任务或扣点。';
     const assistant = await insertMessage(client, {
@@ -1602,6 +1589,44 @@ const createDesignConversationService = ({
       summary: '需求分析失败',
       data: { messageId: assistant.id, errorCode: code }
     });
+  };
+
+  const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
+    const code = sanitizeText(error?.code || error?.message || 'DESIGN_PLANNER_FAILED', 100);
+    const terminalCloudflareFailure = isTerminalCloudflareFailure(error);
+    const state = await client.query(
+      `UPDATE design_planning_jobs
+          SET status=CASE WHEN attempt_count>=3 OR $4::boolean THEN 'failed' ELSE 'queued' END,
+              next_attempt_at=clock_timestamp()+
+                (CASE WHEN attempt_count>=3 OR $4::boolean THEN 0 ELSE attempt_count*2 END * interval '1 second'),
+              lease_owner=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
+        WHERE message_id=$1 AND lease_owner=$2
+        RETURNING status,attempt_count`,
+      [job.message_id, workerId, code, terminalCloudflareFailure]
+    );
+    if (state.rows[0]?.status !== 'failed') return;
+    await recordPlanningFailure(client, job, code);
+  });
+
+  const recoverExpiredPlanningJob = async () => transaction(pool, async (client) => {
+    const result = await client.query(
+      `WITH candidate AS (
+         SELECT message_id FROM design_planning_jobs
+          WHERE status='running' AND attempt_count>=3
+            AND lease_expires_at<=clock_timestamp()
+          ORDER BY lease_expires_at
+          LIMIT 1 FOR UPDATE SKIP LOCKED
+       )
+       UPDATE design_planning_jobs job
+          SET status='failed',lease_owner=NULL,lease_expires_at=NULL,
+              error_code='DESIGN_PLANNING_LEASE_EXPIRED',updated_at=now()
+         FROM candidate WHERE job.message_id=candidate.message_id
+       RETURNING job.message_id,job.conversation_id`
+    );
+    const job = result.rows[0];
+    if (!job) return false;
+    await recordPlanningFailure(client, job, 'DESIGN_PLANNING_LEASE_EXPIRED');
+    return true;
   });
 
   async function processNextJob() {
@@ -1609,6 +1634,7 @@ const createDesignConversationService = ({
     processing = true;
     let job = null;
     try {
+      if (await recoverExpiredPlanningJob()) return true;
       job = await claimPlanningJob();
       if (!job) return false;
       if (typeof chatGenerate !== 'function') throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED');
