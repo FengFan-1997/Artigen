@@ -270,6 +270,14 @@ test('OTP quota defaults and counted states match the production abuse budget', 
   assert.equal(GLOBAL_BUDGET_STATES.includes('rejected'), false);
 });
 
+test('fallback quota cannot be expanded through general IP quota configuration', () => {
+  const raised = { OTP_SEND_IP_HOURLY_LIMIT: '100000', OTP_SEND_IP_DAILY_LIMIT: '1000000' };
+  assert.equal(quotaLimits(raised, { fallback: true }).ipHour, 20);
+  assert.equal(quotaLimits(raised, { fallback: true }).ipDay, 50);
+  assert.equal(quotaLimits(raised).ipHour, 100000);
+  assert.equal(quotaLimits({ OTP_SEND_IP_HOURLY_LIMIT: '5' }, { fallback: true }).ipHour, 5);
+});
+
 test('50 concurrent database sends with one key create one attempt and one owner', async () => {
   const pool = createDeliveryPool();
   const clock = new Date('2026-07-16T10:00:00.000Z');

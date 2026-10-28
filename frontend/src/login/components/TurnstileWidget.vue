@@ -38,8 +38,8 @@
       <small v-if="fallbackSelected">
         {{
           isZh
-            ? '仍受邮箱、IP 和全局发送限额保护。'
-            : 'Email, IP, and global sending limits still apply.'
+            ? '备用通道共享发送额度，达到上限后请稍后再试。'
+            : 'The fallback shares a sending limit. Please try again later if it is reached.'
         }}
       </small>
     </div>

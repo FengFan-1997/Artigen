@@ -48,6 +48,7 @@ const {
 } = require("../services/mail-service");
 const {
   OtpDeliveryError,
+  FALLBACK_SHARED_QUOTA_IP,
   createOtpDeliveryService,
   resolveOtpSendIdempotencyKey,
 } = require("../services/otp-delivery-service");
@@ -590,6 +591,19 @@ const installAuthRoutes = (app, options = {}) => {
     target,
     purpose,
   }) => {
+    const useFallback = purpose === "login" &&
+      body?.turnstileFallback === true &&
+      !readTurnstileToken(body) &&
+      emailOtpTurnstileFallbackEnabled();
+    let quotaIp = getClientIp(req);
+    if (useFallback && String(env.NODE_ENV || "").trim().toLowerCase() === "production") {
+      if (!databaseMode()) {
+        throw new OtpDeliveryError("OTP_FALLBACK_UNAVAILABLE", { status: 503, retryable: true });
+      }
+      // Requests without a Turnstile token share a conservative durable
+      // quota. No proxy header or hosting plan can create more quota buckets.
+      quotaIp = FALLBACK_SHARED_QUOTA_IP;
+    }
     const requestKey = otpSendRequestKey({
       req,
       body,
@@ -619,7 +633,7 @@ const installAuthRoutes = (app, options = {}) => {
       const started = await getOtpDeliveryService().beginAttempt({
         target,
         purpose,
-        ip: getClientIp(req),
+        ip: quotaIp,
         requestKey,
       });
       if (!started.ok) {

@@ -462,6 +462,77 @@ test('an explicit Turnstile fallback is still stopped by durable OTP quotas', as
   assert.equal(turnstileChecks, 0);
 });
 
+test('production fallback shares one quota across forged and absent forwarded IPs', async () => {
+  const quotaIps = [];
+  const app = install({
+    databaseMode: true,
+    env: {
+      NODE_ENV: 'production', AUTH_EMAIL_OTP_ENABLED: 'true',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
+    },
+    otpDeliveryService: {
+      async findAttempt() { return null; },
+      async beginAttempt({ ip }) {
+        quotaIps.push(ip);
+        return { ok: false, error: 'OTP_SEND_QUOTA_EXCEEDED', scope: 'ip_hour', retryAfterSec: 60 };
+      }
+    }
+  });
+  const send = app.routes.get('POST /api/login/send-code');
+  for (const forwarded of ['198.51.100.1', '198.51.100.2']) {
+    const res = response();
+    await send(request({ email: 'quota-limited@example.com', turnstileFallback: true }, {
+      'idempotency-key': `otp:fallback-${forwarded}`,
+      'x-forwarded-for': forwarded
+    }), res);
+    assert.equal(res.state.status, 429);
+  }
+  assert.deepEqual(quotaIps, ['turnstile-fallback-shared', 'turnstile-fallback-shared']);
+  const missing = response();
+  await send(request({ email: 'quota-limited@example.com', turnstileFallback: true }, {
+    'idempotency-key': 'otp:fallback-missing', 'x-forwarded-for': '198.51.100.3'
+  }), missing);
+  assert.equal(missing.state.status, 429);
+  assert.equal(quotaIps[2], 'turnstile-fallback-shared');
+});
+
+test('production fallback fails closed without durable quotas', async () => {
+  const app = install({
+    databaseMode: false,
+    env: {
+      NODE_ENV: 'production', AUTH_EMAIL_OTP_ENABLED: 'true',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
+    }
+  });
+  const res = response();
+  await app.routes.get('POST /api/login/send-code')(request({
+    email: 'quota-limited@example.com', turnstileFallback: true
+  }, { 'idempotency-key': 'otp:fallback-no-database' }), res);
+  assert.equal(res.state.status, 503);
+  assert.equal(res.state.body.error, 'OTP_FALLBACK_UNAVAILABLE');
+});
+
+test('a request with a valid Turnstile token does not use the shared fallback quota', async () => {
+  let quotaIp;
+  const app = install({
+    databaseMode: true,
+    env: { NODE_ENV: 'production', AUTH_EMAIL_OTP_ENABLED: 'true', OTP_HMAC_SECRET: 'auth-otp-route-test-secret' },
+    otpDeliveryService: {
+      async findAttempt() { return null; },
+      async beginAttempt({ ip }) {
+        quotaIp = ip;
+        return { ok: false, error: 'OTP_SEND_QUOTA_EXCEEDED', scope: 'ip_hour', retryAfterSec: 60 };
+      }
+    }
+  });
+  const res = response();
+  await app.routes.get('POST /api/login/send-code')(request({
+    email: 'quota-limited@example.com', turnstileFallback: true, turnstileToken: 'valid-token'
+  }, { 'idempotency-key': 'otp:validated-token' }), res);
+  assert.equal(res.state.status, 429);
+  assert.notEqual(quotaIp, 'turnstile-fallback-shared');
+});
+
 test('a disabled Turnstile fallback rejects the client request', async () => {
   let turnstileChecks = 0;
   const app = install({
