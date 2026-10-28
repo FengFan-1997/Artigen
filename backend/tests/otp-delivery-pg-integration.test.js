@@ -52,6 +52,28 @@ test.after(async () => {
   if (hasDatabase) await getPool().end();
 });
 
+test('shared fallback quota is enforced atomically across distinct senders', {
+  skip: !hasDatabase
+}, async () => {
+  const service = createOtpDeliveryService({
+    pool: getPool(),
+    env: { ...env, OTP_SEND_IP_HOURLY_LIMIT: '20', OTP_SEND_IP_DAILY_LIMIT: '50' }
+  });
+  const group = `integration-fallback-${crypto.randomUUID()}`;
+  const requests = Array.from({ length: 21 }, (_, index) => ({
+    target: `fallback-${index}-${crypto.randomUUID()}@example.test`,
+    purpose: 'login', ip: group, requestKey: `otp-pg:${crypto.randomUUID()}`
+  }));
+  const outcomes = await Promise.all(requests.map((input) => service.beginAttempt(input)));
+  const attemptIds = outcomes.filter((entry) => entry.ok).map((entry) => entry.attempt.id);
+  try {
+    assert.equal(attemptIds.length, 20);
+    assert.equal(outcomes.filter((entry) => !entry.ok && entry.scope === 'ip_hour').length, 1);
+  } finally {
+    await removeRows({ attemptIds });
+  }
+});
+
 test('50 identical PostgreSQL OTP begin attempts elect exactly one owner', {
   skip: !hasDatabase
 }, async () => {

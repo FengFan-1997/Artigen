@@ -419,7 +419,6 @@ test('an explicit Turnstile fallback is still stopped by durable OTP quotas', as
     databaseMode: true,
     env: {
       NODE_ENV: 'production',
-      RENDER: 'true',
       AUTH_EMAIL_OTP_ENABLED: 'true',
       AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED: 'true',
       OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
@@ -454,7 +453,7 @@ test('an explicit Turnstile fallback is still stopped by durable OTP quotas', as
   await send(request({
     email: 'quota-limited@example.com',
     turnstileFallback: true
-  }, { 'idempotency-key': 'otp:quota-limited-fallback', 'cf-connecting-ip': '203.0.113.8' }), sendRes);
+  }, { 'idempotency-key': 'otp:quota-limited-fallback' }), sendRes);
 
   assert.equal(sendRes.state.status, 429);
   assert.equal(sendRes.state.body.error, 'OTP_PROVIDER_THROTTLED');
@@ -463,12 +462,12 @@ test('an explicit Turnstile fallback is still stopped by durable OTP quotas', as
   assert.equal(turnstileChecks, 0);
 });
 
-test('production fallback quotas ignore forged forwarded IPs and reject untrusted source', async () => {
+test('production fallback shares one quota across forged and absent forwarded IPs', async () => {
   const quotaIps = [];
   const app = install({
     databaseMode: true,
     env: {
-      NODE_ENV: 'production', RENDER: 'true', AUTH_EMAIL_OTP_ENABLED: 'true',
+      NODE_ENV: 'production', AUTH_EMAIL_OTP_ENABLED: 'true',
       OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
     },
     otpDeliveryService: {
@@ -484,37 +483,54 @@ test('production fallback quotas ignore forged forwarded IPs and reject untruste
     const res = response();
     await send(request({ email: 'quota-limited@example.com', turnstileFallback: true }, {
       'idempotency-key': `otp:fallback-${forwarded}`,
-      'x-forwarded-for': forwarded,
-      'cf-connecting-ip': '203.0.113.8'
+      'x-forwarded-for': forwarded
     }), res);
     assert.equal(res.state.status, 429);
   }
-  assert.deepEqual(quotaIps, ['203.0.113.8', '203.0.113.8']);
+  assert.deepEqual(quotaIps, ['turnstile-fallback-shared', 'turnstile-fallback-shared']);
   const missing = response();
   await send(request({ email: 'quota-limited@example.com', turnstileFallback: true }, {
     'idempotency-key': 'otp:fallback-missing', 'x-forwarded-for': '198.51.100.3'
   }), missing);
-  assert.equal(missing.state.status, 503);
-  assert.equal(missing.state.body.error, 'OTP_FALLBACK_UNAVAILABLE');
-  assert.equal(quotaIps.length, 2);
+  assert.equal(missing.state.status, 429);
+  assert.equal(quotaIps[2], 'turnstile-fallback-shared');
 });
 
-test('production fallback fails closed without Render ingress or durable quotas', async () => {
-  for (const [databaseMode, render] of [[true, false], [false, true]]) {
-    const app = install({
-      databaseMode,
-      env: {
-        NODE_ENV: 'production', RENDER: render ? 'true' : 'false',
-        AUTH_EMAIL_OTP_ENABLED: 'true', OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
+test('production fallback fails closed without durable quotas', async () => {
+  const app = install({
+    databaseMode: false,
+    env: {
+      NODE_ENV: 'production', AUTH_EMAIL_OTP_ENABLED: 'true',
+      OTP_HMAC_SECRET: 'auth-otp-route-test-secret'
+    }
+  });
+  const res = response();
+  await app.routes.get('POST /api/login/send-code')(request({
+    email: 'quota-limited@example.com', turnstileFallback: true
+  }, { 'idempotency-key': 'otp:fallback-no-database' }), res);
+  assert.equal(res.state.status, 503);
+  assert.equal(res.state.body.error, 'OTP_FALLBACK_UNAVAILABLE');
+});
+
+test('a request with a valid Turnstile token does not use the shared fallback quota', async () => {
+  let quotaIp;
+  const app = install({
+    databaseMode: true,
+    env: { NODE_ENV: 'production', AUTH_EMAIL_OTP_ENABLED: 'true', OTP_HMAC_SECRET: 'auth-otp-route-test-secret' },
+    otpDeliveryService: {
+      async findAttempt() { return null; },
+      async beginAttempt({ ip }) {
+        quotaIp = ip;
+        return { ok: false, error: 'OTP_SEND_QUOTA_EXCEEDED', scope: 'ip_hour', retryAfterSec: 60 };
       }
-    });
-    const res = response();
-    await app.routes.get('POST /api/login/send-code')(request({
-      email: 'quota-limited@example.com', turnstileFallback: true
-    }, { 'idempotency-key': 'otp:fallback-no-trust', 'cf-connecting-ip': '203.0.113.8' }), res);
-    assert.equal(res.state.status, 503);
-    assert.equal(res.state.body.error, 'OTP_FALLBACK_UNAVAILABLE');
-  }
+    }
+  });
+  const res = response();
+  await app.routes.get('POST /api/login/send-code')(request({
+    email: 'quota-limited@example.com', turnstileFallback: true, turnstileToken: 'valid-token'
+  }, { 'idempotency-key': 'otp:validated-token' }), res);
+  assert.equal(res.state.status, 429);
+  assert.notEqual(quotaIp, 'turnstile-fallback-shared');
 });
 
 test('a disabled Turnstile fallback rejects the client request', async () => {

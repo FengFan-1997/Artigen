@@ -1,7 +1,6 @@
 const { mayCreateAccount } = require('../services/signup-policy');
 const crypto = require("crypto");
 const { rateLimit, getClientIp } = require("../lib/rateLimit");
-const { getRenderFallbackQuotaIp } = require("../lib/otp-fallback-ip");
 const {
   LOGIN_EMAIL_RE,
   normalizeEmail,
@@ -600,13 +599,9 @@ const installAuthRoutes = (app, options = {}) => {
       if (!databaseMode()) {
         throw new OtpDeliveryError("OTP_FALLBACK_UNAVAILABLE", { status: 503, retryable: true });
       }
-      quotaIp = getRenderFallbackQuotaIp(req, env);
-      if (!quotaIp) {
-        throw new OtpDeliveryError("OTP_FALLBACK_UNAVAILABLE", {
-          status: 503,
-          retryable: true,
-        });
-      }
+      // Requests without a Turnstile token share a conservative durable
+      // quota. No proxy header or hosting plan can create more quota buckets.
+      quotaIp = "turnstile-fallback-shared";
     }
     const requestKey = otpSendRequestKey({
       req,
