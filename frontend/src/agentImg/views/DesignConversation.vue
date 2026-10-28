@@ -341,6 +341,7 @@
 
     <div v-if="notice" class="workspace-notice" role="status">
       <span>{{ notice }}</span>
+      <RouterLink v-if="unattachedRunId && notice === errorText({ code: 'DESIGN_EXECUTION_CLEANUP_PENDING' })" :to="`/artigen/agent/runs/${unattachedRunId}`">{{ zh ? '查看任务' : 'View task' }}</RouterLink>
       <button type="button" :aria-label="zh ? '关闭通知' : 'Dismiss notification'" @click="notice = ''">
         <WorkspaceIcon name="close" :size="14" />
       </button>
@@ -363,7 +364,7 @@
 <script setup lang="ts">
 import { useScrollbarGutter } from '../composables/useScrollbarGutter';
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
@@ -413,6 +414,7 @@ import {
 } from '../services/creativeProjects';
 import {
   createAgentRun,
+  controlAgentRun,
   cancelAgentSubagent,
   getAgentRun,
   openAgentEventStream,
@@ -459,6 +461,7 @@ const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: () 
 const selectedAttachments = ref<SelectedAttachment[]>([]);
 const selectedSourceArtifacts = ref<DesignSourceArtifact[]>([]);
 const notice = ref('');
+const unattachedRunId = ref('');
 const sending = ref(false);
 const planning = ref(false);
 const retryingPlanningMessageId = ref('');
@@ -697,6 +700,8 @@ const errorText = (error: unknown) => {
     LOGIN_REQUIRED: ['请先登录，登录后会自动发送当前草稿。', 'Sign in first; your draft will send automatically.'],
     DESIGN_CONVERSATION_DISABLED: ['对话入口尚未开放，现有 AI 与 Agent 工作台仍可使用。', 'The conversation entry is not open yet; the existing workbenches remain available.'],
     INSUFFICIENT_CREDITS: ['点数不足，任务没有创建，也没有冻结点数。', 'Not enough credits. No task was created or held.'],
+    DESIGN_EXECUTION_PROJECT_CONFLICT: ['项目归属已变化，本次新任务已停止。请刷新会话后重新发送需求。', 'The project changed. The new task was stopped. Refresh the conversation and send your request again.'],
+    DESIGN_EXECUTION_CLEANUP_PENDING: ['任务未能关联到会话，停止操作尚未确认。请打开任务检查并停止。', 'The task could not join this conversation, and its stop request is unconfirmed. Open the task to check and stop it.'],
     DESIGN_EXECUTION_BUDGET_EXCEEDED: ['真实报价超过当前上限，任务尚未创建。', 'The verified quote exceeds this limit. No task was created.'],
     DESIGN_ATTACHMENTS_REQUIRED: ['这个任务需要附件，请选择文件后继续。', 'This task needs an attachment. Choose a file to continue.'],
     DESIGN_PLANNING_RETRY_LIMIT: ['这条需求最近已重试 3 次，请一小时后再试。', 'This request has been retried three times recently. Try again in an hour.'],
@@ -1223,7 +1228,20 @@ const runAgentExecution = async (execution: DesignExecution, assetIds: string[],
     browserConfig: plan.browserConfig || { allowedOrigins: [], persistSession: false },
     projectId, idempotencyKey: `design:${execution.executionId}`
   });
-  await attachDesignExecutionTarget(id, execution.executionId, { agentRunId: created.runId });
+  try {
+    await attachDesignExecutionTarget(id, execution.executionId, { agentRunId: created.runId });
+  } catch (error) {
+    // A confirmed ownership conflict means attachment rolled back. Unknown
+    // network outcomes may already be attached, so never cancel those here.
+    if ((error as { code?: string })?.code !== 'DESIGN_EXECUTION_PROJECT_CONFLICT') throw error;
+    try {
+      await controlAgentRun(created.runId, 'cancel');
+    } catch {
+      if (isCurrentConversation(id, revision)) unattachedRunId.value = created.runId;
+      throw Object.assign(new Error('DESIGN_EXECUTION_CLEANUP_PENDING'), { code: 'DESIGN_EXECUTION_CLEANUP_PENDING' });
+    }
+    throw error;
+  }
   if (!isCurrentConversation(id, revision)) return;
   agentRuns[created.runId] = created;
   monitorRun(created.runId, id, revision);
@@ -1761,7 +1779,7 @@ onBeforeUnmount(() => {
 .file-panel > a { display: grid; grid-template-columns: 28px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 9px 10px; border: 0; color: var(--text); text-decoration: none; }.file-panel > a:hover { background: var(--surface-raised); }.file-icon { display: grid; width: 26px; height: 26px; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: var(--surface-raised); }.file-icon svg { width: 16px; height: 16px; }.file-panel > a > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }.file-panel > a b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.file-panel > a small { color: var(--muted); font-size: 12px; }.file-panel em { font-size: 12px; font-style: normal; }.file-panel em.passed { color: var(--success); }.file-panel em.failed { color: var(--danger); }
 .inspector-inline-empty { padding: 18px 12px; color: var(--muted); font-size: 12px; line-height: 1.55; text-align: center; }
 
-.workspace-notice { position: fixed; top: 68px; right: 20px; z-index: 300; display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--text); font-size: 12px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }.workspace-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }.workspace-notice button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.workspace-notice svg { width: 14px; height: 14px; }
+.workspace-notice { position: fixed; top: 68px; right: 20px; z-index: 300; display: flex; align-items: center; gap: 12px; max-width: 420px; padding: 10px 11px; border: 0; border-radius: 9px; color: var(--text); font-size: 12px; background: var(--surface); box-shadow: 0 18px 50px rgb(0 0 0 / 30%); }.workspace-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }.workspace-notice button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }.workspace-notice svg { width: 14px; height: 14px; }.workspace-notice a { flex: 0 0 auto; color: var(--text); text-underline-offset: 3px; }
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 .conversation-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 14px; }

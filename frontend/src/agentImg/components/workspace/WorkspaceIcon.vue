@@ -37,6 +37,10 @@
     <template v-else-if="name === 'download'"><path d="M12 4v12M7 11l5 5 5-5M5 20h14"/></template>
     <template v-else-if="name === 'play'"><path d="m8 5 11 7-11 7z"/></template>
     <template v-else-if="name === 'stop'"><rect x="7" y="7" width="10" height="10" rx="1"/></template>
+    <template v-else-if="name === 'more'"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></template>
+    <template v-else-if="name === 'clock'"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></template>
+    <template v-else-if="name === 'check'"><path d="m5 12 4 4L19 6"/></template>
+    <template v-else-if="name === 'warning'"><path d="m12 3 10 18H2zM12 9v5M12 17h.01"/></template>
     <template v-else-if="name === 'pause'"><path d="M9 6v12M15 6v12"/></template>
     <template v-else-if="name === 'paper-plane'"><path d="m5 12 14-7-4 14-3-6zM12 13l7-8"/></template>
   </svg>
@@ -48,7 +52,7 @@ type WorkspaceIconName =
   | 'image' | 'spark' | 'moon' | 'sun' | 'monitor' | 'settings' | 'terminal' | 'list'
   | 'subagents' | 'agent' | 'file' | 'attachment' | 'send' | 'refresh' | 'arrow-right'
   | 'chevron-right' | 'chevron-down' | 'trash' | 'download' | 'play' | 'stop' | 'pause'
-  | 'paper-plane' | 'git' | 'chat' | 'changes';
+  | 'paper-plane' | 'git' | 'chat' | 'changes' | 'more' | 'clock' | 'check' | 'warning';
 
 withDefaults(defineProps<{
   name: WorkspaceIconName;

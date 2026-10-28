@@ -5,7 +5,7 @@
       ><button v-if="repository" @click="refresh">{{ zh ? '刷新' : 'Refresh' }}</button>
     </header>
     <p v-if="!projectId">
-      {{ zh ? '先选择项目，再关联 GitHub 仓库。' : 'Choose a project to link a repository.' }}
+      {{ zh ? '选择上方项目后，可查看或关联它的 GitHub 仓库。' : 'Choose a project above to view or link its GitHub repository.' }}
     </p>
     <template v-else
       ><p v-if="notice" role="status">{{ notice }}</p>

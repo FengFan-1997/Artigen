@@ -1199,6 +1199,7 @@ test('system meta exposes the deployment environment and Render commit', () => {
   assert.equal(res.payload.releasePolicy.name, 'private-dev');
   assert.equal(res.payload.capabilities.publicSignup, false);
   assert.equal(res.payload.capabilities.agentRuntimeV2, false);
+  assert.deepEqual(res.payload.signupOffer, { available: false, credits: 100 });
 });
 
 test('release metadata keeps public signup closed and reports canonical runtime flags', () => {

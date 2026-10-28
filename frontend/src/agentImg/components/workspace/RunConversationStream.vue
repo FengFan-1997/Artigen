@@ -8,7 +8,7 @@
     <template v-for="row in rows" :key="row.key"
       ><article v-if="row.kind === 'message'" class="timeline-message" :class="row.message.role">
         <header>
-          <span>{{ row.message.role === 'user' ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span
+          <span :title="row.message.role === 'user' ? userId : undefined">{{ row.message.role === 'user' ? userLabel : 'Artigen Agent' }}</span
           ><time>{{
             new Date(row.message.createdAt).toLocaleTimeString(zh ? 'zh-CN' : 'en-US', {
               hour: '2-digit',
@@ -16,7 +16,8 @@
             })
           }}</time>
         </header>
-        <WorkspaceMarkdown :text="row.message.text" :files="files" />
+        <WorkspaceMarkdown v-if="row.message.text" :text="row.message.text" :files="files" />
+        <MessageAttachments :attachments="row.message.attachments || []" :zh="zh" />
       </article>
       <AgentActivity
         v-else
@@ -33,6 +34,8 @@ import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch 
 import { getCurrentUserId } from '@/login/session';
 const WorkspaceMarkdown = defineAsyncComponent(() => import('./WorkspaceMarkdown.vue'));
 import AgentActivity from './AgentActivity.vue';
+import MessageAttachments from './MessageAttachments.vue';
+import { useUserIdentity } from '../../composables/useUserIdentity';
 import AgentConversationTimeline from './AgentConversationTimeline.vue';
 import { eventText } from '../../domain/agentTimeline';
 import { buildAgentActivity } from '../../utils/agentActivity';
@@ -50,6 +53,7 @@ const props = defineProps<{
   terminal: boolean;
   subagents: Array<{ subagentId: string; label: string; ordinal: number }>;
 }>();
+const { userId, userLabel } = useUserIdentity(computed(() => props.zh));
 const emit = defineEmits<{ 'layout-change': [] }>();
 const messages = ref<PublicMessage[]>([]);
 const error = ref(false);
@@ -67,9 +71,10 @@ const legacyEvents = computed(() => {
     const role = event.type === 'run.input_received' ? 'user' : 'assistant';
     return !messages.value.some(
       (message) =>
-        message.role === role &&
+        message.role === role && (
+        message.id === event.data.messagePayloadId || (text.length > 0 &&
         Math.abs(Date.parse(message.createdAt) - Date.parse(event.createdAt)) < 3000 &&
-        message.text.trim().startsWith(text)
+        message.text.trim().startsWith(text)))
     );
   });
 });

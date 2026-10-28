@@ -19,11 +19,12 @@
       </details>
       <article v-else class="timeline-message" :class="{ user: event.type === 'run.input_received', commentary: event.type === 'assistant.message' }">
         <header>
-          <span>{{ event.type === 'run.input_received' ? (zh ? '你' : 'You') : event.subagentId ? (zh ? '子 Agent' : 'Subagent') : 'Artigen Agent' }}</span>
+          <span :title="event.type === 'run.input_received' ? userId : undefined">{{ event.type === 'run.input_received' ? userLabel : event.subagentId ? (zh ? '子 Agent' : 'Subagent') : 'Artigen Agent' }}</span>
           <time :datetime="event.createdAt">{{ formatTime(event.createdAt) }}</time>
           <small v-if="event.type === 'assistant.message'">{{ zh ? '进展' : 'Update' }}</small>
         </header>
-        <p>{{ eventText(event) }}</p>
+        <p v-if="eventText(event)">{{ eventText(event) }}</p>
+        <MessageAttachments :attachments="eventAttachments(event)" :zh="zh" />
       </article>
     </template>
     <p v-if="loading" class="history-note" role="status">{{ zh ? '正在恢复过程记录…' : 'Restoring activity…' }}</p>
@@ -34,9 +35,15 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
+import MessageAttachments from './MessageAttachments.vue';
+import { useUserIdentity } from '../../composables/useUserIdentity';
+import type { MessageAttachment } from '../../services/workspaceFiles';
 import { conversationTimeline, eventText, toolLabel } from '../../domain/agentTimeline';
 import type { AgentEvent } from '../../services/agentRuns';
 const props = defineProps<{ events: AgentEvent[]; zh: boolean; loading?: boolean; error?: boolean }>();
+const { userId, userLabel } = useUserIdentity(computed(() => props.zh));
+const eventAttachments = (event: AgentEvent): MessageAttachment[] => Array.isArray(event.data.attachments)
+  ? event.data.attachments.filter((item): item is MessageAttachment => item && typeof item.assetId === 'string' && typeof item.filename === 'string') : [];
 const timeline = computed(() => conversationTimeline(props.events));
 const formatTime = (value: string) => new Date(value).toLocaleTimeString(props.zh ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
 const resultLabel = (status: unknown) => ({

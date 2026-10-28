@@ -1,5 +1,15 @@
 <template>
   <form class="composer-box" :class="{ compact }" :aria-busy="busy" @submit="onSubmit">
+    <div v-if="attachments.length" class="attachment-list">
+      <span v-for="file in attachments" :key="file.clientId">
+        <WorkspaceIcon name="attachment" />
+        <b>{{ file.name }}</b>
+        <small>{{ formatBytes(file.byteSize) }}</small>
+        <button type="button" :disabled="disabled || busy" :aria-label="`${removeAttachmentLabel} ${file.name}`" @click="emit('remove-attachment', file.clientId)">
+          <WorkspaceIcon name="close" :size="14" />
+        </button>
+      </span>
+    </div>
     <textarea
       ref="textarea"
       :value="draft"
@@ -15,28 +25,18 @@
       @compositionend="composing = false"
       @keydown="onKeydown"
     ></textarea>
-    <div v-if="attachments.length" class="attachment-list">
-      <span v-for="file in attachments" :key="file.clientId">
-        <WorkspaceIcon name="attachment" />
-        <b>{{ file.name }}</b>
-        <small>{{ formatBytes(file.byteSize) }}</small>
-        <button type="button" :disabled="disabled || busy" :aria-label="`${removeAttachmentLabel} ${file.name}`" @click="emit('remove-attachment', file.clientId)">
-          <WorkspaceIcon name="close" :size="14" />
-        </button>
-      </span>
-    </div>
     <div class="composer-actions">
       <button v-if="allowAttachments" class="attach" type="button" :disabled="disabled || busy" :aria-label="`${attachLabel}: ${attachmentHint}`" :title="attachmentHint" @click="emit('attach')">
-        <WorkspaceIcon name="attachment" />
-        <span>{{ attachments.length ? `${attachments.length} ${attachmentCountLabel}` : attachLabel }}</span>
+        <WorkspaceIcon name="plus" :size="20" />
       </button>
       <span v-if="busy" class="composer-status" role="status">{{ busyLabel }}</span>
       <span v-else-if="attachments.length" class="privacy">{{ attachmentHint }}</span>
+      <span v-if="keyboardHint && !busy" class="keyboard-hint">{{ keyboardHint }}</span>
       <button class="send" type="submit" :disabled="!canSubmit" :aria-label="sendLabel" @click="onSendClick">
         <WorkspaceIcon name="send" :size="20" />
       </button>
     </div>
-    <div v-if="helpText || keyboardHint" class="composer-help"><span>{{ helpText }}</span><span class="keyboard-hint">{{ keyboardHint }}</span></div>
+    <div v-if="helpText" class="composer-help"><span>{{ helpText }}</span></div>
   </form>
 </template>
 
@@ -50,6 +50,7 @@ const props = withDefaults(defineProps<{
   busy?: boolean;
   disabled?: boolean;
   allowAttachments?: boolean;
+  allowAttachmentOnly?: boolean;
   busyLabel?: string;
   helpText?: string;
   keyboardHint?: string;
@@ -66,6 +67,7 @@ const props = withDefaults(defineProps<{
   busy: false,
   disabled: false,
   allowAttachments: true,
+  allowAttachmentOnly: false,
   busyLabel: 'Sending…',
   helpText: '',
   keyboardHint: '',
@@ -88,7 +90,7 @@ const emit = defineEmits<{
 
 const textarea = ref<HTMLTextAreaElement | null>(null);
 const composing = ref(false);
-const canSubmit = computed(() => !props.disabled && !props.busy && Boolean(props.draft.trim()) && props.draft.length <= 20000);
+const canSubmit = computed(() => !props.disabled && !props.busy && (Boolean(props.draft.trim()) || (props.allowAttachmentOnly && props.attachments.length > 0)) && props.draft.length <= 20000);
 const onKeydown = (event: KeyboardEvent) => {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing || composing.value || event.keyCode === 229) return;
   event.preventDefault();
@@ -130,13 +132,13 @@ textarea::placeholder { color: var(--muted); }
 .attachment-list small { color: var(--muted); white-space: nowrap; }
 .attachment-list button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
 .composer-actions { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.attach { display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 9px; border: 0; border-radius: 10px; color: var(--muted); font-size: 13px; font-weight: 610; background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
+.attach { display: grid; flex: 0 0 auto; place-items: center; width: 42px; height: 42px; padding: 0; border: 0; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease; }
 .attach:hover { color: var(--text); background: var(--surface-raised); }
 .attach:active { transform: scale(.97); }
 .privacy { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12px; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
-.composer-status { min-width: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.composer-status { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .composer-help { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; padding: 10px 6px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.keyboard-hint { margin-left: auto; }
+.keyboard-hint { min-width: 0; margin-left: auto; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach:disabled,.attachment-list button:disabled { opacity: .5; cursor: not-allowed; }
 textarea:disabled { color: var(--muted); cursor: not-allowed; }
 .send { flex:0 0 auto; display: grid; place-items: center; width: 42px; height: 42px; margin-left: auto; padding: 0; border: 0; border-radius: 999px; color: var(--acid-ink); background: var(--acid); cursor: pointer; line-height: 1; transition: transform 120ms cubic-bezier(.23,1,.32,1),opacity 120ms ease,background-color 150ms ease; }
@@ -152,6 +154,7 @@ textarea:disabled { color: var(--muted); cursor: not-allowed; }
   .attach { display: grid; padding: 0; place-items: center; gap: 0; }
   .attach,.send,.attachment-list button { min-width: 44px; min-height: 44px; }
 }
+@media (pointer: coarse) { .attach,.send,.attachment-list button { min-width: 44px; min-height: 44px; } }
 @media (hover: hover) and (pointer: fine) {
   .send:hover:not(:disabled) { transform: translateY(-1px); }
 }

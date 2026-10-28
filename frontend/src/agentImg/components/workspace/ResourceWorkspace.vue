@@ -4,12 +4,10 @@
     class="resource-workspace"
     :class="{ 'tree-hidden': !treeVisible, 'compact-tree': compact }"
   >
-    <WorkspaceGithub
-      :key="scope()"
-      v-if="mode === 'github'"
-      :project-id="projectId || ''"
-      :zh="zh"
-    />
+    <div v-if="mode === 'github'" class="github-project-workspace">
+      <WorkspaceProjectPicker :key="`${owner}:${runId}`" :project-id="projectId" :viewed-project-id="viewedProjectId" :run-id="runId" :run-status="runStatus" :zh="zh" @view-project="viewedProjectId = $event" @project-associated="$emit('project-associated', $event)" />
+      <WorkspaceGithub :key="`${owner}:${viewedProjectId}`" :project-id="viewedProjectId" :zh="zh" />
+    </div>
     <template v-else>
       <div v-if="documents.length" class="file-tabs-bar">
         <div
@@ -423,6 +421,7 @@ import { buildApiUrl } from '@/utils/api';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import WorkspaceFileTree from './WorkspaceFileTree.vue';
 import WorkspaceGithub from './WorkspaceGithub.vue';
+import WorkspaceProjectPicker from './WorkspaceProjectPicker.vue';
 const WorkspaceMarkdown = defineAsyncComponent(() => import('./WorkspaceMarkdown.vue'));
 import type { AgentArtifact } from '../../services/agentRuns';
 import {
@@ -464,13 +463,17 @@ const props = withDefaults(
   defineProps<{
     mode: 'files' | 'changes' | 'github' | 'task';
     projectId?: string | null;
+    runId?: string;
+    runStatus?: string;
     artifacts: AgentArtifact[];
     zh: boolean;
     theme: 'light' | 'dark';
   }>(),
-  { projectId: '' }
+  { projectId: '', runId: '', runStatus: '' }
 );
-const emit = defineEmits<{ changes: []; 'focus-directory': [] }>();
+const emit = defineEmits<{ changes: []; 'focus-directory': []; 'project-associated': [value: { projectId: string; scope: 'run' | 'conversation'; affectedRunCount: number }] }>();
+const viewedProjectId = ref(props.projectId || '');
+watch(() => [props.projectId, props.runId], () => { viewedProjectId.value = props.projectId || ''; });
 type Document = {
   key: string;
   generation: number;
@@ -1290,6 +1293,8 @@ onBeforeUnmount(() => {
 defineExpose({ toggleTree, treeVisible });
 </script>
 <style scoped>
+.github-project-workspace { display:flex; flex-direction:column; height:100%; min-height:0; overflow:auto; }
+.github-project-workspace :deep(.github-workspace) { flex:1 0 auto; height:auto; }
 .resource-workspace {
   container-type: inline-size;
   display: flex;

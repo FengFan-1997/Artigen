@@ -113,12 +113,12 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 
 - `/artigen/create` 零状态只保留一个紧凑问题、主输入框和少量真实建议。附件本地边界放在附件按钮说明中，选中文件或需要云端上传时再展开。
 - `/artigen/agent` 直接询问最终交付，不以大型能力表单开场；交付物、能力、站点范围与预算留在 Inspector。
-- 运行详情以“你—Agent 关键结论—审批—交付”形成连续对话，不跳到另一套后台。主会话只保留一处可折叠执行记录；工具调用按服务端 callId、runId 与 subagentId 关联，开始/完成回执合为一行。展开后展示调用标识、时间和事件编号，不展示原始参数、命令或私有输出。子 Agent 状态与完整原始审计仍在右栏。
-- 用户补充内容、审批和停止都在同一任务上下文中完成。
+- 运行详情以“已验证用户短 ID—Agent 关键结论—审批—交付”形成连续对话，不跳到另一套后台。主会话只保留一处可折叠执行记录；工具调用按服务端 callId、runId 与 subagentId 关联，开始/完成回执合为一行。展开后展示调用标识、时间和事件编号，不展示原始参数、命令或私有输出。子 Agent 状态与完整原始审计仍在右栏。
+- 用户补充内容、审批和暂停都在同一任务上下文中完成；结束任务并结算放在更多菜单，必须明确确认。
 - 固定输入区必须为最后一条内容保留足够滚动空间，不能遮挡消息或交付物。
 - 三条路由使用同一个 Composer：Enter 发送、Shift+Enter 换行、中文输入法确认不触发发送；发送中保留输入能力，回执只清除匹配原稿，失败重试复用同一次请求标识。
 - 启动前附件可连续追加、按文件元信息去重并逐个移除；超出数量或执行器限制时明确提示并保留原选择，不截断或替换。报价展示交付物、权限、站点与附件范围，修改范围必须重新报价。上传失败保留引用，创建失败重试复用已上传附件。
-- Run 当前输入协议只支持文字与审批；运行中不展示虚假的文件添加入口，并说明新文件需在新任务中添加。附件仅在内存中持有，刷新后需重选。
+- Run 输入接受文字和 assetIds，可只发附件；文件引用在消息上方，底部动作行左侧加号、右侧发送，快捷键不另占底行。运行中附件复用上传接口与同一幂等标识，失败保留草稿和选择，服务端持久化后由 Worker 校验并加入上下文。附件选择仅在本机内存中，未成功发送前刷新需重选；旧版 OpenAI 执行器不支持动态附件时明确提示。
 - 工具成功/失败必须有明确布尔回执；缺失结果标为待确认，不从缺失字段推断失败。阅读旧记录时新事件不能抢走位置，使用明确的回到底部入口。
 
 ## Resource workspace
@@ -219,7 +219,7 @@ Don't:
 
 - Desktop brand, conversation and resource navigation share a 56px header baseline. The 56px feature rail uses centered 20px SVGs in 44px hit areas, compact 4px gaps and explicit current-location/pressed states. The appearance glyph reflects light, dark or system mode. Desktop does not repeat the brand monogram in the adjacent project header.
 - Resource modes use icon-and-label tabs at their natural width; the directory toggle and close action stay anchored on the right. With no open documents there is no empty file-tab row. Closing the last document restores focus to the directory toggle in the shared header.
-- DEV identification belongs inside the conversation header. The global floating DEV badge is hidden only while a workspace shell is present; it must not cover resource actions or require guessed padding offsets.
+- Environment identification belongs in technical details; the conversation header keeps only the task title and compact actions. The global floating DEV badge is hidden only while a workspace shell is present; it must not cover resource actions or require guessed padding offsets.
 - Compose and active-task inspector visibility have independent version-4 preferences. Version-2/3 visibility migrates only to active tasks: a prior open task inspector does not force an empty resource panel into a new request. An explicit compose preference is restored, including when switching between those contexts.
 - A healthy single Agent is a ready state, not a warning. Genuine offline, model mismatch, running, approval and cost states remain visible. Empty-state suggestions are compact icon actions and disappear once a goal or references have been supplied.
 - The shared Composer uses a visible 1px functional border without a shadow and one 2px theme-colored container focus outline. Its textarea does not add a second outline. Pointer clicks on workspace controls do not inherit the global browser-blue focus ring; keyboard focus retains the semantic theme outline.
@@ -227,7 +227,7 @@ Don't:
 ### Functional boundaries and review surfaces
 
 - Keep the navigation rail and project tree on one shared surface. Use distinct conversation and editor surfaces, one medium panel divider and quiet internal hairlines instead of making every line equally strong. The main header is not boxed.
-- Input outlines, scrollbar thumbs, resize grips and focus indicators stay independently readable (at least 3:1 against their relevant surfaces). This requirement is not applied indiscriminately to decorative dividers. The default shared border token is a hairline; control-border and panel-border have specific, separate roles.
+- Input outlines, scrollbar thumbs and focus indicators stay independently readable (at least 3:1 against their relevant surfaces). This requirement is not applied indiscriminately to decorative dividers. Resize handles keep pointer and keyboard access with neutral interaction feedback, without permanent bright grips. The default shared border token is a hairline; control-border and panel-border have specific, separate roles.
 - Scrollbars use their own theme token, a native 12px WebKit track with a padded rounded thumb and the native standard-color fallback in other engines. Run conversation content keeps 12px clearance from the scrollbar without changing its reading width.
 - The editable source uses the complete upstream VS Code Light/Dark themes from `@uiw/codemirror-theme-vscode`. Use CodeMirror's visible active line and gutter as provided by the theme; keep the normal text cursor and do not add local syntax, selection, caret, active-line or gutter colors. The shell resolved theme is authoritative; CodeMirror Compartment reconfiguration preserves the editable view and undo/selection/scroll state. Only geometry and touch target adaptations belong locally. Diff review uses the MIT-licensed `@git-diff-view/vue` component in GitHub split layout on wide panels and unified layout below 720px; it owns syntax highlighting, gutters, and addition/deletion surfaces. Load the read-only diff component and its styles only when the resource workspace is opened. Keep file names and explicit save/apply/undo actions in Artigen’s review header. Save/error notices stay compact and retain their status text.
 - Diff headings identify actual source versions: opened/current edits, saved/Agent candidate, or saved/history. Only changed lines and gutter markers get semantic red/green; never tint whole versions as if all text changed. Identical content displays an explicit no-changes state.
@@ -240,3 +240,14 @@ Don't:
 - Candidate selection is progressive disclosure: a native details/summary opens a labeled select; changing the source or Escape closes it and restores focus. On narrow screens the popup stays within the review panel, and controls remain at least 44px for touch. Do not occupy a permanent full-width row when no source selection is needed.
 - Related preview/source choices use a quiet segmented selected state, distinct from primary write actions. The review keeps code visible instead of stacking decorative controls.
 - Additional references: [Zed split diffs](https://zed.dev/blog/split-diffs) (clear base/current comparison with minimal surrounding chrome); [Primer SegmentedControl](https://primer.style/product/components/segmented-control/) (related immediate view choices and selected states). These guide interaction hierarchy, not a new brand palette.
+
+## 登录与运行反馈修复
+
+- 登录弹窗不放福利 Banner 或生成次数估算。登录／注册入口旁以轻量气泡展示服务端 `signupOffer.credits`；公开注册关闭、赠点为零、配置读取失败或弹窗已打开时隐藏。后端实际赠点与公开配置使用同一解析。
+- 每个功能栏入口提供可见 tooltip、悬停、键盘焦点及当前状态。tooltip 不依赖原生 title，Escape 可关闭。导航失败显示原因。
+- 左下固定显示钱包可用点数与本次实际用量，终态显示结算值；小额消耗不能格式化成零。冻结、预算和退款在详情；失败显示重试，窄屏从历史抽屉可达。
+- 顶栏标题单行截断，动作区不收缩；暂停／继续为图标按钮，结束并结算在更多菜单中保留确认。
+- Agent 消息旁显示排队、准备、执行、暂停中、已暂停、需要确认及服务不可用等真实状态。离线由现有服务状态接口判断，网络断连单独反馈；不显示“等待执行容量”、独立步骤卡或虚构完成比例。详细步骤在右侧。执行动效服从 reduced-motion。
+- 首条和补充消息使用已验证账号短 ID，完整 ID 放在悬停说明；附件名称与应用回执来自持久记录，不补造已读取状态。
+- GitHub 面板明确区分“查看项目”与“关联当前任务”；前者不改变文件及任务归属。无项目可就地创建并继续选择。关联前展示范围，设计会话明确确认整个会话；正在执行的相关任务可就地暂停，安全后确认关联且不自动恢复。
+- 关联只允许首次关联或同项目幂等，不迁移已有项目；验证、未决调用或未完成子任务会阻止关联。保留沙箱、检查点与计费回执，终态关联只改归属，不增加 GitHub 权限。

@@ -1948,7 +1948,7 @@ const createDesignConversationService = ({
       throw new ApiError(400, 'DESIGN_EXECUTION_TARGET_INVALID');
     }
     return transaction(pool, async (client) => {
-      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      const { dbUserId, row: conversation } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
       const execution = await client.query(
         `SELECT * FROM design_executions
           WHERE id=$1 AND conversation_id=$2 FOR UPDATE`,
@@ -1967,10 +1967,17 @@ const createDesignConversationService = ({
         status = task.rows[0].status === 'running' ? 'running' : 'queued';
       } else {
         const run = await client.query(
-          'SELECT id,status,max_credits FROM agent_runs WHERE id=$1 AND user_id=$2',
+          'SELECT id,status,max_credits,project_id FROM agent_runs WHERE id=$1 AND user_id=$2 FOR UPDATE',
           [agentRunId, dbUserId]
         );
         if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+        if ((run.rows[0].project_id || null) !== (conversation.project_id || null)) {
+          throw new ApiError(409, 'DESIGN_EXECUTION_PROJECT_CONFLICT');
+        }
+        // A concurrent project association may have read no execution link
+        // before waiting for this Run lock. Write its row so that a stale
+        // SERIALIZABLE snapshot cannot later associate it as a standalone Run.
+        await client.query('UPDATE agent_runs SET updated_at=clock_timestamp() WHERE id=$1', [agentRunId]);
         quotedCredits = Number(run.rows[0].max_credits || 0);
         status = ['provisioning', 'running', 'verifying'].includes(run.rows[0].status) ? 'running' : 'queued';
       }

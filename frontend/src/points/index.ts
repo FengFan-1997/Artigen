@@ -51,12 +51,11 @@ export const getCreditsBalance = async (): Promise<CreditsBalance | null> => {
       request: (signal) => authFetch(url, { signal })
     });
     const uid = typeof json?.userId === 'string' ? json.userId : '';
-    if (!uid) return null;
-    return {
-      userId: uid,
-      available: Number(json?.available ?? 0) || 0,
-      frozen: Number(json?.frozen ?? 0) || 0
-    };
+    const available = Number(json?.available);
+    const frozen = Number(json?.frozen);
+    if (uid !== userId || json?.available == null || json?.frozen == null
+      || !Number.isFinite(available) || available < 0 || !Number.isFinite(frozen) || frozen < 0) return null;
+    return { userId: uid, available, frozen };
   } catch {
     return null;
   }
