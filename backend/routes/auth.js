@@ -1,6 +1,7 @@
 const { mayCreateAccount } = require('../services/signup-policy');
 const crypto = require("crypto");
 const { rateLimit, getClientIp } = require("../lib/rateLimit");
+const { getRenderFallbackQuotaIp } = require("../lib/otp-fallback-ip");
 const {
   LOGIN_EMAIL_RE,
   normalizeEmail,
@@ -590,6 +591,23 @@ const installAuthRoutes = (app, options = {}) => {
     target,
     purpose,
   }) => {
+    const useFallback = purpose === "login" &&
+      body?.turnstileFallback === true &&
+      !readTurnstileToken(body) &&
+      emailOtpTurnstileFallbackEnabled();
+    let quotaIp = getClientIp(req);
+    if (useFallback && String(env.NODE_ENV || "").trim().toLowerCase() === "production") {
+      if (!databaseMode()) {
+        throw new OtpDeliveryError("OTP_FALLBACK_UNAVAILABLE", { status: 503, retryable: true });
+      }
+      quotaIp = getRenderFallbackQuotaIp(req, env);
+      if (!quotaIp) {
+        throw new OtpDeliveryError("OTP_FALLBACK_UNAVAILABLE", {
+          status: 503,
+          retryable: true,
+        });
+      }
+    }
     const requestKey = otpSendRequestKey({
       req,
       body,
@@ -619,7 +637,7 @@ const installAuthRoutes = (app, options = {}) => {
       const started = await getOtpDeliveryService().beginAttempt({
         target,
         purpose,
-        ip: getClientIp(req),
+        ip: quotaIp,
         requestKey,
       });
       if (!started.ok) {
