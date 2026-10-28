@@ -48,6 +48,7 @@ const {
 } = require("../services/mail-service");
 const {
   OtpDeliveryError,
+  FALLBACK_SHARED_QUOTA_IP,
   createOtpDeliveryService,
   resolveOtpSendIdempotencyKey,
 } = require("../services/otp-delivery-service");
@@ -601,7 +602,7 @@ const installAuthRoutes = (app, options = {}) => {
       }
       // Requests without a Turnstile token share a conservative durable
       // quota. No proxy header or hosting plan can create more quota buckets.
-      quotaIp = "turnstile-fallback-shared";
+      quotaIp = FALLBACK_SHARED_QUOTA_IP;
     }
     const requestKey = otpSendRequestKey({
       req,

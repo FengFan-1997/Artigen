@@ -5,6 +5,7 @@ const test = require('node:test');
 const { getPool } = require('../db/pool');
 const {
   DEFAULT_LEASE_MS,
+  FALLBACK_SHARED_QUOTA_IP,
   createOtpDeliveryService
 } = require('../services/otp-delivery-service');
 const { createOtpService } = require('../services/otp-service');
@@ -57,12 +58,11 @@ test('shared fallback quota is enforced atomically across distinct senders', {
 }, async () => {
   const service = createOtpDeliveryService({
     pool: getPool(),
-    env: { ...env, OTP_SEND_IP_HOURLY_LIMIT: '20', OTP_SEND_IP_DAILY_LIMIT: '50' }
+    env
   });
-  const group = `integration-fallback-${crypto.randomUUID()}`;
   const requests = Array.from({ length: 21 }, (_, index) => ({
     target: `fallback-${index}-${crypto.randomUUID()}@example.test`,
-    purpose: 'login', ip: group, requestKey: `otp-pg:${crypto.randomUUID()}`
+    purpose: 'login', ip: FALLBACK_SHARED_QUOTA_IP, requestKey: `otp-pg:${crypto.randomUUID()}`
   }));
   const outcomes = await Promise.all(requests.map((input) => service.beginAttempt(input)));
   const attemptIds = outcomes.filter((entry) => entry.ok).map((entry) => entry.attempt.id);

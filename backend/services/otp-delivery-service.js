@@ -6,6 +6,7 @@ const { withClientTransaction } = require('./auth-service');
 const DEFAULT_LEASE_MS = 15_000;
 const IDEMPOTENCY_WINDOW_MS = 60_000;
 const RETENTION_DAYS = 30;
+const FALLBACK_SHARED_QUOTA_IP = 'turnstile-fallback-shared';
 const FINAL_STATES = new Set(['accepted', 'debug', 'unknown', 'failed', 'rejected']);
 const TARGET_IP_QUOTA_STATES = Object.freeze([
   'reserved',
@@ -69,11 +70,11 @@ const boundedPositiveInt = (value, fallback, max) => {
   return Math.min(max, parsed);
 };
 
-const quotaLimits = (env = process.env) => ({
+const quotaLimits = (env = process.env, { fallback = false } = {}) => ({
   targetHour: boundedPositiveInt(env.OTP_SEND_TARGET_HOURLY_LIMIT, 5, 1000),
   targetDay: boundedPositiveInt(env.OTP_SEND_TARGET_DAILY_LIMIT, 10, 10_000),
-  ipHour: boundedPositiveInt(env.OTP_SEND_IP_HOURLY_LIMIT, 20, 100_000),
-  ipDay: boundedPositiveInt(env.OTP_SEND_IP_DAILY_LIMIT, 50, 1_000_000),
+  ipHour: boundedPositiveInt(env.OTP_SEND_IP_HOURLY_LIMIT, 20, fallback ? 20 : 100_000),
+  ipDay: boundedPositiveInt(env.OTP_SEND_IP_DAILY_LIMIT, 50, fallback ? 50 : 1_000_000),
   globalDay: boundedPositiveInt(env.OTP_SEND_GLOBAL_DAILY_LIMIT, 250, 10_000_000)
 });
 
@@ -416,7 +417,7 @@ const createOtpDeliveryService = ({
       );
       const violation = quotaViolation(
         quota.rows[0] || {},
-        quotaLimits(env),
+        quotaLimits(env, { fallback: ip === FALLBACK_SHARED_QUOTA_IP }),
         current
       );
       if (violation) {
@@ -578,6 +579,7 @@ module.exports = {
   ALL_STATES,
   DEFAULT_LEASE_MS,
   FINAL_STATES,
+  FALLBACK_SHARED_QUOTA_IP,
   GLOBAL_BUDGET_STATES,
   IDEMPOTENCY_WINDOW_MS,
   OtpDeliveryError,
