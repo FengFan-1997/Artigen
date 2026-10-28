@@ -1,8 +1,10 @@
 const TURNSTILE_SCRIPT_URL =
   'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 const TURNSTILE_SCRIPT_SELECTOR = 'script[data-artigen-turnstile]';
+const TURNSTILE_LOAD_TIMEOUT_MS = 12_000;
 
 let scriptPromise: Promise<void> | null = null;
+let scriptAttempt = 0;
 
 export const EMAIL_OTP_TURNSTILE_ACTION = 'email_otp';
 export const PASSWORD_RESET_TURNSTILE_ACTION = 'password_reset_otp';
@@ -29,39 +31,56 @@ export const loadTurnstile = () => {
   if (existingApi?.render) return Promise.resolve();
   if (scriptPromise) return scriptPromise;
   const pending = new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(
+      () => finish(new Error('TURNSTILE_LOAD_FAILED')),
+      TURNSTILE_LOAD_TIMEOUT_MS
+    );
     const existing = document.querySelector<HTMLScriptElement>(TURNSTILE_SCRIPT_SELECTOR);
     if (existing) {
       if (existing.dataset.artigenTurnstileState === 'loaded') {
         existing.remove();
         scriptPromise = null;
-        void loadTurnstile().then(resolve, reject);
+        void loadTurnstile().then(() => finish(), (error) => finish(error));
         return;
       }
-      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('load', () => finish(), { once: true });
       existing.addEventListener(
         'error',
         () => {
           existing.remove();
-          reject(new Error('TURNSTILE_LOAD_FAILED'));
+          finish(new Error('TURNSTILE_LOAD_FAILED'));
         },
         { once: true }
       );
       return;
     }
     const script = document.createElement('script');
-    script.src = TURNSTILE_SCRIPT_URL;
+    // A removed script can leave its fetch pending. A new URL prevents browsers
+    // from joining that same stalled request when the user retries.
+    scriptAttempt += 1;
+    script.src = `${TURNSTILE_SCRIPT_URL}&art_attempt=${scriptAttempt}`;
     script.async = true;
     script.defer = true;
     script.dataset.artigenTurnstile = '1';
     script.dataset.artigenTurnstileState = 'loading';
     script.onload = () => {
+      if (settled) return;
       script.dataset.artigenTurnstileState = 'loaded';
-      resolve();
+      finish();
     };
     script.onerror = () => {
+      if (settled) return;
       script.dataset.artigenTurnstileState = 'failed';
       script.remove();
-      reject(new Error('TURNSTILE_LOAD_FAILED'));
+      finish(new Error('TURNSTILE_LOAD_FAILED'));
     };
     document.head.appendChild(script);
   });

@@ -167,7 +167,7 @@ jobs:
         env:
           ARTIGEN_E2E_WITH_TURNSTILE: '1'
           VITE_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
-        run: pnpm --filter personal exec playwright test e2e/auth-turnstile-timeout.spec.ts --project=${{ matrix.project }}
+        run: pnpm --filter personal exec playwright test e2e/auth-turnstile-timeout.spec.ts e2e/auth-turnstile-script-stall.spec.ts --project=${{ matrix.project }}
 
   harness-deterministic:
     name: Agent Harness V3 (${{ matrix.group }})
