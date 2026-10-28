@@ -162,6 +162,13 @@ jobs:
       - name: Run ${{ matrix.project }} shard ${{ matrix.shard }}
         run: pnpm --filter personal exec playwright test --project=${{ matrix.project }} --fully-parallel --shard=${{ matrix.shard }}
 
+      - name: Verify Turnstile timeout handling
+        if: matrix.shard == '1/1' || matrix.shard == '1/2'
+        env:
+          ARTIGEN_E2E_WITH_TURNSTILE: '1'
+          VITE_TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+        run: pnpm --filter personal exec playwright test e2e/auth-turnstile-timeout.spec.ts --project=${{ matrix.project }}
+
   harness-deterministic:
     name: Agent Harness V3 (${{ matrix.group }})
     runs-on: ubuntu-latest

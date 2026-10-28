@@ -8,12 +8,15 @@
     <div v-if="siteKey" ref="containerRef"></div>
     <div v-if="siteKey && loadFailed" class="turnstile-error" role="alert">
       <span>
-        {{ isZh ? '安全验证加载失败，请检查网络后重试' : 'Security check failed to load.' }}
+        {{ isZh ? '安全验证未完成，请点击重新加载后再试。' : 'Security verification was not completed. Reload and try again.' }}
       </span>
       <button type="button" class="turnstile-retry" :disabled="loading" @click="retry">
         {{ isZh ? '重新加载' : 'Retry' }}
       </button>
     </div>
+    <p v-else-if="siteKey && !modelValue && !fallbackSelected" class="turnstile-hint">
+      {{ isZh ? '完成安全验证后才能发送验证码。' : 'Complete the security check to send a verification code.' }}
+    </p>
     <div v-if="allowFallback" class="turnstile-fallback-row">
       <button
         class="turnstile-fallback"
@@ -110,9 +113,18 @@ const render = async () => {
       action: props.action,
       theme: 'dark',
       appearance: 'interaction-only',
-      callback: (token: string) => emit('update:modelValue', String(token || '').trim()),
-      'expired-callback': () => emit('update:modelValue', ''),
-      'timeout-callback': () => emit('update:modelValue', ''),
+      callback: (token: string) => {
+        loadFailed.value = false;
+        emit('update:modelValue', String(token || '').trim());
+      },
+      'expired-callback': () => {
+        emit('update:modelValue', '');
+        loadFailed.value = true;
+      },
+      'timeout-callback': () => {
+        emit('update:modelValue', '');
+        loadFailed.value = true;
+      },
       'error-callback': () => {
         emit('update:modelValue', '');
         loadFailed.value = true;
@@ -162,6 +174,13 @@ defineExpose({ reset, retry });
   color: #fca5a5;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.turnstile-hint {
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0;
 }
 
 .turnstile-retry {
