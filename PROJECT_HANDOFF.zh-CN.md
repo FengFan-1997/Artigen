@@ -669,3 +669,9 @@ PR #251 的 Core、跨浏览器 E2E、Agent Harness、chaos、Vercel 与 Release
 用户反馈 GitHub 调色板只让编辑器颜色轻微变化。本次将编辑器切换为 MIT 许可的 `@uiw/codemirror-theme-vscode@4.25.12` 完整 Light/Dark 主题，启用上游当前行及 gutter 高亮，并取消非标准十字光标；不再自制语法、选区、光标或行号颜色。差异区继续使用已有的 MIT `@git-diff-view/vue` GitHub split/unified 组件，移动端与文件写回流程保持原实现。PR [#252](https://github.com/FengFan-1997/Artigen/pull/252) 已通过完整 CI 并合入 `dev`，merge SHA 为 `c90e3317d4ef5f0d8b880a25e96376b1790f4ace`。Render DEV `/api/meta` 精确返回该 SHA，`/healthz`、`/readyz` 均 HTTP 200，数据库迁移032、数据库、S3、Provider、支付、认证、邮件与 Agent 配置检查全绿。DEV Worker 当前仍离线；本轮未创建真实 Agent Run。Production 未变。
 
 本地验证：前端 lint、type-check、build、268 项单测、88.5 KiB 首屏 JS gzip 预算、文档和 workspace 检查通过；Chrome 桌面编辑器回归8项通过，1项截图用例在独立采图运行通过。另有12组截图覆盖两种主题、JSON/TypeScript/Markdown/HTML/CSS、390–1920px视口和split/inline差异。截图为真实 Vue 页面加合成 API fixture，不代表线上业务数据或真实模型任务。PR #252 首次 CI 暴露旧压力测试对所有语法 token 一律要求 4.5:1，与上游 VS Code 注释色实测最低 4.22:1 冲突；现在仅允许上游注释 token 使用 4.2:1，其余语法 token 仍要求 4.5:1。本机 Chrome 桌面和390px手机定向 E2E 共4/4、相关 ESLint 与 type-check 通过；PR CI run `39241896967` 的 Core、Agent Harness、chaos、Chromium/Firefox/WebKit 桌面/手机/平板 E2E、Release gate 与 Vercel Preview 全部通过。DEV 真实页面可正常打开且 `/readyz` 全绿，但页面明确显示 Worker 离线、发送按钮禁用，所以未运行真实 Agent 任务。此次仅更新前端主题、依赖、许可证与设计/Handoff 文档；无账号、平台配置、后端、数据库或线上能力开关变化。Production 未变。
+
+## 2026-10-28 Turnstile 控制台核验（只读）
+
+Cloudflare 控制台已核实生产 Vercel 与 DEV Render 入口均在 Artigen Production widget 域名清单中，未修改配置或凭据；最近24小时生产域名有验证发起但无完成，数据不能区分真实用户和自动化测试。DEV PR #257 已部署共享验证码备用额度与依赖修复；备用额度可被耗尽，其他依赖转发 IP 的限流仍待治理，不能据此视作整体认证安全已完成。
+
+Turnstile 登录修复候选增加脚本加载等待上限：脚本无响应时展示可重试错误，移除旧组件后的迟到回调不再覆盖新验证状态；登录备用通道和密码重置的验证策略不变。本候选尚未部署，线上验证与生产放行仍待完成；脚本卡住只是一种独立失败路径，不能视为已证明此前 challenge 自动超时的根因。

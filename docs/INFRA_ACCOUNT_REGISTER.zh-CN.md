@@ -13,7 +13,7 @@
 | [Neon](https://console.neon.tech/) | 旧报告记载生产 PostgreSQL 和 S3 对象存储 | 旧记录称绑定 GitHub，并曾有 Neon CLI 会话 | 历史信息，当前生产数据库所属项目、控制台身份与认证方式需重新核验；不得再据旧报告把 DEV 数据库标为 Neon |
 | [Render](https://dashboard.render.com/) | DEV 同源 Web/API、生产 API 与平台 Secret | 本机已认证 CLI；2026-09-28 通过 Chrome 的 GitHub 登录进入 Artigen 工作区 | 2026-10-15 CLI 与 deployment 核实 DEV 服务继续使用 Free，已自动部署工作空间批次，元信息精确匹配已合并 dev SHA。2026-10-08 CLI 显示 Artigen DEV 与 Production 均为 `not_suspended`，两者实际服务方案均为 Free；本次未核验账单页或剩余月度用量。Production 的实际 Free 方案与 `render.yaml` 的 Starter 声明不一致，待单独核对；本次未更改任何 Render 套餐或配置 |
 | [Vercel](https://vercel.com/login) | 生产前端、Preview、邮件中继 | Chrome 可打开部署概览；打开部署日志会转到登录页。2026-10-12 本机 `vercel inspect` 被拒并提示 CLI token 无效；网页登录方式与账号绑定仍待核验 | 当前 CLI 会话不能读取部署日志；这不能证明 Vercel 账号或项目不可用。本轮没有重新登录、轮换或更改凭据 |
-| [Cloudflare](https://dash.cloudflare.com/) | Workers AI、Turnstile 和相关运行凭据 | 平台 Secret / Keychain；控制台登录方式待核验 | 不从 API Key、模型名称或 Keychain 标签推断账号 Owner |
+| [Cloudflare](https://dash.cloudflare.com/) | Workers AI、Turnstile 和相关运行凭据 | 2026-10-28 使用已有 GitHub 登录进入控制台；运行凭据保存在平台 Secret / Keychain | 已在控制台核实 Artigen Production Turnstile 的生产 Vercel 和 DEV Render 域名均在白名单；2026-10-28 Workers 当前为 Free。账号所有权、其他登录方式和恢复流程仍待单独核验 |
 | [SiliconFlow](https://cloud.siliconflow.cn/) | 模型服务与受控回退 | 平台 Secret / Keychain；控制台登录方式待核验 | 本轮未核验控制台账号或重新执行付费模型测试 |
 | 邮件服务 | OTP 邮件，经 Vercel 中继连接 SMTP | SMTP 授权凭据与中继 Secret；由项目所有者接管邮箱 | 不把 SMTP 授权凭据当成邮箱登录密码；个人邮箱不写入本报告 |
 | 支付服务 | 既有支付通道 | 平台 Secret 与既有支付后台；控制台入口、商户归属和认证方式待核验 | 用户要求保留支付；本轮不创建订单、不执行真实付款，不沿用旧报告中的“支付关闭”结论 |
@@ -74,3 +74,7 @@ Docker 启动后已验证既有固定镜像、Python 依赖与受限出口；严
 PR #248完整门禁通过后进入dev，Render DEV实际meta与平台live deployment均为 `0c7ba13b53ab12e5b218f3ed8993e1025927b582`；readyz全部命名依赖通过，迁移032保持就绪。唯一DEV Mac Worker固定同一SHA，复用既有依赖与Python环境，重启后新在线心跳及模型、浏览器、出口、桌面中继均ready。切换前严格TLS只读检查无活动任务和有效租约；旧持久checkout与私有启动项副本继续用于回滚。
 
 认证方式、Keychain存放机制、账号归属、权限、Secret、供应商与Free方案均未变，LaunchAgent仍按需启动。Chrome退出重开后本次测试会话失效，当前真实账号验收等待重新登录；这不等于账号或SMTP凭据失效，也不把旧任务成功记成新SHA任务验收通过。2026-10-16已通过原有OTP流程重新登录DEV；认证方式、权限和Cookie策略未改变。本轮编辑器候选的新SHA任务验收仍需在发布后独立补齐。
+
+### 2026-10-28 Turnstile 与代理来源核验
+
+Cloudflare 控制台现有 Artigen Production widget 的域名清单包含生产 Vercel 与 DEV Render 公开入口，未改动配置或密钥。其最近24小时统计显示生产域名有验证发起但没有完成；统计不能区分真实用户与自动化测试，也不能单独证明原因。DEV 与生产的 Render Web 服务均显示 Free；升级到其他方案可能改变网络入口，不能仅凭当前方案认定转发头可信。Cloudflare Workers 控制台显示当前 Free；该方案有每日请求和单次 CPU 限制，升级或超额策略需要重新评估。

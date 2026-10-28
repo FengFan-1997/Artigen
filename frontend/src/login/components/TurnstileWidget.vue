@@ -114,18 +114,22 @@ const render = async () => {
       theme: 'dark',
       appearance: 'interaction-only',
       callback: (token: string) => {
+        if (revision !== renderRevision) return;
         loadFailed.value = false;
         emit('update:modelValue', String(token || '').trim());
       },
       'expired-callback': () => {
+        if (revision !== renderRevision) return;
         emit('update:modelValue', '');
         loadFailed.value = true;
       },
       'timeout-callback': () => {
+        if (revision !== renderRevision) return;
         emit('update:modelValue', '');
         loadFailed.value = true;
       },
       'error-callback': () => {
+        if (revision !== renderRevision) return;
         emit('update:modelValue', '');
         loadFailed.value = true;
       }
