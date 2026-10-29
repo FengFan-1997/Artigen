@@ -167,6 +167,9 @@ export const installAgentInputFixture = async (
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
+    // WebKit routes local object URLs through this hook too. Preserve the
+    // browser's same-origin preview while still blocking external requests.
+    if (url.protocol === 'blob:' && url.origin === new URL(page.url()).origin) return route.continue();
     if (!['127.0.0.1', 'localhost'].includes(url.hostname)) return route.abort();
     if (!url.pathname.startsWith('/api/')) return route.continue();
     const p = url.pathname;

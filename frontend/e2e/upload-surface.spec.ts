@@ -90,11 +90,13 @@ test('image previews stay local and release their object URL when removed', asyn
   await page.locator('input[type=file]').first().setInputFiles({
     name: 'preview.png',
     mimeType: 'image/png',
-    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/8WEAAAAASUVORK5CYII=', 'base64')
+    // A complete RGBA PNG with valid chunk checksums; verify decoding below.
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==', 'base64')
   });
 
   const thumbnail = page.locator('.attachment-card.image img');
   await expect(thumbnail).toBeVisible();
+  await expect(thumbnail).toHaveJSProperty('naturalWidth', 1);
   const url = await thumbnail.getAttribute('src');
   expect(url).toMatch(/^blob:/);
   const remove = page.getByRole('button', { name: '移除 preview.png' });
