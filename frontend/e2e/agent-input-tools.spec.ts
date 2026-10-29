@@ -128,11 +128,11 @@ for (const [route, label] of [
     await page.getByRole('textbox', { name: label }).fill('阅读这些资料并提出建议');
     await references(page, ['brief.txt']);
     await references(page, ['brief.txt', 'notes.txt']);
-    await expect(page.locator('.attachment-list > span')).toHaveCount(2);
+    await expect(page.locator('.attachment-card')).toHaveCount(2);
     await expect(page.locator('.attachment-list')).toContainText('brief.txt');
     await expect(page.locator('.attachment-list')).toContainText('notes.txt');
     await page.getByRole('button', { name: '移除 brief.txt', exact: true }).click();
-    await expect(page.locator('.attachment-list > span')).toHaveCount(1);
+    await expect(page.locator('.attachment-card')).toHaveCount(1);
     await expect(page.locator('.attachment-list')).not.toContainText('brief.txt');
   });
   test(`${route}: an over-limit selection reports the limit and keeps existing references`, async ({
@@ -145,7 +145,7 @@ for (const [route, label] of [
       page,
       Array.from({ length: 10 }, (_, i) => `new-${i}.txt`)
     );
-    await expect(page.locator('.attachment-list > span')).toHaveCount(1);
+    await expect(page.locator('.attachment-card')).toHaveCount(1);
     await expect(page.locator('.attachment-list')).toContainText('original.txt');
     await expect(page.locator('#artigen-workspace-main').getByText(/最多添加 10 个/)).toBeVisible();
   });
@@ -187,7 +187,7 @@ test('upload failure preserves files and blocks task creation; a retry can compl
       .locator('#artigen-workspace-main')
       .getByText('参考文件上传失败，已保留你的选择，任务尚未创建。请重试。', { exact: true })
   ).toBeVisible();
-  await expect(page.locator('.attachment-list > span')).toHaveCount(2);
+  await expect(page.locator('.attachment-card')).toHaveCount(2);
   fixture.state.uploadFail = false;
   await page.getByRole('button', { name: '确认并运行', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${inputRunId}$`));

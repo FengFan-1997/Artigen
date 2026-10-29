@@ -177,7 +177,7 @@ test.describe('approved Agent workspace repairs', () => {
       await page.goto(runPath);
       await page.locator('textarea[name=agent-run-input]').fill('请沿用品牌说明，保留每个可编辑图层。\n'.repeat(12));
       await page.locator('input[type=file]').setInputFiles(Array.from({ length: 5 }, (_, i) => ({ name: `品牌说明与文件参考-${i + 1}.txt`, mimeType: 'text/plain', buffer: Buffer.from('reference') })));
-      await expect(page.locator('.attachment-list > span')).toHaveCount(5);
+      await expect(page.locator('.attachment-card')).toHaveCount(5);
       const geometry = await page.locator('.composer-box').evaluate(el => {
         const box = el.getBoundingClientRect(), send = el.querySelector('.send')!.getBoundingClientRect(), add = el.querySelector('.attach')!.getBoundingClientRect(), input = el.querySelector('textarea')!.getBoundingClientRect();
         return { right: box.right - send.right, bottom: box.bottom - send.bottom, row: Math.abs(add.bottom - send.bottom), afterInput: send.top >= input.bottom, inside: box.left >= 0 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1, overflow: document.documentElement.scrollWidth > innerWidth, animation: getComputedStyle(document.querySelector('.spinning')!).animationName };

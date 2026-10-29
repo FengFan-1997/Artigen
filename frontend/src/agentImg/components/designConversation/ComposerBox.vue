@@ -1,15 +1,13 @@
 <template>
   <form class="composer-box" :class="{ compact }" :aria-busy="busy" @submit="onSubmit">
-    <div v-if="attachments.length" class="attachment-list">
-      <span v-for="file in attachments" :key="file.clientId">
-        <WorkspaceIcon name="attachment" />
-        <b>{{ file.name }}</b>
-        <small>{{ formatBytes(file.byteSize) }}</small>
-        <button type="button" :disabled="disabled || busy" :aria-label="`${removeAttachmentLabel} ${file.name}`" @click="emit('remove-attachment', file.clientId)">
-          <WorkspaceIcon name="close" :size="14" />
-        </button>
-      </span>
-    </div>
+    <AttachmentStrip
+      v-if="attachments.length"
+      :attachments="attachments"
+      :disabled="disabled || busy"
+      :remove-label="removeAttachmentLabel"
+      :zh="zh"
+      @remove="emit('remove-attachment', $event)"
+    />
     <textarea
       ref="textarea"
       :value="draft"
@@ -42,11 +40,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import AttachmentStrip from './AttachmentStrip.vue';
 import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
 
 const props = withDefaults(defineProps<{
   draft: string;
-  attachments: ReadonlyArray<{ clientId: string; name: string; byteSize: number }>;
+  attachments: ReadonlyArray<{ clientId: string; name: string; byteSize: number; mimeType?: string; file?: File }>;
   busy?: boolean;
   disabled?: boolean;
   allowAttachments?: boolean;
@@ -63,6 +62,7 @@ const props = withDefaults(defineProps<{
   sendLabel?: string;
   removeAttachmentLabel?: string;
   inputName?: string;
+  zh?: boolean;
 }>(), {
   busy: false,
   disabled: false,
@@ -78,7 +78,8 @@ const props = withDefaults(defineProps<{
   requestLabel: 'Design request',
   sendLabel: 'Send request',
   removeAttachmentLabel: 'Remove',
-  inputName: 'design-request'
+  inputName: 'design-request',
+  zh: false
 });
 
 const emit = defineEmits<{
@@ -106,10 +107,6 @@ const onSubmit = (event: SubmitEvent) => {
 const onSendClick = (event: MouseEvent) => {
   if (event.detail > 1) event.preventDefault();
 };
-const formatBytes = (bytes: number) => bytes < 1024 * 1024
-  ? `${Math.max(1, Math.round(bytes / 1024))} KB`
-  : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-
 defineExpose({ focus: () => textarea.value?.focus() });
 watch([() => props.draft, () => props.compact], async () => {
   await nextTick();
@@ -126,11 +123,6 @@ watch([() => props.draft, () => props.compact], async () => {
 textarea { display: block; width: 100%; min-height: 78px; max-height: min(180px, 24dvh); box-sizing: border-box; padding: 5px 6px 10px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.58; background: transparent; }
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 64px; }
-.attachment-list { max-height: min(160px, 24dvh); overflow-y:auto; overscroll-behavior:contain; scrollbar-color:var(--scrollbar-thumb) transparent; display: flex; flex-wrap: wrap; gap: 7px; padding: 5px 6px 11px; }
-.attachment-list > span { flex-shrink:1; display: inline-flex; min-width: 0; align-items: center; gap: 7px; max-width: 100%; padding: 7px 9px; border: 0; border-radius: 9px; font-size: 12px; background: var(--surface-hover); }
-.attachment-list b { min-width:0; flex:1; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attachment-list small { color: var(--muted); white-space: nowrap; }
-.attachment-list button { display: grid; flex: 0 0 auto; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
 .composer-actions { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .attach { display: grid; flex: 0 0 auto; place-items: center; width: 42px; height: 42px; padding: 0; border: 0; border-radius: 10px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease; }
 .attach:hover { color: var(--text); background: var(--surface-raised); }
@@ -139,12 +131,12 @@ textarea::placeholder { color: var(--muted); }
 .composer-status { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .composer-help { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; padding: 10px 6px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .keyboard-hint { min-width: 0; margin-left: auto; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.attach:disabled,.attachment-list button:disabled { opacity: .5; cursor: not-allowed; }
+.attach:disabled { opacity: .5; cursor: not-allowed; }
 textarea:disabled { color: var(--muted); cursor: not-allowed; }
 .send { flex:0 0 auto; display: grid; place-items: center; width: 42px; height: 42px; margin-left: auto; padding: 0; border: 0; border-radius: 999px; color: var(--acid-ink); background: var(--acid); cursor: pointer; line-height: 1; transition: transform 120ms cubic-bezier(.23,1,.32,1),opacity 120ms ease,background-color 150ms ease; }
 .send:active:not(:disabled) { transform: scale(.96); }
 .send:disabled { color: var(--muted); background: var(--surface-raised); cursor: not-allowed; opacity: .58; }
-.attach:focus-visible,.send:focus-visible,.attachment-list button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.attach:focus-visible,.send:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 799px) {
   .composer-box { padding: 13px 12px 10px; border-radius: 18px; }
   textarea,.compact textarea { min-height: 68px; }
@@ -152,9 +144,9 @@ textarea:disabled { color: var(--muted); cursor: not-allowed; }
   .keyboard-hint { display: none; }
   .attach span { display: none; }
   .attach { display: grid; padding: 0; place-items: center; gap: 0; }
-  .attach,.send,.attachment-list button { min-width: 44px; min-height: 44px; }
+  .attach,.send { min-width: 44px; min-height: 44px; }
 }
-@media (pointer: coarse) { .attach,.send,.attachment-list button { min-width: 44px; min-height: 44px; } }
+@media (pointer: coarse) { .attach,.send { min-width: 44px; min-height: 44px; } }
 @media (hover: hover) and (pointer: fine) {
   .send:hover:not(:disabled) { transform: translateY(-1px); }
 }

@@ -166,6 +166,7 @@
         <ComposerBox
           :draft="message"
           :attachments="composerAttachments"
+          :zh="zh"
           :allow-attachment-only="true"
           :attach-label="zh ? '添加文件' : 'Add files'"
           :attachment-hint="zh ? '发送后交给当前任务处理' : 'Files are shared with this task when sent'"
@@ -373,7 +374,7 @@ let pendingInput: { runId: string; owner: string; message: string; inputId: stri
 const selectedFiles = ref<File[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
-const composerAttachments = computed(() => selectedFiles.value.map(file => ({ clientId: referenceFileKey(file), name: file.name, byteSize: file.size })));
+const composerAttachments = computed(() => selectedFiles.value.map(file => ({ clientId: referenceFileKey(file), name: file.name, mimeType: file.type || 'application/octet-stream', byteSize: file.size, file })));
 const runMenu = ref<HTMLDetailsElement | null>(null);
 const credits = ref<CreditsBalance | null>(null);
 const creditsLoading = ref(false);

@@ -74,6 +74,7 @@
       <ComposerBox
         :draft="draft"
         :attachments="selectedAttachments"
+        :zh="zh"
         :busy="sending"
         :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
         :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
@@ -212,6 +213,7 @@
         <ComposerBox
           :draft="draft"
           :attachments="selectedAttachments"
+          :zh="zh"
           :busy="sending"
           :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
           :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
@@ -1685,8 +1687,6 @@ onBeforeUnmount(() => {
 :deep(.composer-box .privacy) { color: var(--muted-2); }
 :deep(.composer-box .send) { color: var(--acid-ink); background: var(--acid); }
 :deep(.composer-box .send:disabled) { color: var(--muted-2); background: var(--surface-hover); }
-:deep(.composer-box .attachment-list > span) { border: 0; color: var(--text); background: var(--surface-hover); }
-:deep(.composer-box .attachment-list small),:deep(.composer-box .attachment-list button) { color: var(--muted); }
 .suggestion-grid { display: grid; gap: 3px; margin-top: 26px; }
 .suggestion-grid header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; color: var(--muted); font-size: 12px; font-weight: 620; }
 .suggestion-grid header button { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
