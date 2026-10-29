@@ -13,6 +13,8 @@ License identifiers come from the installed package metadata and upstream projec
 | `@codemirror/lang-javascript` | MIT | <https://github.com/codemirror/lang-javascript> |
 | `@codemirror/lang-json` | MIT | <https://github.com/codemirror/lang-json> |
 | `@codemirror/lang-markdown` | MIT | <https://code.haverbeke.berlin/codemirror/lang-markdown> |
+| `@git-diff-view/file` | MIT | <https://github.com/MrWangJustToDo/git-diff-view> |
+| `@git-diff-view/vue` | MIT | <https://github.com/MrWangJustToDo/git-diff-view> |
 | `@lucide/vue` | ISC and MIT (Feather-derived icons) | <https://github.com/lucide-icons/lucide> |
 | `@uiw/codemirror-theme-vscode` | MIT | <https://github.com/uiwjs/react-codemirror> |
 | `@codemirror/merge` | MIT | <https://code.haverbeke.berlin/codemirror/merge> |

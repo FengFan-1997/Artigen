@@ -857,6 +857,10 @@ const installAuthRoutes = (app, options = {}) => {
     res.setHeader("Cache-Control", "no-store");
     const resolved = resolveAuthUser(req);
     if (!resolved.ok) {
+      if (resolved.status >= 500) {
+        // An unavailable session store does not invalidate the user's cookie.
+        return res.status(503).json({ ok: false, error: 'SESSION_STORE_UNAVAILABLE' });
+      }
       clearAuthCookie(res);
       return res.json({ ok: true, authenticated: false, userId: null, user: null });
     }
