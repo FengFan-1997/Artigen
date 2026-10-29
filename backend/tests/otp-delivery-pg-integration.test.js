@@ -5,6 +5,7 @@ const test = require('node:test');
 const { getPool } = require('../db/pool');
 const {
   DEFAULT_LEASE_MS,
+  FALLBACK_SHARED_QUOTA_IP,
   createOtpDeliveryService
 } = require('../services/otp-delivery-service');
 const { createOtpService } = require('../services/otp-service');
@@ -50,6 +51,27 @@ const removeRows = async ({ attemptIds = [], challengeIds = [] } = {}) => {
 
 test.after(async () => {
   if (hasDatabase) await getPool().end();
+});
+
+test('shared fallback quota is enforced atomically across distinct senders', {
+  skip: !hasDatabase
+}, async () => {
+  const service = createOtpDeliveryService({
+    pool: getPool(),
+    env
+  });
+  const requests = Array.from({ length: 21 }, (_, index) => ({
+    target: `fallback-${index}-${crypto.randomUUID()}@example.test`,
+    purpose: 'login', ip: FALLBACK_SHARED_QUOTA_IP, requestKey: `otp-pg:${crypto.randomUUID()}`
+  }));
+  const outcomes = await Promise.all(requests.map((input) => service.beginAttempt(input)));
+  const attemptIds = outcomes.filter((entry) => entry.ok).map((entry) => entry.attempt.id);
+  try {
+    assert.equal(attemptIds.length, 20);
+    assert.equal(outcomes.filter((entry) => !entry.ok && entry.scope === 'ip_hour').length, 1);
+  } finally {
+    await removeRows({ attemptIds });
+  }
 });
 
 test('50 identical PostgreSQL OTP begin attempts elect exactly one owner', {

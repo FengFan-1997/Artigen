@@ -193,13 +193,21 @@ const subagentOfflineShellScript = ({ script, workspacePath, inputPaths = [] }) 
 const runBridge = ({
   payload,
   config,
+  dockerConfigDir = process.env.ARTIGEN_AGENT_DOCKER_CONFIG_DIR,
   timeoutMs = 120_000,
   spawnImpl = spawn
 }) => new Promise((resolve, reject) => {
+  const cuaPythonBin = path.isAbsolute(config.cuaPython)
+    ? path.dirname(config.cuaPython)
+    : '';
   const child = spawnImpl(config.cuaPython, [BRIDGE_PATH], {
     cwd: path.resolve(__dirname, '..'),
     env: {
       PATH: [
+        // LaunchAgents often start with an empty PATH. The Docker CLI wrapper
+        // uses /usr/bin/env python3, so keep the selected CUA venv discoverable
+        // even when the worker is launched outside an interactive shell.
+        cuaPythonBin,
         dockerWrapperBin,
         process.env.PATH || '',
         process.platform === 'darwin' ? dockerDesktopBin : ''
@@ -207,7 +215,8 @@ const runBridge = ({
       ARTIGEN_REAL_DOCKER: process.env.ARTIGEN_REAL_DOCKER || realDockerBin,
       PYTHONPATH: process.env.PYTHONPATH || '',
       CUA_API_KEY: config.cuaApiKey,
-      CUA_TELEMETRY_ENABLED: 'false'
+      CUA_TELEMETRY_ENABLED: 'false',
+      ...(dockerConfigDir ? { DOCKER_CONFIG: dockerConfigDir } : {})
     },
     stdio: ['pipe', 'pipe', 'pipe']
   });

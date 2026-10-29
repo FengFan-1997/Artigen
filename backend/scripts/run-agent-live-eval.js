@@ -226,9 +226,9 @@ const loadLiveEvalSecrets = ({
   return { runtimeEnv, evidenceKeyMaterial };
 };
 
-const currentLiveTextModel = () => String(
-  process.env.AGENT_MODEL_NAME || (
-    String(process.env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'siliconflow'
+const currentLiveTextModel = (env = process.env) => String(
+  env.AGENT_MODEL_NAME || (
+    String(env.AGENT_MODEL_PROVIDER || 'cloudflare').trim().toLowerCase() === 'siliconflow'
       ? LEGACY_SILICONFLOW_TEXT_MODEL
       : TEXT_MODEL
   )
@@ -870,7 +870,8 @@ const buildTerminalFailureReport = ({
   results,
   error,
   harness = null,
-  databaseConnectivity = null
+  databaseConnectivity = null,
+  env = process.env
 } = {}) => {
   const summary = {
     ...summarize(results),
@@ -885,7 +886,7 @@ const buildTerminalFailureReport = ({
     commitSha: gate?.commitSha || null,
     matrixHash: gate?.matrixHash || null,
     modelLocks: {
-      text: currentLiveTextModel(),
+      text: currentLiveTextModel(env),
       image: 'Kwai-Kolors/Kolors'
     },
     limits: {

@@ -1,5 +1,6 @@
 <template>
   <AgentWorkspaceShell
+    ref="workspaceShell"
     :project-id="run?.projectId"
     :artifacts="artifacts"
     :zh="zh"
@@ -10,6 +11,7 @@
     :task-cost-label="run ? `${zh ? '已用' : 'Used'} ${run.budget.used.toFixed(1)} / ${run.budget.maximum} ${zh ? '点' : 'credits'}` : ''"
     :badges="{ subagents: activeSubagents, computer: takeoverRequired ? 1 : 0, files: artifacts.length, plan: pendingApprovals.length }"
     :live-announcement="loadError || notice || failureText"
+    :website-available="Boolean(previewHtml)"
     @new-task="$router.push('/artigen/agent')"
   >
     <template #history="{ search }">
@@ -164,7 +166,7 @@
       <p v-if="loadError || notice" class="run-notice" :role="loadError ? 'alert' : 'status'" aria-live="polite">{{ loadError || notice }}</p>
       <DraftRestoredNotice v-if="draftRestored && !terminal" :zh="zh" :references="false" />
       <div class="run-composer">
-        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="scrollToLatest(true)" />
+        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="jumpToLatest" />
         <div v-if="terminal && !message.trim()" class="run-ended-bar" role="group" :aria-label="zh ? '任务结束后的操作' : 'Run ended actions'">
           <span class="run-ended-status" :class="run.status" aria-hidden="true">
             <WorkspaceIcon :name="run.status === 'succeeded' ? 'check' : run.status === 'cancelled' ? 'stop' : 'file'" :size="16" />
@@ -330,10 +332,12 @@
       </div>
     </template>
 
-    <dialog v-if="previewHtml" ref="previewModal" class="preview-modal" aria-modal="true" aria-labelledby="preview-modal-title" @keydown.stop @cancel.prevent="closePreview">
-      <header><strong id="preview-modal-title" :title="previewName">{{ previewName }}</strong><CloseButton ref="previewCloseButton" :label="zh ? '关闭预览' : 'Close preview'" @click="closePreview" /></header>
-      <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
-    </dialog>
+    <template #website>
+      <div class="website-preview" @keydown.esc.stop.prevent="closePreview">
+        <header><strong :title="previewName">{{ previewName }}</strong><CloseButton ref="previewCloseButton" :label="zh ? '关闭预览' : 'Close preview'" @click="closePreview" /></header>
+        <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
+      </div>
+    </template>
   </AgentWorkspaceShell>
 </template>
 
@@ -431,8 +435,9 @@ const activeTakeoverApprovalId = ref('');
 const desktopScreen = ref<HTMLDivElement | null>(null);
 const previewHtml = ref('');
 const previewName = ref('');
-const previewModal = ref<HTMLDialogElement | null>(null);
+const workspaceShell = ref<InstanceType<typeof AgentWorkspaceShell> | null>(null);
 const previewCloseButton = ref<InstanceType<typeof CloseButton> | null>(null);
+let previewRevision = 0;
 let previewReturnFocus: HTMLElement | null = null;
 let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
@@ -843,6 +848,7 @@ const finishTakeover = async () => {
 
 const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
   const targetRunId = runId.value;
+  const ticket = ++previewRevision;
   previewReturnFocus = event?.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : document.activeElement instanceof HTMLElement
@@ -850,20 +856,21 @@ const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
       : null;
   try {
     const html = await loadAgentWebsitePreview(artifact);
-    if (targetRunId !== runId.value) return;
+    if (targetRunId !== runId.value || ticket !== previewRevision) return;
     previewHtml.value = html;
     previewName.value = artifact.filename;
     await nextTick();
-    previewModal.value?.showModal();
+    await workspaceShell.value?.openResources('website');
     previewCloseButton.value?.focus({ preventScroll: true });
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (targetRunId === runId.value && ticket === previewRevision) {
       notice.value = errorText(error || 'AGENT_WEBSITE_PREVIEW_FAILED');
     }
   }
 };
 const closePreview = () => {
-  previewModal.value?.close();
+  previewRevision++;
+  void workspaceShell.value?.openResources('task');
   previewHtml.value = '';
   previewName.value = '';
   const target = previewReturnFocus;
@@ -903,6 +910,14 @@ const scrollToLatest = async (force = false) => {
   nearBottom.value = true;
   hasUnreadUpdates.value = false;
 };
+const jumpToLatest = async (event: MouseEvent) => {
+  const button = event.currentTarget as HTMLButtonElement;
+  const target = button.parentElement?.querySelector<HTMLElement>('textarea:not(:disabled), .run-ended-action');
+  const restoreFocus = event.detail === 0 && document.activeElement === button;
+  await scrollToLatest(true);
+  await nextTick();
+  if (restoreFocus && target?.isConnected && document.activeElement === document.body) target.focus({ preventScroll: true });
+};
 watch(() => events.value.length, (next, previous) => {
   if (next > previous) void scrollToLatest();
 });
@@ -915,6 +930,7 @@ const resetSelectedRun = () => {
   disconnectDesktop();
   activeTakeoverApprovalId.value = '';
   previewHtml.value = '';
+  previewRevision++;
   previewName.value = '';
   previewReturnFocus = null;
   eventIds.clear();
@@ -1178,7 +1194,7 @@ onBeforeUnmount(() => {
 :is(.delivery-summary, .file-list) a > svg { width: 16px; height: 16px; justify-self: end; color: var(--muted); }
 .run-notice { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 10px; padding: 10px 12px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 12px; }
 .run-controls svg { width: 16px; height: 16px; }
-.preview-modal svg { width: 18px; height: 18px; }
+.website-preview svg { width: 18px; height: 18px; }
 .run-controls { display: flex; gap: 5px; }
 .run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 0; border-radius: 7px; background: var(--surface); font-size: 12px; }
 .run-controls .primary-control { color: var(--acid-ink); background: var(--acid); }
@@ -1288,12 +1304,11 @@ onBeforeUnmount(() => {
 .artifact-verification.passed { color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
 .artifact-verification.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
 .preview-control { width: 100%; min-width: 0; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto minmax(0, 1fr); box-sizing: border-box; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0; overflow: hidden; color: var(--text); border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
-.preview-modal:not([open]) { display: none; }
-.preview-modal::backdrop { background: rgb(0 0 0 / 25%); }
-.preview-modal header { display: flex; box-sizing: border-box; min-width: 0; min-height: 52px; align-items: center; gap: 12px; padding: 4px 12px; border-bottom: 1px solid var(--border); }
-.preview-modal header strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
-.preview-modal iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: #fff; }
+.website-preview { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; overflow:hidden; background:var(--bg); }
+.website-preview header { display:flex; box-sizing:border-box; min-width:0; min-height:44px; align-items:center; gap:10px; margin-inline:12px; padding:4px 0; border-bottom:1px solid var(--border); }
+.website-preview header strong { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:600; }
+.website-preview header :deep(.close-btn) { width:32px; height:32px; }
+.website-preview iframe { width:100%; height:100%; flex:1; min-height:0; border:0; background:#fff; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 .run-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 12px; }
@@ -1328,7 +1343,6 @@ onBeforeUnmount(() => {
   .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 18px; }
   .run-controls button span { display: none; }
-  .preview-modal { inset: 0; border: 0; border-radius: 0; }
 }
 @media (max-width: 960px) {
   .run-controls button { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
@@ -1351,8 +1365,9 @@ onBeforeUnmount(() => {
 .run-ended-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 799px) {
   .run-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
-  .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
+  .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .website-preview header button { min-width: 44px; min-height: 44px; }
   .run-ended-bar { gap: 9px; padding: 9px; }
   .run-ended-action { gap: 5px; padding: 0 10px; }
 }
+@media (max-width: 799px), (pointer: coarse) { .website-preview header { min-height:52px; } .website-preview header :deep(.close-btn) { width:44px; height:44px; } }
 </style>

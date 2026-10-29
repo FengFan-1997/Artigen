@@ -1,0 +1,80 @@
+# Artigen 平台账号与接管报告
+
+本报告是开发和运维必读的现行平台清单。核对日期：2026-10-15（各条目保留独立证据日期）。它记录服务用途、登录入口、认证方式和核验状态；个人邮箱、账号标识、凭据和资源 ID 不进入公开仓库。实际账号与凭据通过项目所有者、既有平台会话或系统钥匙串核对。
+
+旧 `ARTIGEN_INFRA_ACCOUNT_AUDIT.zh-CN.md` 的工作树副本最后更新于 2026-08-07，已退出当前文档体系，其中 Neon 等记录不能覆盖后续迁移事实。本报告接替其账号接管用途；部署状态仍以[正式 Handoff](../PROJECT_HANDOFF.zh-CN.md)和实时平台为准。
+
+## 平台清单
+
+| 平台与入口 | Artigen 用途 / 环境 | 登录方式与接管位置 | 核验状态 |
+| --- | --- | --- | --- |
+| [GitHub](https://github.com/login) | 代码、PR、CI；DEV / 生产发布来源 | 现有 Chrome 会话或已认证 `gh` CLI；平台 Owner 由项目所有者管理 | 本轮确认 Chrome 和 CLI 均已登录；不据此推断其他平台的绑定关系 |
+| [Aiven](https://console.aiven.io/login) | DEV PostgreSQL 18 | Chrome 控制台使用 Aiven Password 邮箱密码认证；用户提供的资料存于 macOS Keychain 的 `Artigen Aiven Console` 条目；数据库与控制台凭据分开 | 2026-10-08 核实既有 PostgreSQL 18.6 Free 服务原为 Powered off；通过现有 Power on 操作恢复，随后 PostgreSQL 接受连接且 DEV `/readyz` 数据库检查通过。控制台提示 trial ended，但没有升级套餐、添加付款方式或创建服务 |
+| [Neon](https://console.neon.tech/) | 旧报告记载生产 PostgreSQL 和 S3 对象存储 | 旧记录称绑定 GitHub，并曾有 Neon CLI 会话 | 历史信息，当前生产数据库所属项目、控制台身份与认证方式需重新核验；不得再据旧报告把 DEV 数据库标为 Neon |
+| [Render](https://dashboard.render.com/) | DEV 同源 Web/API、生产 API 与平台 Secret | 本机已认证 CLI；2026-09-28 通过 Chrome 的 GitHub 登录进入 Artigen 工作区 | 2026-10-15 CLI 与 deployment 核实 DEV 服务继续使用 Free，已自动部署工作空间批次，元信息精确匹配已合并 dev SHA。2026-10-08 CLI 显示 Artigen DEV 与 Production 均为 `not_suspended`，两者实际服务方案均为 Free；本次未核验账单页或剩余月度用量。Production 的实际 Free 方案与 `render.yaml` 的 Starter 声明不一致，待单独核对；本次未更改任何 Render 套餐或配置 |
+| [Vercel](https://vercel.com/login) | 生产前端、Preview、邮件中继 | Chrome 可打开部署概览；打开部署日志会转到登录页。2026-10-12 本机 `vercel inspect` 被拒并提示 CLI token 无效；网页登录方式与账号绑定仍待核验 | 当前 CLI 会话不能读取部署日志；这不能证明 Vercel 账号或项目不可用。本轮没有重新登录、轮换或更改凭据 |
+| [Cloudflare](https://dash.cloudflare.com/) | Workers AI、Turnstile 和相关运行凭据 | 2026-10-28 使用已有 GitHub 登录进入控制台；运行凭据保存在平台 Secret / Keychain | 已在控制台核实 Artigen Production Turnstile 的生产 Vercel 和 DEV Render 域名均在白名单；2026-10-28 Workers 当前为 Free。账号所有权、其他登录方式和恢复流程仍待单独核验 |
+| [SiliconFlow](https://cloud.siliconflow.cn/) | 模型服务与受控回退 | 平台 Secret / Keychain；控制台登录方式待核验 | 本轮未核验控制台账号或重新执行付费模型测试 |
+| 邮件服务 | OTP 邮件，经 Vercel 中继连接 SMTP | SMTP 授权凭据与中继 Secret；由项目所有者接管邮箱 | 不把 SMTP 授权凭据当成邮箱登录密码；个人邮箱不写入本报告 |
+| 支付服务 | 既有支付通道 | 平台 Secret 与既有支付后台；控制台入口、商户归属和认证方式待核验 | 用户要求保留支付；本轮不创建订单、不执行真实付款，不沿用旧报告中的“支付关闭”结论 |
+
+“待核验”表示目前没有足够证据，不表示账号不存在或服务不可用。登录方式只能在实际完成登录或读取平台认证设置后升级为“已核验”。
+
+## 数据与凭据边界
+
+- 2026-10-08 DEV API 的 `/readyz` 返回 HTTP 200，数据库迁移为 `031_agent_run_artifact_lineage`，S3、payload、Provider、auth/mail、pricing、Agent 和 design-conversation 检查通过；API `/api/meta` SHA 与 Mac Worker checkout 一致。`/api/agent/status` 确认 Worker、模型、浏览器、受限出口和桌面中继 ready，队列为空；没有执行真实任务。
+- Aiven 的既有 DEV Free PostgreSQL 在 2026-10-08 从 Powered off 恢复；Aiven 页面显示 1 CPU / 1 GB RAM / 1 GB storage，Mac 侧 `pg_isready` 与 DEV API 数据库 readiness 均通过。控制台的 trial-ended 提示仍在；本次没有升级套餐或配置付款方式。没有改变数据库白名单、密码或证书校验。
+- 2026-09-22 DEV Mac Worker 的失效启动路径已修复，独立 checkout 对齐已验证 DEV SHA，前台验证并正常退出后按需启动唯一 LaunchAgent；API 已确认新心跳、浏览器、出口与桌面中继就绪。数据库与控制台凭据仍保存在原 Keychain，未改账号、权限或存放机制。具体恢复和回滚流程见[Agent 运维手册](../AGENT_OPERATIONS_RUNBOOK.zh-CN.md#工作目录丢失后的恢复)。
+- DEV 与生产的 S3 endpoint、bucket 当前相同，资产键没有环境前缀。文件存储尚未实现环境隔离；更换 bucket 前必须核对历史资产 URI 和兼容读取，不能直接切换导致旧文件失效。
+- S3 合成对象的上传、备份、删除、恢复与授权下载已验收并清理；这不等于整桶灾备或真实业务数据恢复完成。
+- 数据库连接串、CA、API Key、SMTP 授权凭据、支付密钥只存于平台 Secret、系统钥匙串或被忽略的本地环境文件。报告只记录变量名称、存储机制和接管步骤，不复制秘密值。
+- 账号所有权、登录方式、凭据存放位置和应用运行状态是不同事实；任何一项的成功不能替代其他项的核验。
+
+### 2026-10-15 DEV 工作空间发布与 Worker 接管
+
+PR #245工作空间、PR #246首次执行及PR #247命名文件交付完整性修复均通过完整Quality Gate和Release gate并合入dev。最近一次执行代码核验提交为 `6774e72e37434bef0e09f139253f4f9c0f4ca160`：Render DEV与唯一DEV Worker精确对齐，迁移032生效，健康与依赖探针均HTTP200。后续文档提交不改变这份执行证据；当前部署版本以实际meta及启动项为准。现有邮箱 OTP 完成实际发送和登录，不改变账号或 SMTP 凭据。
+
+DEV Worker 迁到持久目录内按已验证 SHA 固定的独立 checkout，复用已存在的 Node 依赖和 Python/CUA 环境，保留旧 checkout 与私有启动项回滚副本。DEV LaunchAgent 仍 `RunAtLoad=false`、`KeepAlive=false`，按需启动；凭据继续使用 DEV 专属 Keychain，没有新增权限、供应商、Secret 或生产变更。接管时不得把这些依赖目标当临时测试目录删除。
+
+Docker 启动后已验证既有固定镜像、Python 依赖与受限出口；严格 TLS 的 PostgreSQL18只读预检通过，切换前无活动任务或租约。新 Worker 的 model、browser、egress、desktop relay 均就绪，队列为空。此处是运行条件证据；真实 Agent 文件任务结果以正式 Handoff 的独立验收记录为准。
+
+### 本机 Worker 的网络依赖
+
+2026-09-22 经用户授权核验：本机原先没有连接 VPN 或启用系统代理，数据库直连超时；现有 Karing 缺少有效线路。仅从本机既有备份恢复原有线路，保留修复前私有配置副本，不修改其余 DNS / 分流设置、不引入新供应商或新凭据。连接后严格 TLS PostgreSQL 查询和 Worker readiness 均通过。当前本机 Worker 依赖这条可用线路；退出客户端或线路不可用时需重新核验，不能只检查 Aiven 网页是否能打开。节点地址、订阅信息和认证材料不进入仓库。
+
+### Aiven 控制台凭据取用
+
+在 macOS“钥匙串访问”中搜索 `Artigen Aiven Console`，条目的通用账户标签为 `console-login`，加密内容保存控制台邮箱与用户提供的密码，并标注该密码尚未重新登录验证。通过系统授权查看；不要把内容复制到本报告、Handoff、PR 或终端输出。保存已通过内存回读一致性校验；现有 Chrome 会话已核实为邮箱密码认证，但没有通过注销再登录验证钥匙串中的密码值。
+
+控制台注册页提供 GitHub 入口，但当前认证设置显示 Aiven Password；不能把注册入口当成已有 GitHub 绑定。数据库连接凭据与控制台登录凭据是两套独立凭据，不互相替换。
+
+## 账号或平台变更时必须同步
+
+以下任一变化，都必须在完成该任务时同步本报告、受影响的 runbook 和正式 Handoff；有 PR 时放在同一 PR，不能只留在聊天或本地 Handoff：
+
+1. 新增、替换、停用平台、账号、组织或项目，以及 DEV / 生产归属变化。
+2. 登录邮箱、账号归属、GitHub / Google / SSO 绑定、MFA 或恢复方式变化。
+3. 权限、凭据轮换、Secret / Keychain 存放位置、数据库或存储供应商变化。
+4. 发现旧报告与现状不一致，包括已有配置或账号变更未被记录。
+
+每次更新至少说明：平台用途、环境、公开登录入口、认证方式、凭据存放机制、核验日期、证据来源、待核验项和接管 / 回滚影响。个人身份或秘密发生变化时，只记录“已核实变更”及接管位置，不把实际值写入 Git。
+
+没有相关变化的 PR，在 PR 检查清单写明不适用原因。历史副本无需逐个改写，所有当前开发入口必须指向本报告。尚未验证的信息保留明确状态，不用猜测补齐。
+
+## 接管顺序
+
+1. 先读本报告、[项目运维指南](../PROJECT_OPERATIONS_GUIDE.zh-CN.md)及[正式 Handoff](../PROJECT_HANDOFF.zh-CN.md)。
+2. 复用项目所有者授权的现有浏览器或 CLI 会话，确认实际环境与服务；控制台登录不能通过数据库用户名推断。
+3. 需要登录或额外权限时说明缺失的具体条件；不为诊断而新建账号、重置凭据或扩大访问范围。
+4. 修改前准备可回滚的具体方案；修改后核验实际连接 / 登录 / 服务状态，并同步本报告的最终事实。
+
+
+### 2026-10-15 Agent 界面批次 DEV 发布核验
+
+PR #248完整门禁通过后进入dev，Render DEV实际meta与平台live deployment均为 `0c7ba13b53ab12e5b218f3ed8993e1025927b582`；readyz全部命名依赖通过，迁移032保持就绪。唯一DEV Mac Worker固定同一SHA，复用既有依赖与Python环境，重启后新在线心跳及模型、浏览器、出口、桌面中继均ready。切换前严格TLS只读检查无活动任务和有效租约；旧持久checkout与私有启动项副本继续用于回滚。
+
+认证方式、Keychain存放机制、账号归属、权限、Secret、供应商与Free方案均未变，LaunchAgent仍按需启动。Chrome退出重开后本次测试会话失效，当前真实账号验收等待重新登录；这不等于账号或SMTP凭据失效，也不把旧任务成功记成新SHA任务验收通过。2026-10-16已通过原有OTP流程重新登录DEV；认证方式、权限和Cookie策略未改变。本轮编辑器候选的新SHA任务验收仍需在发布后独立补齐。
+
+### 2026-10-28 Turnstile 与代理来源核验
+
+Cloudflare 控制台现有 Artigen Production widget 的域名清单包含生产 Vercel 与 DEV Render 公开入口，未改动配置或密钥。其最近24小时统计显示生产域名有验证发起但没有完成；统计不能区分真实用户与自动化测试，也不能单独证明原因。DEV 与生产的 Render Web 服务均显示 Free；升级到其他方案可能改变网络入口，不能仅凭当前方案认定转发头可信。Cloudflare Workers 控制台显示当前 Free；该方案有每日请求和单次 CPU 限制，升级或超额策略需要重新评估。

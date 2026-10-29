@@ -40,17 +40,7 @@ const isAfdianDocumentedWebhookProbe = (body) => {
   );
 };
 
-const paidFeaturesEnabled = (env = process.env) => {
-  return /^(1|true)$/i.test(String(env.PAID_FEATURES_ENABLED || '').trim());
-};
-
-const paymentsEnabled = (env = process.env) => {
-  if (Object.prototype.hasOwnProperty.call(env, 'PAYMENTS_ENABLED')) {
-    return paidFeaturesEnabled(env) &&
-      /^(1|true)$/i.test(String(env.PAYMENTS_ENABLED || '').trim());
-  }
-  return paidFeaturesEnabled(env);
-};
+const { paidFeaturesEnabled, paymentsEnabled } = require('../services/payment-config');
 
 const legacyJsonBillingEnabled = (env = process.env) => {
   return canUseLegacyJsonBilling({ env });

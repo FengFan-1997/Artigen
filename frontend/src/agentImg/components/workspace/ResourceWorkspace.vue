@@ -91,272 +91,6 @@
         </div>
       </form>
       <div class="file-body">
-        <section class="file-viewer">
-          <div v-if="active" class="file-toolbar">
-            <div class="breadcrumb" :title="active.file.path" role="group" :aria-label="zh ? '文件位置' : 'File location'">
-              <span class="breadcrumb-source">{{ active.source === 'local' ? (zh ? '本机' : 'Local') : zh ? '项目' : 'Project' }}</span>
-              <WorkspaceIcon name="chevron-right" :size="14" />
-              <span class="breadcrumb-path"><span class="breadcrumb-directory">{{ active.file.path.slice(0, active.file.path.lastIndexOf('/') + 1) }}</span><span class="breadcrumb-filename">{{ filename(active.file.path) }}</span></span>
-            </div>
-            <div class="viewer-actions">
-              <div
-                v-if="active.text !== undefined"
-                class="view-mode-switch"
-                role="group"
-                :aria-label="zh ? '文件显示方式' : 'File view'"
-              >
-                <button
-                  type="button"
-                  :aria-pressed="active.view === 'preview'"
-                  @click="active.view = 'preview'"
-                >{{ zh ? '预览' : 'Preview' }}</button>
-                <button
-                  type="button"
-                  :aria-pressed="active.view === 'source'"
-                  @click="active.view = 'source'"
-                >{{ zh ? '源码' : 'Source' }}</button>
-              </div>
-              <button
-                v-if="active.text !== undefined"
-                :disabled="!canSave(active) || saving"
-                @click="save(active)"
-              >
-                {{ saving ? (zh ? '保存中…' : 'Saving…') : zh ? '保存' : 'Save' }}</button
-              ><button
-                v-if="active.blob"
-                :aria-label="
-                  zh
-                    ? `下载 ${filename(active.file.path)}`
-                    : `Download ${filename(active.file.path)}`
-                "
-                @click="download(active)"
-              >
-                <WorkspaceIcon name="download" />
-              </button>
-            </div>
-          </div>
-          <div v-if="mode === 'changes'" class="changes-panel">
-            <template v-if="active?.text !== undefined"
-              ><header>
-                <b>{{ filename(active.file.path) }}</b
-                ><template v-if="hasChanges && statistics"><span class="added">+{{ statistics.added }}</span
-                ><span class="removed">−{{ statistics.removed }}</span></template>
-              </header>
-              <p :id="`${comparisonPickerId}-description`">{{ comparisonDescription }}</p>
-              <div v-if="candidateFiles.length" class="comparison-picker">
-                <label :for="comparisonPickerId">{{ zh ? '比较来源' : 'Comparison source' }}</label>
-                <select class="workspace-select"
-                  :id="comparisonPickerId"
-                  :value="proposal?.candidateId || ''"
-                  :title="comparisonSourceLabel"
-                  :aria-describedby="`${comparisonPickerId}-description`"
-                  @change="chooseProposal(($event.target as HTMLSelectElement).value)"
-                >
-                  <option value="">{{ zh ? '当前编辑' : 'Current edits' }}</option>
-                  <option v-if="comparisonVersion" :value="proposal?.candidateId" disabled>{{ comparisonSourceLabel }}</option>
-                  <option v-for="file in candidateFiles" :key="file.id" :value="file.id">
-                    {{ file.path }}
-                  </option>
-                </select>
-              </div>
-              <div v-if="hasChanges || active.undo !== undefined" class="change-actions">
-                <button v-if="proposal && hasChanges" :disabled="saving" @click="applyProposal">
-                  {{ zh ? '应用到当前文件' : 'Apply to current file' }}</button
-                ><button v-if="active.undo !== undefined" :disabled="saving" @click="undoApply">
-                  {{ zh ? '撤销最近一次应用' : 'Undo last application' }}</button
-                ><button v-if="!proposal && dirty(active)" :disabled="saving" @click="save(active)">
-                  {{ zh ? '保存当前修改' : 'Save changes' }}
-                </button>
-              </div>
-              <WorkspaceEditor
-                v-if="hasChanges"
-                :key="active.key + ':diff:' + String(proposal?.candidateId || '')"
-                :model-value="proposal?.text ?? active.text"
-                :compare-to="active.baseline"
-                :path="active.file.path"
-                :readonly="true"
-                :label="zh ? '文件差异' : 'File differences'"
-              />
-              <div v-else class="changes-empty" role="status">
-                <WorkspaceIcon name="git" :size="20" />
-                <div>
-                  <h2>{{ zh ? '两份内容一致' : 'Contents are identical' }}</h2>
-                  <p>{{ zh ? '可继续编辑文件，或选择其他版本进行比较。' : 'Continue editing the file or choose another version to compare.' }}</p>
-                </div>
-              </div>
-            </template>
-            <div v-else class="resource-empty">
-              <WorkspaceIcon name="git" :size="20" />
-              <h2>{{ zh ? '先打开一个文本文件' : 'Open a text file' }}</h2>
-              <p>
-                {{
-                  zh
-                    ? '这里显示编辑、Agent 候选与版本差异；GitHub 记录在独立面板中。'
-                    : 'Inspect edits and Agent proposals here. GitHub history is in its own panel.'
-                }}
-              </p>
-            </div>
-          </div>
-          <template v-else-if="active">
-            <div v-if="active.loading" class="resource-loading" role="region" :aria-label="zh ? '文件读取' : 'File loading'" aria-busy="true">
-              <WorkspaceIcon name="file" :size="16" />
-              <div>
-                <p class="resource-loading-name" :title="active.file.path">{{ filename(active.file.path) }}</p>
-                <p role="status">{{ zh ? '正在读取文件…' : 'Opening file…' }}</p>
-              </div>
-            </div>
-            <div v-else-if="active.error" class="resource-empty file-read-error">
-              <div class="file-read-content">
-                <WorkspaceIcon name="file" :size="20" />
-                <h2>{{ zh ? '暂时无法打开文件' : 'Could not open file' }}</h2>
-                <p class="file-read-name" :title="active.file.path">{{ filename(active.file.path) }}</p>
-                <p role="alert">{{ active.error }}</p>
-                <button type="button" class="file-read-retry" @click="reloadDocument(active)">
-                  <WorkspaceIcon name="refresh" :size="16" />{{ zh ? '重新读取' : 'Reload file' }}
-                </button>
-              </div>
-            </div>
-            <WorkspaceEditor
-              v-else-if="active.text !== undefined && active.view === 'source'"
-              :key="active.key"
-              :model-value="active.text"
-              :path="active.file.path"
-              :readonly="!editable(active)"
-              @update:model-value="edit(active!, $event)"
-              @save="save(active!)"
-            />
-            <div
-              v-else-if="
-                /^image\/(png|jpeg|webp|gif)$/.test(active.file.mimeType) && active.objectUrl
-              "
-              class="image-viewer"
-            >
-              <div v-if="active.imageError" class="image-preview-error" role="status">
-                <WorkspaceIcon name="image" :size="20" />
-                <div>
-                  <h2>{{ zh ? '图片暂时无法预览' : 'Image preview unavailable' }}</h2>
-                  <p>{{ zh ? '可以使用上方下载按钮，下载原文件后打开。' : 'Use Download above to open the original file on your device.' }}</p>
-                </div>
-              </div>
-              <template v-else>
-                <div class="image-controls" role="group" :aria-label="zh ? '图片缩放' : 'Image zoom'">
-                  <button
-                    :aria-label="zh ? '缩小图片' : 'Zoom out'"
-                    :disabled="zoom <= 0.25"
-                    @click="zoom = Math.max(0.25, zoom - 0.25)"
-                  >
-                    <WorkspaceIcon name="minus" :size="18" />
-                  </button>
-                  <button
-                    class="image-zoom-reset"
-                    :aria-label="zh ? `适合宽度，当前 ${Math.round(zoom * 100)}%` : `Fit to width, currently ${Math.round(zoom * 100)}%`"
-                    :title="zh ? '适合宽度' : 'Fit to width'"
-                    @click="zoom = 1"
-                  >{{ Math.round(zoom * 100) }}%</button>
-                  <button
-                    :aria-label="zh ? '放大图片' : 'Zoom in'"
-                    :disabled="zoom >= 4"
-                    @click="zoom = Math.min(4, zoom + 0.25)"
-                  >
-                    <WorkspaceIcon name="plus" :size="18" />
-                  </button>
-                </div>
-                <div class="image-canvas">
-                  <img
-                    :key="active.objectUrl"
-                    :src="active.objectUrl"
-                    :alt="filename(active.file.path)"
-                    @error="imagePreviewFailed"
-                    :style="{ width: 100 * zoom + '%', maxWidth: zoom === 1 ? '100%' : 'none' }"
-                  />
-                </div>
-              </template>
-            </div>
-            <WorkspacePdf
-              v-else-if="active.file.mimeType === 'application/pdf' && active.blob"
-              :key="active.key"
-              :blob="active.blob"
-              :zh="zh"
-            />
-            <div
-              v-else-if="active.text !== undefined && /\.(md|markdown)$/i.test(active.file.path)"
-              class="document-preview"
-            >
-              <WorkspaceMarkdown :text="active.text" :files="files" />
-            </div>
-            <iframe
-              v-else-if="active.text !== undefined && /\.html?$/i.test(active.file.path)"
-              class="html-preview"
-              :srcdoc="staticHtml(active.text)"
-              sandbox=""
-              referrerpolicy="no-referrer"
-              :title="filename(active.file.path)"
-            ></iframe>
-            <pre v-else-if="active.text !== undefined" class="text-preview">{{ active.text }}</pre>
-            <div v-else class="resource-empty binary-preview">
-              <div class="binary-details">
-                <WorkspaceIcon name="file" :size="20" />
-                <h2 :title="active.file.path">{{ filename(active.file.path) }}</h2>
-                <p>{{ zh ? '此文件暂不支持在线预览。' : 'No preview is available for this file.' }}</p>
-                <dl class="binary-properties" :aria-label="zh ? '文件信息' : 'File information'">
-                  <div><dt>{{ zh ? '文件类型' : 'File type' }}</dt><dd>{{ active.file.mimeType }}</dd></div>
-                  <div><dt>{{ zh ? '文件大小' : 'File size' }}</dt><dd>{{ formatSize(active.file.byteSize) }}</dd></div>
-                </dl>
-                <button v-if="active.blob" class="binary-download" type="button" @click="download(active)">
-                  <WorkspaceIcon name="download" :size="16" />{{ zh ? '下载后打开' : 'Download to open' }}
-                </button>
-              </div>
-            </div>
-            <footer v-if="!active.loading && !active.error" class="file-status">
-              <span class="file-save-state"
-                >{{ dirty(active) ? (zh ? '未保存' : 'Unsaved') : zh ? '已保存' : 'Saved' }} ·
-                {{ active.source === 'local' ? (zh ? '本机' : 'Local') : `v${active.file.revision}` }}</span>
-              <div class="file-status-actions">
-                <button :disabled="!active.blob || dirty(active) || saving" @click="attach(active)">
-                  {{ zh ? '加入会话上下文' : 'Add to chat context' }}</button
-                ><button v-if="active.text !== undefined" @click="$emit('changes')">
-                  {{ zh ? '查看变更' : 'View changes' }}</button
-                ><label v-if="versions.length" class="file-version-control">
-                  <span>{{ zh ? '比较版本' : 'Compare version' }}</span>
-                  <select class="workspace-select"
-                    :aria-label="zh ? '查看文件版本' : 'View file versions'"
-                    @change="
-                      ($event.target as HTMLSelectElement).value !== '' &&
-                      compareVersion(Number(($event.target as HTMLSelectElement).value))
-                    "
-                  >
-                    <option value="">{{ zh ? '选择…' : 'Choose…' }}</option>
-                    <option
-                      v-for="version in versions"
-                      :key="version.revision"
-                      :value="version.revision"
-                    >
-                      v{{ version.revision }}
-                    </option>
-                  </select>
-                </label>
-              </div>
-            </footer>
-          </template>
-          <div v-else class="resource-empty">
-            <WorkspaceIcon name="file" :size="20" />
-            <h2>{{ zh ? '打开文件，继续工作' : 'Open a file to continue' }}</h2>
-            <p>
-              {{
-                zh
-                  ? '从目录选择项目产物，或连接本机文件夹。'
-                  : 'Choose a project file or connect a local folder.'
-              }}
-            </p>
-            <button v-if="!treeVisible" @click="toggleTree">
-              {{ zh ? '显示目录' : 'Show files' }}</button
-            ><button v-if="projectId" @click="newTextFile">
-              {{ zh ? '新建文本文件' : 'New text file' }}</button
-            ><button v-if="supportsLocalDirectories()" @click="connectFolder">
-              {{ zh ? '连接本机文件夹' : 'Connect local folder' }}
-            </button>
-          </div>
-        </section>
         <aside
           v-show="treeVisible"
           class="resource-tree"
@@ -456,11 +190,281 @@
             }}
           </p>
         </aside>
+        <section class="file-viewer">
+          <div v-if="active" class="file-toolbar" :class="{ 'is-comparison': mode === 'changes' }">
+            <div class="breadcrumb" :title="active.file.path" role="group" :aria-label="zh ? '文件位置' : 'File location'">
+              <span class="breadcrumb-source">{{ active.source === 'local' ? (zh ? '本机' : 'Local') : zh ? '项目' : 'Project' }}</span>
+              <WorkspaceIcon name="chevron-right" :size="14" />
+              <span class="breadcrumb-path"><span class="breadcrumb-directory">{{ active.file.path.slice(0, active.file.path.lastIndexOf('/') + 1) }}</span><span class="breadcrumb-filename">{{ filename(active.file.path) }}</span></span>
+            </div>
+            <div class="viewer-actions">
+              <div
+                v-if="active.text !== undefined && mode !== 'changes'"
+                class="view-mode-switch"
+                role="group"
+                :aria-label="zh ? '文件显示方式' : 'File view'"
+              >
+                <button
+                  type="button"
+                  :aria-pressed="active.view === 'preview'"
+                  @click="active.view = 'preview'"
+                >{{ zh ? '预览' : 'Preview' }}</button>
+                <button
+                  type="button"
+                  :aria-pressed="active.view === 'source'"
+                  @click="active.view = 'source'"
+                >{{ zh ? '源码' : 'Source' }}</button>
+              </div>
+              <button
+                v-if="active.text !== undefined && mode !== 'changes'"
+                :disabled="!canSave(active) || saving"
+                @click="save(active)"
+              >
+                {{ saving ? (zh ? '保存中…' : 'Saving…') : zh ? '保存' : 'Save' }}</button
+              ><button
+                v-if="active.blob"
+                :aria-label="
+                  zh
+                    ? `下载 ${filename(active.file.path)}`
+                    : `Download ${filename(active.file.path)}`
+                "
+                @click="download(active)"
+              >
+                <WorkspaceIcon name="download" />
+              </button>
+            </div>
+          </div>
+          <div v-if="mode === 'changes'" class="changes-panel">
+            <template v-if="active?.text !== undefined"
+              ><header>
+                <b>{{ filename(active.file.path) }}</b
+                ><template v-if="hasChanges && statistics"><span class="added">+{{ statistics.added }}</span
+                ><span class="removed">−{{ statistics.removed }}</span></template>
+              </header>
+              <p :id="`${comparisonPickerId}-description`">{{ comparisonDescription }}</p>
+              <div v-if="candidateFiles.length" class="comparison-picker">
+                <label :for="comparisonPickerId">{{ zh ? '比较来源' : 'Comparison source' }}</label>
+                <NativeSelectFrame><select class="workspace-select"
+                  :id="comparisonPickerId"
+                  :value="proposal?.candidateId || ''"
+                  :title="comparisonSourceLabel"
+                  :aria-describedby="`${comparisonPickerId}-description`"
+                  @change="chooseProposal(($event.target as HTMLSelectElement).value)"
+                >
+                  <option value="">{{ zh ? '当前编辑' : 'Current edits' }}</option>
+                  <option v-if="comparisonVersion" :value="proposal?.candidateId" disabled>{{ comparisonSourceLabel }}</option>
+                  <option v-for="file in candidateFiles" :key="file.id" :value="file.id">
+                    {{ file.path }}
+                  </option>
+                </select></NativeSelectFrame>
+              </div>
+              <div v-if="hasChanges || active.undo !== undefined" class="change-actions">
+                <button v-if="proposal && hasChanges" :disabled="saving" @click="applyProposal">
+                  {{ zh ? '应用到当前文件' : 'Apply to current file' }}</button
+                ><button v-if="active.undo !== undefined" :disabled="saving" @click="undoApply">
+                  {{ zh ? '撤销最近一次应用' : 'Undo last application' }}</button
+                ><button v-if="!proposal && dirty(active)" :disabled="saving" @click="save(active)">
+                  {{ zh ? '保存当前修改' : 'Save changes' }}
+                </button>
+              </div>
+              <WorkspaceEditor
+                v-if="hasChanges"
+                :key="active.key + ':diff:' + String(proposal?.candidateId || '')"
+                :model-value="proposal?.text ?? active.text"
+                :compare-to="active.baseline"
+                :path="active.file.path"
+                :readonly="true"
+                :label="zh ? '文件差异' : 'File differences'"
+                :theme="theme"
+              />
+              <div v-else class="changes-empty" role="status">
+                <WorkspaceIcon name="git" :size="20" />
+                <div>
+                  <h2>{{ zh ? '两份内容一致' : 'Contents are identical' }}</h2>
+                  <p>{{ zh ? '可继续编辑文件，或选择其他版本进行比较。' : 'Continue editing the file or choose another version to compare.' }}</p>
+                </div>
+              </div>
+            </template>
+            <div v-else class="resource-empty">
+              <WorkspaceIcon name="git" :size="20" />
+              <h2>{{ zh ? '先打开一个文本文件' : 'Open a text file' }}</h2>
+              <p>
+                {{
+                  zh
+                    ? '这里显示编辑、Agent 候选与版本差异；GitHub 记录在独立面板中。'
+                    : 'Inspect edits and Agent proposals here. GitHub history is in its own panel.'
+                }}
+              </p>
+            </div>
+          </div>
+          <template v-else-if="active">
+            <div v-if="active.loading" class="resource-loading" role="region" :aria-label="zh ? '文件读取' : 'File loading'" aria-busy="true">
+              <WorkspaceIcon name="file" :size="16" />
+              <div>
+                <p class="resource-loading-name" :title="active.file.path">{{ filename(active.file.path) }}</p>
+                <p role="status">{{ zh ? '正在读取文件…' : 'Opening file…' }}</p>
+              </div>
+            </div>
+            <div v-else-if="active.error" class="resource-empty file-read-error">
+              <div class="file-read-content">
+                <WorkspaceIcon name="file" :size="20" />
+                <h2>{{ zh ? '暂时无法打开文件' : 'Could not open file' }}</h2>
+                <p class="file-read-name" :title="active.file.path">{{ filename(active.file.path) }}</p>
+                <p role="alert">{{ active.error }}</p>
+                <button type="button" class="file-read-retry" @click="reloadDocument(active)">
+                  <WorkspaceIcon name="refresh" :size="16" />{{ zh ? '重新读取' : 'Reload file' }}
+                </button>
+              </div>
+            </div>
+            <WorkspaceEditor
+              v-else-if="active.text !== undefined && active.view === 'source'"
+              :key="active.key"
+              :model-value="active.text"
+              :path="active.file.path"
+              :readonly="!editable(active)"
+              :label="zh ? '文件编辑器' : 'File editor'"
+              :theme="theme"
+              @update:model-value="edit(active!, $event)"
+              @save="save(active!)"
+            />
+            <div
+              v-else-if="
+                /^image\/(png|jpeg|webp|gif)$/.test(active.file.mimeType) && active.objectUrl
+              "
+              class="image-viewer"
+            >
+              <div v-if="active.imageError" class="image-preview-error" role="status">
+                <WorkspaceIcon name="image" :size="20" />
+                <div>
+                  <h2>{{ zh ? '图片暂时无法预览' : 'Image preview unavailable' }}</h2>
+                  <p>{{ zh ? '可以使用上方下载按钮，下载原文件后打开。' : 'Use Download above to open the original file on your device.' }}</p>
+                </div>
+              </div>
+              <template v-else>
+                <div class="image-controls" role="group" :aria-label="zh ? '图片缩放' : 'Image zoom'">
+                  <button
+                    :aria-label="zh ? '缩小图片' : 'Zoom out'"
+                    :disabled="zoom <= 0.25"
+                    @click="zoom = Math.max(0.25, zoom - 0.25)"
+                  >
+                    <WorkspaceIcon name="minus" :size="18" />
+                  </button>
+                  <button
+                    class="image-zoom-reset"
+                    :aria-label="zh ? `适合宽度，当前 ${Math.round(zoom * 100)}%` : `Fit to width, currently ${Math.round(zoom * 100)}%`"
+                    :title="zh ? '适合宽度' : 'Fit to width'"
+                    @click="zoom = 1"
+                  >{{ Math.round(zoom * 100) }}%</button>
+                  <button
+                    :aria-label="zh ? '放大图片' : 'Zoom in'"
+                    :disabled="zoom >= 4"
+                    @click="zoom = Math.min(4, zoom + 0.25)"
+                  >
+                    <WorkspaceIcon name="plus" :size="18" />
+                  </button>
+                </div>
+                <div class="image-canvas">
+                  <img
+                    :key="active.objectUrl"
+                    :src="active.objectUrl"
+                    :alt="filename(active.file.path)"
+                    @error="imagePreviewFailed"
+                    :style="{ width: 100 * zoom + '%', maxWidth: zoom === 1 ? '100%' : 'none' }"
+                  />
+                </div>
+              </template>
+            </div>
+            <WorkspacePdf
+              v-else-if="active.file.mimeType === 'application/pdf' && active.blob"
+              :key="active.key"
+              :blob="active.blob"
+              :zh="zh"
+            />
+            <div
+              v-else-if="active.text !== undefined && /\.(md|markdown)$/i.test(active.file.path)"
+              class="document-preview"
+            >
+              <WorkspaceMarkdown :text="active.text" :files="files" />
+            </div>
+            <iframe
+              v-else-if="active.text !== undefined && /\.html?$/i.test(active.file.path)"
+              class="html-preview"
+              :srcdoc="staticHtml(active.text)"
+              sandbox=""
+              referrerpolicy="no-referrer"
+              :title="filename(active.file.path)"
+            ></iframe>
+            <pre v-else-if="active.text !== undefined" class="text-preview">{{ active.text }}</pre>
+            <div v-else class="resource-empty binary-preview">
+              <div class="binary-details">
+                <WorkspaceIcon name="file" :size="20" />
+                <h2 :title="active.file.path">{{ filename(active.file.path) }}</h2>
+                <p>{{ zh ? '此文件暂不支持在线预览。' : 'No preview is available for this file.' }}</p>
+                <dl class="binary-properties" :aria-label="zh ? '文件信息' : 'File information'">
+                  <div><dt>{{ zh ? '文件类型' : 'File type' }}</dt><dd>{{ active.file.mimeType }}</dd></div>
+                  <div><dt>{{ zh ? '文件大小' : 'File size' }}</dt><dd>{{ formatSize(active.file.byteSize) }}</dd></div>
+                </dl>
+                <button v-if="active.blob" class="binary-download" type="button" @click="download(active)">
+                  <WorkspaceIcon name="download" :size="16" />{{ zh ? '下载后打开' : 'Download to open' }}
+                </button>
+              </div>
+            </div>
+            <footer v-if="!active.loading && !active.error" class="file-status">
+              <span class="file-save-state"
+                >{{ dirty(active) ? (zh ? '未保存' : 'Unsaved') : zh ? '已保存' : 'Saved' }} ·
+                {{ active.source === 'local' ? (zh ? '本机' : 'Local') : `v${active.file.revision}` }}</span>
+              <div class="file-status-actions">
+                <button :disabled="!active.blob || dirty(active) || saving" @click="attach(active)">
+                  {{ zh ? '加入会话上下文' : 'Add to chat context' }}</button
+                ><button v-if="active.text !== undefined" @click="$emit('changes')">
+                  {{ zh ? '查看变更' : 'View changes' }}</button
+                ><label v-if="versions.length" class="file-version-control">
+                  <span>{{ zh ? '比较版本' : 'Compare version' }}</span>
+                  <NativeSelectFrame><select class="workspace-select"
+                    :aria-label="zh ? '查看文件版本' : 'View file versions'"
+                    @change="
+                      ($event.target as HTMLSelectElement).value !== '' &&
+                      compareVersion(Number(($event.target as HTMLSelectElement).value))
+                    "
+                  >
+                    <option value="">{{ zh ? '选择…' : 'Choose…' }}</option>
+                    <option
+                      v-for="version in versions"
+                      :key="version.revision"
+                      :value="version.revision"
+                    >
+                      v{{ version.revision }}
+                    </option>
+                  </select></NativeSelectFrame>
+                </label>
+              </div>
+            </footer>
+          </template>
+          <div v-else class="resource-empty">
+            <WorkspaceIcon name="file" :size="20" />
+            <h2>{{ zh ? '打开文件，继续工作' : 'Open a file to continue' }}</h2>
+            <p>
+              {{
+                zh
+                  ? '从目录选择项目产物，或连接本机文件夹。'
+                  : 'Choose a project file or connect a local folder.'
+              }}
+            </p>
+            <button v-if="!treeVisible" @click="toggleTree">
+              {{ zh ? '显示目录' : 'Show files' }}</button
+            ><button v-if="projectId" @click="newTextFile">
+              {{ zh ? '新建文本文件' : 'New text file' }}</button
+            ><button v-if="supportsLocalDirectories()" @click="connectFolder">
+              {{ zh ? '连接本机文件夹' : 'Connect local folder' }}
+            </button>
+          </div>
+        </section>
       </div>
     </template>
   </div>
 </template>
 <script setup lang="ts">
+import NativeSelectFrame from '../NativeSelectFrame.vue';
 import {
   computed,
   reactive,
@@ -527,6 +531,7 @@ const props = withDefaults(
     projectId?: string | null;
     artifacts: AgentArtifact[];
     zh: boolean;
+    theme: 'light' | 'dark';
   }>(),
   { projectId: '' }
 );
@@ -1600,17 +1605,20 @@ onBeforeUnmount(() => {
   width: 224px;
   flex: none;
   overflow: auto;
-  padding: 8px;
+  padding: 12px;
   background: var(--sidebar);
   scrollbar-color: var(--border) transparent;
+  border-inline-end: 1px solid var(--border);
 }
 .file-search {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
-  padding: 3px 6px;
+  min-width: 0;
+  padding: 3px 10px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 9px;
+  background: var(--surface);
 }
 .file-search input {
   width: 100%;
@@ -1645,7 +1653,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin: 15px 0 5px;
+  margin: 16px 0 6px;
+  padding-inline: 4px;
   font-size: 12px;
   color: var(--muted);
 }
@@ -1666,6 +1675,19 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
+}
+.tree-section-heading button {
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+.tree-section-heading button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.tree-section-heading button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
 }
 .resource-tree p {
   font-size: 12px;
@@ -1742,11 +1764,16 @@ onBeforeUnmount(() => {
   padding: 7px 10px;
 }
 .breadcrumb {
+  box-sizing: border-box;
   display: flex;
   min-width: 0;
-  flex: 1;
+  max-width: 100%;
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--surface-raised);
   overflow: hidden;
   white-space: nowrap;
   font-size: 12px;
@@ -1964,7 +1991,8 @@ button:disabled {
   align-items: center;
   gap: 6px;
   min-height: 36px;
-  padding: 4px 10px;
+  margin-inline: 12px;
+  padding: 6px 0;
   font-size: 12px;
   color: var(--muted);
   border-top: 1px solid var(--border);
@@ -1980,14 +2008,15 @@ button:disabled {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
+  gap: 4px;
   max-width: 100%;
   margin-inline-start: auto;
 }
 .file-status button {
-  padding: 4px 6px;
+  padding: 4px 8px;
   color: var(--muted);
   background: transparent;
+  font-size: 13px;
 }
 .file-version-control {
   display: inline-flex;
@@ -2055,7 +2084,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 16px;
+  padding: 12px 16px 4px;
   font-size: 13px;
 }
 .changes-panel > header > b {
@@ -2066,12 +2095,15 @@ button:disabled {
   flex: 1;
 }
 .changes-panel > p {
+  margin: 0;
   font-size: 12px;
   color: var(--muted);
   padding: 0 16px;
+  line-height: 1.5;
 }
 .comparison-picker { display: grid; min-width: 0; gap: 8px; padding: 10px 16px; }
 .comparison-picker label { color: var(--text); font-size: 13px; line-height: 20px; }
+.comparison-picker :deep(.native-select-frame) { width: 100%; }
 .comparison-picker select { width: 100%; }
 .changes-panel > .workspace-code-editor {
   flex: 1 0 180px;
@@ -2099,6 +2131,7 @@ button:disabled {
 .compact-tree:not(.tree-hidden) .resource-tree {
   width: 100%;
   flex: 1;
+  border-inline-end: 0;
 }
 @container (max-width:639px) {
   .resource-tree {
@@ -2139,6 +2172,8 @@ button:disabled {
     width: 100%;
     justify-content: flex-end;
   }
+  .file-toolbar.is-comparison { flex-wrap: nowrap; align-items: center; }
+  .file-toolbar.is-comparison .viewer-actions { width: auto; flex: none; }
   .file-viewer:has(.resource-empty) {
     min-width: 0;
   }

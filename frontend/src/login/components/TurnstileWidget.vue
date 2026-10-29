@@ -1,18 +1,47 @@
 <template>
   <div
-    v-if="siteKey"
+    v-if="siteKey || allowFallback"
     class="turnstile-wrap"
     :class="{ failed: loadFailed }"
     aria-live="polite"
   >
-    <div ref="containerRef"></div>
-    <div v-if="loadFailed" class="turnstile-error" role="alert">
+    <div v-if="siteKey" ref="containerRef"></div>
+    <div v-if="siteKey && loadFailed" class="turnstile-error" role="alert">
       <span>
-        {{ isZh ? '安全验证加载失败，请检查网络后重试' : 'Security check failed to load.' }}
+        {{ isZh ? '安全验证未完成，请点击重新加载后再试。' : 'Security verification was not completed. Reload and try again.' }}
       </span>
       <button type="button" class="turnstile-retry" :disabled="loading" @click="retry">
         {{ isZh ? '重新加载' : 'Retry' }}
       </button>
+    </div>
+    <p v-else-if="siteKey && !modelValue && !fallbackSelected" class="turnstile-hint">
+      {{ isZh ? '完成安全验证后才能发送验证码。' : 'Complete the security check to send a verification code.' }}
+    </p>
+    <div v-if="allowFallback" class="turnstile-fallback-row">
+      <button
+        class="turnstile-fallback"
+        :class="{ selected: fallbackSelected }"
+        type="button"
+        :aria-pressed="fallbackSelected"
+        @click="emit('update:fallbackSelected', !fallbackSelected)"
+      >
+        {{
+          fallbackSelected
+            ? isZh
+              ? '已选择直接发送验证码'
+              : 'Direct email-code fallback selected'
+            : isZh
+              ? '验证不可用？直接发送验证码'
+              : 'Can’t verify? Send the email code directly'
+        }}
+      </button>
+      <small v-if="fallbackSelected">
+        {{
+          isZh
+            ? '备用通道共享发送额度，达到上限后请稍后再试。'
+            : 'The fallback shares a sending limit. Please try again later if it is reached.'
+        }}
+      </small>
     </div>
   </div>
 </template>
@@ -26,12 +55,15 @@ const props = withDefaults(
   defineProps<{
     modelValue: string;
     action?: string;
+    allowFallback?: boolean;
+    fallbackSelected?: boolean;
   }>(),
-  { action: 'email_otp' }
+  { action: 'email_otp', allowFallback: false, fallbackSelected: false }
 );
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
+  'update:fallbackSelected': [value: boolean];
 }>();
 
 const siteKey = turnstileSiteKey();
@@ -81,10 +113,23 @@ const render = async () => {
       action: props.action,
       theme: 'dark',
       appearance: 'interaction-only',
-      callback: (token: string) => emit('update:modelValue', String(token || '').trim()),
-      'expired-callback': () => emit('update:modelValue', ''),
-      'timeout-callback': () => emit('update:modelValue', ''),
+      callback: (token: string) => {
+        if (revision !== renderRevision) return;
+        loadFailed.value = false;
+        emit('update:modelValue', String(token || '').trim());
+      },
+      'expired-callback': () => {
+        if (revision !== renderRevision) return;
+        emit('update:modelValue', '');
+        loadFailed.value = true;
+      },
+      'timeout-callback': () => {
+        if (revision !== renderRevision) return;
+        emit('update:modelValue', '');
+        loadFailed.value = true;
+      },
       'error-callback': () => {
+        if (revision !== renderRevision) return;
         emit('update:modelValue', '');
         loadFailed.value = true;
       }
@@ -135,6 +180,13 @@ defineExpose({ reset, retry });
   line-height: 1.5;
 }
 
+.turnstile-hint {
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0;
+}
+
 .turnstile-retry {
   min-height: 44px;
   padding: 0 14px;
@@ -148,5 +200,39 @@ defineExpose({ reset, retry });
 .turnstile-retry:disabled {
   cursor: wait;
   opacity: 0.6;
+}
+
+.turnstile-fallback-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0 0 12px;
+}
+
+.turnstile-fallback {
+  min-height: 28px;
+  padding: 2px 0;
+  border: 0;
+  color: #9ca3af;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.turnstile-fallback:hover,
+.turnstile-fallback.selected {
+  color: #d1d5db;
+}
+
+.turnstile-fallback-row small {
+  flex-basis: 100%;
+  color: #9ca3af;
+  font-size: 11px;
+  line-height: 1.45;
 }
 </style>

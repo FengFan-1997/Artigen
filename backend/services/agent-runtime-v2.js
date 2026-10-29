@@ -8,7 +8,7 @@ const RUNTIME_VERSION = 2;
 const CHECKPOINT_VERSION = 4;
 const PROMPT_ENGINE_VERSION = 'skills-v2';
 const STRUCTURED_OUTPUT_POLICY = 'adaptive-first-nonthinking-correction-v1';
-const DELIVERABLES = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
+const DELIVERABLES = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image', 'text_file']);
 const PHASES = new Set(['research', 'production', 'verification', 'completion']);
 const COMPLEXITIES = new Set(['simple', 'medium', 'high']);
 const REQUIREMENT_SOURCES = new Set(['user', 'planner', 'server']);
@@ -1166,7 +1166,8 @@ const summarizeToolObservation = (toolName, value) => {
 const classifyRuntimeFailure = (error) => {
   const code = String(error?.code || 'AGENT_RUNTIME_FAILED');
   if (
-    /FORBIDDEN|NOT_GRANTED|APPROVAL|SECURITY|OTP|CAPTCHA|PASSWORD/.test(code) ||
+    /FORBIDDEN|NOT_GRANTED|APPROVAL|SECURITY|OTP|CAPTCHA|PASSWORD|CREDENTIAL/.test(code) ||
+    /AUTHENTICATION|UNAUTHORIZED|ENDPOINT_NOT_FOUND/.test(code) ||
     /CLOUDFLARE_FREE_QUOTA_EXHAUSTED|CLOUDFLARE_PAID_MODEL/.test(code)
   ) {
     return { category: 'security_terminal', retryable: false, maxAttempts: 0 };

@@ -5,7 +5,7 @@
     type="button"
     :aria-label="label"
     :title="label"
-    @click="$emit('jump')"
+    @click="$emit('jump', $event)"
   >
     <WorkspaceIcon name="arrow-down" :size="18" />
     <span v-if="unread">{{ zh ? '有新内容' : 'New updates' }}</span>
@@ -17,7 +17,7 @@ import { computed } from 'vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 
 const props = defineProps<{ unread: boolean; zh: boolean }>();
-defineEmits<{ jump: [] }>();
+defineEmits<{ jump: [event: MouseEvent] }>();
 const label = computed(() => props.unread
   ? (props.zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest')
   : (props.zh ? '回到底部' : 'Jump to latest'));
@@ -49,7 +49,7 @@ const label = computed(() => props.unread
 }
 .conversation-jump.unread {
   width: auto;
-  gap: 6px;
+  gap: 8px;
   padding-inline: 13px;
   border-radius: 22px;
 }

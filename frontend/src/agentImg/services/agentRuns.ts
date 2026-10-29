@@ -181,6 +181,7 @@ export type AgentRun = {
   };
   approvals?: AgentApproval[];
   artifacts?: AgentArtifact[];
+  sourceArtifacts?: Array<AgentArtifact & { sourceRunId: string }>;
   subagents: AgentSubagent[];
   error: { code: string } | null;
   finalTextSha256?: string | null;
@@ -397,6 +398,8 @@ export const createAgentRun = async (input: {
   fileEditTargets?: Array<{assetId:string;source:string;id:string;name:string;sha256:string}>;
   objective: string;
   assetIds?: string[];
+  sourceArtifactIds?: string[];
+  sourceConversationId?: string;
   planToken?: string;
   planRevision?: number;
   maxCredits: number;
@@ -480,8 +483,10 @@ export const controlAgentRun = async (
 export const submitAgentInput = async (
   runId: string,
   input: {
-    message?: string;
     inputId?: string;
+    message?: string;
+    assetIds?: string[];
+    assetNames?: Record<string, string>;
     approvalId?: string;
     decision?: 'approved' | 'denied';
     decisionReason?: string;
@@ -514,11 +519,20 @@ export const createAgentDesktopTicket = async (
   return result.ticket;
 };
 
+// Read durable history independently of the live stream, including terminal runs.
+export const listAgentEventHistory = async (runId: string, after = '0') => {
+  const result = await requestJson<{ events: AgentEvent[] }>(
+    buildApiUrl(`/api/agent-runs/${encodeURIComponent(runId)}/history?after=${encodeURIComponent(after)}`)
+  );
+  return result.events;
+};
+
 export const openAgentEventStream = (
   runId: string,
   handlers: {
     onEvent: (event: AgentEvent) => void;
     onError?: () => void;
+    onOpen?: () => void;
   }
 ) => {
   const source = new EventSource(
@@ -531,6 +545,12 @@ export const openAgentEventStream = (
     'sandbox.ready',
     'sandbox.resumed',
     'step.recorded',
+    'assistant.message',
+    'context.input_applied',
+    'context.compacted',
+    'plan.updated',
+    'plan.update.ignored',
+    'run.input_required',
     'artifact.created',
     'cost.updated',
     'approval.required',
@@ -558,6 +578,7 @@ export const openAgentEventStream = (
     'run.failed',
     'run.cancelled',
     'run.input_received',
+    'run.project_associated',
     'takeover.ended',
     'subagent.created',
     'subagent.started',
@@ -572,6 +593,7 @@ export const openAgentEventStream = (
     } catch {}
   };
   known.forEach((type) => source.addEventListener(type, listener as EventListener));
+  source.onopen = () => handlers.onOpen?.();
   source.onerror = () => handlers.onError?.();
   return () => source.close();
 };

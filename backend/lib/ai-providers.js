@@ -71,18 +71,60 @@ const cloudflareFailureCode = (error) => {
 };
 
 const normalizeCloudflareFailure = (error) => {
+  const failures = Array.isArray(error?.failures) ? error.failures : [];
   const providerCode = cloudflareFailureCode(error);
-  const code = providerCode === '3036'
+  const statuses = [...new Set(failures.map((failure) => Number(failure?.status || 0)))];
+  const status = statuses.length === 1 ? statuses[0] : 0;
+  let code = providerCode === '3036'
     ? 'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED'
     : providerCode === '5035'
       ? 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN'
       : '';
+  if (!code && failures.length) {
+    if (statuses.length > 1) {
+      code = 'AGENT_CLOUDFLARE_REQUEST_FAILED';
+    } else if (status === 0) {
+      code = 'AGENT_CLOUDFLARE_TRANSPORT_FAILED';
+    } else if (status === 200) {
+      code = 'AGENT_CLOUDFLARE_RESPONSE_INVALID';
+    } else if (status === 401) {
+      code = 'AGENT_CLOUDFLARE_CREDENTIAL_INVALID';
+    } else if (status === 403) {
+      code = 'AGENT_CLOUDFLARE_FORBIDDEN';
+    } else if (status === 404) {
+      code = 'AGENT_CLOUDFLARE_ENDPOINT_NOT_FOUND';
+    } else if (status === 408 || status === 504) {
+      code = 'AGENT_CLOUDFLARE_TIMEOUT';
+    } else if (status === 425 || status === 429) {
+      code = 'AGENT_CLOUDFLARE_RATE_LIMITED';
+    } else if (status >= 500 && status < 600) {
+      code = 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE';
+    } else if (status >= 400 && status < 500) {
+      code = 'AGENT_CLOUDFLARE_REQUEST_REJECTED';
+    } else {
+      code = 'AGENT_CLOUDFLARE_REQUEST_FAILED';
+    }
+  }
   if (!code) return error;
   const normalized = new Error(code);
   normalized.code = code;
-  normalized.retryable = false;
-  normalized.status = Number(error?.failures?.[0]?.status || 0) || undefined;
-  normalized.providerCode = providerCode;
+  normalized.retryable = !['3036', '5035'].includes(providerCode) &&
+    failures.length > 0 && failures.every((failure) => {
+      const failureStatus = Number(failure?.status || 0);
+      return failureStatus === 0 || failureStatus === 408 || failureStatus === 425 ||
+        failureStatus === 429 || failureStatus >= 500;
+    });
+  normalized.status = status || undefined;
+  normalized.providerCode = ['3036', '5035'].includes(providerCode) ? providerCode : undefined;
+  normalized.retryAfter = String(
+    error?.retryAfter || failures.find((failure) => failure?.retryAfter)?.retryAfter || ''
+  ).slice(0, 100);
+  // Keep retry classification possible while excluding provider response bodies,
+  // URLs, and transport error text from downstream error handling.
+  normalized.failures = failures.map((failure) => ({
+    status: Number(failure?.status || 0),
+    elapsedMs: Math.max(0, Number(failure?.elapsedMs || 0))
+  }));
   return normalized;
 };
 

@@ -4,10 +4,14 @@ const test = require('node:test');
 const {
   IMAGE_MODEL,
   TEXT_MODEL,
+  buildAgentExecutionObjective,
+  createExplicitPlannerFallback,
   getDesignConversationConfig,
+  isTerminalCloudflareFailure,
   normalizePlannerDecision,
   plannerMessages,
-  repairPlannerRoute
+  repairPlannerRoute,
+  shouldRetryDesignPlannerProviderFailure
 } = require('../services/design-conversation-service');
 const {
   decryptDesignMessage,
@@ -71,6 +75,135 @@ test('planner prompt uses the server-selected text model and keeps Kolors for ev
   assert.doesNotMatch(messages[0].content, /Qwen-Image-Edit/);
 });
 
+test('planner context names prior verified files without embedding user file contents', () => {
+  const messages = plannerMessages({
+    history: [],
+    message: '请修改选中的提案',
+    attachmentCount: 0,
+    sourceArtifacts: [{
+      artifactId: 'do-not-leak-id',
+      filename: 'brand-proposal.md',
+      mimeType: 'text/markdown',
+      byteSize: 2048,
+      sourceRunId: 'do-not-leak-run-id'
+    }]
+  });
+  assert.match(messages.at(-1).content, /brand-proposal\.md/u);
+  assert.doesNotMatch(messages.at(-1).content, /do-not-leak/u);
+});
+
+test('Agent objectives carry bounded prior conversation context without duplicating the current request', () => {
+  const current = { messageId: 'current', role: 'user', text: '按刚才说的受众修改方案。' };
+  const context = buildAgentExecutionObjective({
+    currentObjective: current.text,
+    currentMessageId: current.messageId,
+    history: [
+      { messageId: 'old', role: 'user', text: '无关的旧请求。' },
+      { messageId: 'audience', role: 'user', text: '目标受众是第一次开店的小餐馆老板。' },
+      { messageId: 'clarification', role: 'assistant', text: '我会按小餐馆老板的阅读习惯来写。' },
+      current
+    ]
+  });
+  assert.equal(context.messageCount, 3);
+  assert.match(context.objective, /^按刚才说的受众修改方案。/u);
+  assert.match(context.objective, /\[用户\] 目标受众是第一次开店的小餐馆老板/u);
+  assert.match(context.objective, /\[助手\] 我会按小餐馆老板的阅读习惯来写/u);
+  assert.match(context.objective, /如与本轮目标冲突，以本轮目标为准/u);
+  assert.equal(context.objective.split(current.text).length - 1, 1);
+});
+
+test('Agent objective context stays within the run payload limit and preserves long current requests', () => {
+  const currentObjective = '当前任务目标。';
+  const context = buildAgentExecutionObjective({
+    currentObjective,
+    currentMessageId: 'current',
+    history: [
+      { messageId: 'large', role: 'user', text: '限制'.repeat(10_000) },
+      { messageId: 'current', role: 'user', text: currentObjective }
+    ]
+  });
+  assert.ok(context.objective.length <= 20_000);
+  assert.equal(context.objective.slice(0, currentObjective.length), currentObjective);
+  assert.match(context.objective, /本条历史消息已截断/u);
+  assert.equal(context.messageCount, 1);
+
+  const longCurrent = '本轮'.repeat(10_000);
+  assert.deepEqual(buildAgentExecutionObjective({
+    currentObjective: longCurrent,
+    currentMessageId: 'current',
+    history: [{ messageId: 'prior', role: 'user', text: '重要背景' }]
+  }), { objective: longCurrent, messageCount: 0 });
+});
+
+test('Agent objective keeps the six newest context messages and tolerates histories without message IDs', () => {
+  const context = buildAgentExecutionObjective({
+    currentObjective: '继续按上面的内容做。',
+    history: Array.from({ length: 8 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      text: `背景 ${index + 1}`
+    }))
+  });
+  assert.equal(context.messageCount, 6);
+  assert.doesNotMatch(context.objective, /背景 1(?:\n|$)/u);
+  assert.doesNotMatch(context.objective, /背景 2(?:\n|$)/u);
+  assert.match(context.objective, /背景 3/u);
+  assert.match(context.objective, /背景 8/u);
+});
+
+test('malformed planner fallback only creates an Agent route for explicit execution requests', () => {
+  const value = createExplicitPlannerFallback({
+    text: '请在工作区创建 brand-proposal.md 和 brand-check.txt 两个文件，运行脚本验证后交付。'
+  });
+  assert.equal(value.routeKind, 'agent_run');
+  assert.equal(value.steps.length, 3);
+  assert.equal(createExplicitPlannerFallback({
+    text: '只做文字咨询，不创建文件。请写三条咖啡店活动文案。'
+  }), null);
+  assert.equal(createExplicitPlannerFallback({
+    text: '这个方案怎么样？',
+    sourceArtifacts: [{ filename: 'proposal.md' }]
+  }), null);
+  assert.equal(createExplicitPlannerFallback({
+    text: '请解释 shell 脚本通常有什么用途。'
+  }), null);
+  assert.equal(createExplicitPlannerFallback({
+    text: '请继续完善选中的文件并运行检查。',
+    sourceArtifacts: [{ filename: 'proposal.md' }]
+  }).routeKind, 'agent_run');
+});
+
+test('explicitly selected prior files route edit requests to a new Agent run', () => {
+  const decision = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '我来解释一下。' },
+    text: '请基于选中的上一版文件继续修改，并生成可下载的新版本。',
+    sourceArtifacts: [{ artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.equal(decision.routeKind, 'agent_run');
+  assert.equal(decision.status, 'queued');
+  const noImageEdit = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '我只提供解释。' },
+    text: '请继续修改选中的上一版文件，不要生成图片。',
+    sourceArtifacts: [{ artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.equal(noImageEdit.routeKind, 'agent_run');
+  assert.deepEqual(noImageEdit.deliverables, []);
+  const spreadsheetEdit = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '我会给出修改建议。' },
+    text: '请基于选中的上一版文件继续修改。',
+    sourceArtifacts: [{ artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', filename: 'budget.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', role: 'editable' }],
+    attachments: [],
+    clarificationRounds: 0,
+    creditCap: 50
+  });
+  assert.deepEqual(spreadsheetEdit.deliverables, ['spreadsheet']);
+});
+
 test('deterministic route repair keeps simple image tasks in the Kolors workflow', () => {
   const decision = normalizePlannerDecision({
     raw: { routeKind: 'reply', reply: '开始制作' },
@@ -83,6 +216,89 @@ test('deterministic route repair keeps simple image tasks in the Kolors workflow
   assert.equal(decision.toolId, 'ai-design');
   assert.equal(decision.operation, 'generate');
   assert.equal(decision.options.profileId, 'standard-v1');
+});
+
+const textOnlyReproduction = '只做文字咨询，不创建文件、不生成图片、不启动电脑任务。请为虚构咖啡店「慢半拍咖啡」写 3 条不超过 35 字的周末活动宣传文案，准确包含：周六 14:00–17:00，冰拿铁第二杯半价。风格温暖简洁，不要编造地址、联系方式或其他优惠。';
+
+test('explicit text-only constraints override every planner executor without granting attachment consent', () => {
+  for (const text of [
+    textOnlyReproduction,
+    '仅提供文字建议：请解释海报设计、图片压缩和 PDF 导出的区别。',
+    '只输出文案，帮我写海报标题。',
+    'Text-only: please research poster design and give advice; do not generate images.',
+    'Only reply in text. Explain how to create a website.'
+  ]) {
+    for (const routeKind of ['reply', 'tool_task', 'local_tool', 'agent_run']) {
+      const decision = normalizePlannerDecision({
+        raw: { routeKind, toolId: 'ai-design', operation: 'generate', reply: '周六来喝咖啡。', deliverables: ['image', 'website'] },
+        text,
+        attachments: [{ clientId: 'local-reference', name: 'reference.png', mimeType: 'image/png', byteSize: 100 }],
+        clarificationRounds: 0,
+        creditCap: 50
+      });
+      assert.equal(decision.routeKind, 'reply', `${routeKind}: ${text}`);
+      assert.equal(decision.status, 'succeeded');
+      assert.equal(decision.reply, '周六来喝咖啡。');
+      assert.deepEqual(decision.plan.steps, []);
+      for (const field of ['toolId', 'operation', 'options', 'capabilities', 'deliverables']) {
+        assert.equal(decision[field], undefined, field);
+      }
+    }
+  }
+});
+
+test('negative image instructions cannot trigger paid image routing or an invented agent report', () => {
+  for (const text of [
+    '不生成图片。请写三条咖啡店宣传文案。',
+    '请勿生成海报，帮我想三个活动标题。',
+    '不要生成图片，给我一句宣传文案。',
+    'Please do not generate images; write three coffee shop slogans.',
+    'No images, please give me three slogans.',
+    '不要网站或图片，请写三条宣传文案。',
+    'Please create no website or images; write three slogans.',
+    'Please never generate images; write three slogans.'
+  ]) {
+    for (const raw of [
+      { routeKind: 'reply' },
+      { routeKind: 'tool_task', toolId: 'ai-design', operation: 'generate' },
+      { routeKind: 'agent_run', deliverables: ['image'] }
+    ]) {
+      const decision = normalizePlannerDecision({ raw, text, attachments: [], clarificationRounds: 0, creditCap: 50 });
+      assert.equal(decision.routeKind, 'reply', text);
+      assert.equal(decision.status, 'succeeded');
+    }
+  }
+});
+
+test('image exclusion preserves explicitly requested non-image deliverables', () => {
+  for (const text of ['请生成 Markdown 报告，不生成图片。', '请交付 PDF 报告，请勿生成海报。']) {
+    const decision = normalizePlannerDecision({
+      raw: { routeKind: 'agent_run', deliverables: ['report', 'image'] },
+      text, attachments: [], clarificationRounds: 0, creditCap: 50
+    });
+    assert.equal(decision.routeKind, 'agent_run');
+    assert.deepEqual(decision.deliverables, ['report']);
+    assert.equal(decision.capabilities.generate_images, false);
+  }
+});
+
+test('image exclusions do not promote advice containing report vocabulary into an agent run', () => {
+  const decision = normalizePlannerDecision({
+    raw: { routeKind: 'reply', reply: '这里有三条品牌建议。' },
+    text: '不生成图片，请给品牌方案提三条建议。',
+    attachments: [], clarificationRounds: 0, creditCap: 50
+  });
+  assert.equal(decision.routeKind, 'reply');
+});
+
+test('affirmative image requests are not rejected because an adjective or watermark constraint resembles an exclusion', () => {
+  for (const text of ['请生成一张无限想象力的海报。', '请生成别致的海报。', '请生成不要水印的海报。', 'Please generate a no watermark poster.']) {
+    const decision = normalizePlannerDecision({
+      raw: { routeKind: 'reply' }, text,
+      attachments: [], clarificationRounds: 0, creditCap: 50
+    });
+    assert.equal(decision.routeKind, 'tool_task', text);
+  }
 });
 
 test('reference image generation waits for explicit upload and uses the existing Kolors profile', () => {
@@ -272,6 +488,48 @@ test('conversation configuration defaults closed with a 50-credit cap and perman
   });
 });
 
+test('planner stops retrying terminal Cloudflare configuration and request failures', () => {
+  for (const code of [
+    'AGENT_CLOUDFLARE_FREE_QUOTA_EXHAUSTED',
+    'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN',
+    'AGENT_CLOUDFLARE_CREDENTIAL_INVALID',
+    'AGENT_CLOUDFLARE_FORBIDDEN',
+    'AGENT_CLOUDFLARE_ENDPOINT_NOT_FOUND',
+    'AGENT_CLOUDFLARE_REQUEST_REJECTED',
+    'AGENT_CLOUDFLARE_ACCOUNT_ID_INVALID',
+    'AGENT_CLOUDFLARE_FREE_ACCOUNT_REQUIRED'
+  ]) {
+    assert.equal(isTerminalCloudflareFailure({ code }), true, code);
+  }
+  assert.equal(isTerminalCloudflareFailure({
+    code: 'AGENT_CLOUDFLARE_RATE_LIMITED', retryable: true
+  }), true);
+  assert.equal(isTerminalCloudflareFailure({
+    code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true
+  }), false);
+  assert.equal(isTerminalCloudflareFailure({
+    code: 'AGENT_CLOUDFLARE_REQUEST_FAILED'
+  }), true);
+  assert.equal(isTerminalCloudflareFailure({ code: 'DESIGN_PLANNER_FAILED' }), false);
+});
+
+test('planner does not automatically replay Cloudflare rate limits', () => {
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_RATE_LIMITED', retryable: true
+  }, 1), false);
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true,
+    failures: [{ status: 503 }]
+  }, 1), true);
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_UPSTREAM_UNAVAILABLE', retryable: true,
+    failures: [{ status: 503 }]
+  }, 3), false);
+  assert.equal(shouldRetryDesignPlannerProviderFailure({
+    code: 'AGENT_CLOUDFLARE_PAID_MODEL_FORBIDDEN', retryable: false
+  }, 1), false);
+});
+
 test('conversation routes register the public contract without touching PostgreSQL when injected', () => {
   const registered = [];
   const app = {
@@ -287,9 +545,57 @@ test('conversation routes register the public contract without touching PostgreS
     rateLimit: () => (_req, _res, next) => next()
   }));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path === '/api/design-conversations'));
+  assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:messageId/retry')));
   assert.ok(registered.some(([method, path]) => method === 'GET' && path.endsWith('/:conversationId/events')));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:executionId/agent-quote')));
   assert.ok(registered.some(([method, path]) => method === 'POST' && path.endsWith('/:conversationId/authorizations')));
+});
+
+test('conversation retry route forwards the authenticated owner and original message ID', async () => {
+  let retryHandler = null;
+  let captured = null;
+  const app = {
+    get() {},
+    post(path, ...handlers) {
+      if (path.endsWith('/:messageId/retry')) retryHandler = handlers.at(-1);
+    },
+    delete() {}
+  };
+  installDesignConversationRoutes(app, {
+    env: { DESIGN_CONVERSATION_ENABLED: 'true' },
+    pool: {},
+    designConversationService: {
+      startWorker() { return true; },
+      async retryPlanning(input) {
+        captured = input;
+        return { messageId: input.messageId, status: 'queued' };
+      }
+    },
+    rateLimit: () => (_req, _res, next) => next()
+  });
+  const req = {
+    authResolution: { ok: true, userId: 'user-1', dbUserId: 'db-user-1' },
+    params: { conversationId: 'conversation-1', messageId: 'message-1' }
+  };
+  const res = {
+    statusCode: 0,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(value) { this.body = value; }
+  };
+  assert.equal(typeof retryHandler, 'function');
+  await retryHandler(req, res);
+  assert.deepEqual(captured, {
+    userId: 'db-user-1',
+    conversationId: 'conversation-1',
+    messageId: 'message-1'
+  });
+  assert.equal(res.statusCode, 202);
+  assert.deepEqual(res.body, {
+    ok: true,
+    messageId: 'message-1',
+    status: 'queued'
+  });
 });
 
 test('conversation event stream resumes from Last-Event-ID and emits durable event ids', async () => {

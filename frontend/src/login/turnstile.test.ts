@@ -54,6 +54,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetTurnstileLoader();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -91,6 +92,7 @@ describe('Turnstile loader', () => {
     const retryLoad = loadTurnstile();
     const retryScript = activeScript;
     expect(retryScript).not.toBe(staleScript);
+    expect(retryScript?.src).not.toBe(staleScript?.src);
 
     staleScript?.onerror?.();
     await staleResult;
@@ -98,5 +100,41 @@ describe('Turnstile loader', () => {
 
     retryScript?.onload?.();
     await expect(retryLoad).resolves.toBeUndefined();
+  });
+
+  it('times out a stalled script, shares the failure, and permits a clean retry', async () => {
+    vi.useFakeTimers();
+    const first = loadTurnstile();
+    const shared = loadTurnstile();
+    expect(shared).toBe(first);
+    const staleScript = activeScript;
+    const rejected = expect(first).rejects.toThrow('TURNSTILE_LOAD_FAILED');
+    await vi.advanceTimersByTimeAsync(12_000);
+    await rejected;
+    expect(activeScript).toBeNull();
+
+    const retry = loadTurnstile();
+    const retryScript = activeScript;
+    expect(retryScript).not.toBe(staleScript);
+    staleScript?.onload?.();
+    staleScript?.onerror?.();
+    expect(activeScript).toBe(retryScript);
+    retryScript?.onload?.();
+    await expect(retry).resolves.toBeUndefined();
+  });
+
+  it('does not let a stale timeout remove a newer script', async () => {
+    vi.useFakeTimers();
+    const stale = loadTurnstile();
+    const rejected = expect(stale).rejects.toThrow('TURNSTILE_LOAD_FAILED');
+    await vi.advanceTimersByTimeAsync(5_000);
+    resetTurnstileLoader();
+    const retry = loadTurnstile();
+    const retryScript = activeScript;
+    await vi.advanceTimersByTimeAsync(7_000);
+    await rejected;
+    expect(activeScript).toBe(retryScript);
+    retryScript?.onload?.();
+    await expect(retry).resolves.toBeUndefined();
   });
 });

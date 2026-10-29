@@ -16,13 +16,15 @@ async function openDocument(page: Page, filename = 'brief.md') {
 }
 
 for (const theme of ['dark', 'light']) for (const width of [390, 1440]) {
-  test(`read-only differences support keyboard search in both panes ${theme} ${width}`, async ({ page }) => {
+  test(`read-only differences support keyboard search in each visible pane ${theme} ${width}`, async ({ page }) => {
     const fixture = await installWorkspaceFixture(page, theme);
     await page.setViewportSize({ width, height: 844 }); await page.goto(`/artigen/agent/runs/${inputRunId}`);
     const nav = await openDocument(page);
     await nav.getByRole('button', { name: '变更', exact: true }).click();
     await page.getByRole('combobox', { name: '比较来源', exact: true }).selectOption(fixture.workspace.files[2].id);
-    const contents = page.locator('.cm-mergeView .cm-content'); await expect(contents).toHaveCount(2);
+    const contents = page.locator('.workspace-code-editor .cm-content');
+    const panelWidth = await page.locator('.workspace-code-editor').evaluate(el => el.clientWidth);
+    await expect(contents).toHaveCount(panelWidth < 720 ? 1 : 2);
     for (const content of await contents.all()) {
       await expect(content).toHaveAttribute('contenteditable', 'false');
       await expect(content).toHaveAttribute('aria-readonly', 'true');
@@ -53,6 +55,20 @@ for (const language of ['zh', 'en']) for (const width of [390, 1440]) test(`nati
   const dialog = page.locator('.modal-container');
   const select = dialog.getByRole('combobox'); await expect(select).toHaveAccessibleName(/.+/);
   await expect(select).toHaveValue('finance'); await expect(select.locator('option')).toHaveCount(5);
+  const arrow = select.locator('xpath=..').locator('.native-select-chevron');
+  await expect(arrow).toBeVisible();
+  const spacing = await select.evaluate(el => {
+    const control = el.getBoundingClientRect();
+    const icon = el.parentElement!.querySelector('svg')!.getBoundingClientRect();
+    return { end: control.right - icon.right, top: icon.top - control.top, bottom: control.bottom - icon.bottom };
+  });
+  expect(spacing.end).toBeGreaterThanOrEqual(8);
+  expect(Math.abs(spacing.top - spacing.bottom)).toBeLessThanOrEqual(1);
+  await page.emulateMedia({ forcedColors: 'active' });
+  await expect(arrow).toBeHidden();
+  await expect(select).toHaveCSS('appearance', 'auto');
+  await page.emulateMedia({ forcedColors: 'none' });
+
   const originalDescription = await dialog.locator('.type-desc').textContent();
   await select.focus(); await expect(select).toBeFocused();
   for (const value of ['tech', 'scholar', 'creative', 'leader', 'finance', 'tech']) {

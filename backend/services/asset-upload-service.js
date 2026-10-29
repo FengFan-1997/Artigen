@@ -160,7 +160,8 @@ const createAssetUploadSession = async (input = {}) => {
 
   const id = crypto.randomUUID();
   const uploadKind = declared.declaredSize < SINGLE_PUT_LIMIT ? 'single' : 'multipart';
-  const objectKey = `staging/${ownerUserId}/${id}`;
+  const unscopedKey = `staging/${ownerUserId}/${id}`;
+  const objectKey = adapter.namespaceKey ? adapter.namespaceKey(unscopedKey) : unscopedKey;
   const expiresAt = new Date(Date.now() + SESSION_TTL_MINUTES * 60 * 1000);
   const inserted = await pool.query(
     `INSERT INTO asset_upload_sessions

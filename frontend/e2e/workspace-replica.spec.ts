@@ -900,6 +900,8 @@ for (const theme of ['dark', 'light']) {
         await jump.press('Enter');
         await expect.poll(() => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(10);
         await expect(jump).toHaveCount(0);
+        await expect(input).toBeFocused();
+        if (capture) await page.screenshot({ path: `${capture}/focus-${theme}-${width}.png`, animations: 'disabled' });
         await area.evaluate((element) => { element.scrollTop = 240; });
         const plain = page.getByRole('button', { name: '回到底部', exact: true });
         await expect(plain).toBeVisible();
@@ -974,6 +976,23 @@ test('public run messages expose a keyboard and touch friendly copy action with 
   expect(target?.height).toBeGreaterThanOrEqual(44);
   await expect.poll(() => mobileCopy.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
   await mobileContext.close();
+
+  const tabletContext = await browser.newContext({ viewport: { width: 1024, height: 900 }, isMobile: true, hasTouch: true });
+  try {
+    const tabletPage = await tabletContext.newPage();
+    await installWorkspaceFixture(tabletPage, 'light');
+    await tabletPage.goto(runPath);
+    const tabletCopy = tabletPage.getByRole('button', { name: '复制消息' }).first();
+    await expect(tabletCopy).toBeVisible();
+    await expect.poll(() => tabletCopy.evaluate(el => getComputedStyle(el).opacity)).toBe('1');
+    expect(await tabletCopy.evaluate(el => getComputedStyle(el).pointerEvents)).toBe('auto');
+    const rect = await tabletCopy.boundingBox();
+    expect(rect!.width).toBeGreaterThanOrEqual(44);
+    expect(rect!.height).toBeGreaterThanOrEqual(44);
+    await tabletPage.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => {} } }));
+    await tabletCopy.tap();
+    await expect(tabletPage.locator('.copy-announcement')).toHaveText('消息已复制');
+  } finally { await tabletContext.close(); }
 });
 
 test('GitHub type loading errors stay distinct from an empty list and refresh retries', async ({ page }) => {
@@ -2203,7 +2222,7 @@ for (const language of ['zh', 'en']) {
     const footer = page.locator('.file-status');
     const control = footer.locator('.file-version-control');
     const select = control.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true });
-    await expect(control.locator('span')).toHaveText(zh ? '比较版本' : 'Compare version');
+    await expect(control.getByText(zh ? '比较版本' : 'Compare version', { exact: true })).toBeVisible();
     expect(await control.evaluate(el => (el as HTMLLabelElement).control === el.querySelector('select'))).toBe(true);
     await select.focus(); await select.press('Tab'); await page.keyboard.press('Shift+Tab');
     await expect(select).toBeFocused();

@@ -98,6 +98,7 @@
             ref="objectiveComposer"
             :draft="form.objective"
             :attachments="composerAttachments"
+            :zh="zh"
             :busy="busy"
             :busy-label="uploadingAssets ? (zh ? `正在上传 ${selectedFiles.length} 个参考文件…` : `Uploading ${selectedFiles.length} references…`) : creating ? (zh ? '正在启动任务…' : 'Starting task…') : (zh ? '正在获取报价…' : 'Getting quote…')"
             :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
@@ -172,10 +173,10 @@
             <small id="agent-origin-help">{{ zh ? '填写完整 HTTPS 站点，不含路径；多个站点用逗号分隔。' : 'Use HTTPS origins without paths. Separate sites with commas.' }}</small>
             <label><input v-model="form.persistSession" name="persist-browser-session" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
             <label v-if="browserProfiles.length" for="agent-browser-profile">{{ zh ? '恢复已保存的会话' : 'Restore saved session' }}</label>
-            <select class="workspace-select" v-if="browserProfiles.length" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
+            <NativeSelectFrame v-if="browserProfiles.length"><select class="workspace-select" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
               <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
               <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
-            </select>
+            </select></NativeSelectFrame>
             <button v-if="form.profileId" type="button" class="text-danger" @click="revokeSelectedProfile">{{ zh ? '撤销会话' : 'Revoke session' }}</button>
           </section>
         </TechnicalDetails>
@@ -261,6 +262,7 @@
 </template>
 
 <script setup lang="ts">
+import NativeSelectFrame from '../components/NativeSelectFrame.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -354,7 +356,8 @@ const composerAttachments = computed(() => selectedFiles.value.map((file) => ({
   clientId: referenceFileKey(file),
   name: file.name,
   mimeType: file.type || 'application/octet-stream',
-  byteSize: file.size
+  byteSize: file.size,
+  file
 })));
 
 const capabilityOptions = computed(() => [

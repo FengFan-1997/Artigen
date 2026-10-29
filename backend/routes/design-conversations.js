@@ -154,9 +154,19 @@ const installDesignConversationRoutes = (app, deps = {}) => {
       userId: authIdentity(req),
       conversationId: req.params.conversationId,
       message: req.body?.message,
-      attachments: req.body?.attachments
+      attachments: req.body?.attachments,
+      sourceArtifactIds: req.body?.sourceArtifactIds
     });
     res.status(202).json({ ok: true, message });
+  }));
+
+  app.post('/api/design-conversations/:conversationId/messages/:messageId/retry', writeLimiter, asyncRoute(async (req, res) => {
+    const result = await requireService().retryPlanning({
+      userId: authIdentity(req),
+      conversationId: req.params.conversationId,
+      messageId: req.params.messageId
+    });
+    res.status(202).json({ ok: true, ...result });
   }));
 
   app.post('/api/design-conversations/:conversationId/attachments', writeLimiter, asyncRoute(async (req, res) => {

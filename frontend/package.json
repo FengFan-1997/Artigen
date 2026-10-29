@@ -29,7 +29,6 @@
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.5.2",
-    "@codemirror/language": "6.13.1",
     "@codemirror/merge": "^6.12.2",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.14",
@@ -37,9 +36,10 @@
     "@jsquash/jpeg": "1.6.0",
     "@jsquash/png": "3.1.1",
     "@jsquash/webp": "^1.5.0",
-    "@lezer/highlight": "1.2.5",
+    "@lucide/vue": "1.62.0",
     "@novnc/novnc": "1.5.0",
     "@tanstack/vue-query": "5.101.4",
+    "@uiw/codemirror-theme-vscode": "4.25.12",
     "@uppy/aws-s3": "5.1.0",
     "@uppy/core": "5.2.0",
     "ant-design-vue": "^4.2.6",
@@ -57,7 +57,9 @@
     "serve": "^14.2.4",
     "vue": "^3.5.24",
     "vue-echarts": "^8.0.1",
-    "vue-router": "^4.5.0"
+    "vue-router": "^4.5.0",
+    "@git-diff-view/file": "0.1.8",
+    "@git-diff-view/vue": "0.1.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

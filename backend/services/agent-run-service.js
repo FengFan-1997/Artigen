@@ -34,6 +34,7 @@ const {
 } = require('./agent-policy-service');
 const { PHASES, compileAgentPrompt, normalizeTaskSpec } = require('./agent-runtime-v2');
 const { verifyAgentPlanToken } = require('./agent-plan-token');
+const { normalizeInputAttachments, attachmentMetadata, MAX_RUN_INPUT_ASSETS } = require('./agent-input-attachments');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const SUBAGENT_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
@@ -257,6 +258,18 @@ const normalizeAssetIds = (value) => {
   const ids = [...new Set(value.map((entry) => String(entry || '').trim()))];
   if (ids.some((id) => !UUID_RE.test(id))) {
     throw new ApiError(400, 'AGENT_ASSET_IDS_INVALID', { field: 'assetIds' });
+  }
+  return ids;
+};
+
+const normalizeSourceArtifactIds = (value) => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  const ids = [...new Set(value.map((entry) => String(entry || '').trim()))];
+  if (ids.some((id) => !UUID_RE.test(id))) {
+    throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
   }
   return ids;
 };
@@ -635,6 +648,22 @@ const createAgentRunService = ({
       [runId]
     );
     return result.rows;
+  };
+
+  const listSourceArtifactsWithClient = async (client, runId) => {
+    const result = await client.query(
+      `SELECT artifact.*,source_run.id AS source_run_id
+         FROM agent_run_source_artifacts relation
+         JOIN agent_artifacts artifact ON artifact.id=relation.source_artifact_id
+         JOIN agent_runs source_run ON source_run.id=artifact.run_id
+        WHERE relation.run_id=$1
+        ORDER BY relation.created_at,artifact.filename`,
+      [runId]
+    );
+    return result.rows.map((row) => ({
+      ...publicArtifact(row),
+      sourceRunId: row.source_run_id
+    }));
   };
 
   const cancelAllSubagentsWithClient = async (client, runId, reason = 'PARENT_RUN_STOPPED') => {
@@ -1235,15 +1264,6 @@ const createAgentRunService = ({
   }) => {
     if (!config.enabled) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
     const normalizedObjective = normalizeObjective(objective);
-    if (planToken) {
-      verifyAgentPlanToken({
-        env,
-        token: planToken,
-        userId,
-        objective: normalizedObjective,
-        revision: Number(planRevision) || 1
-      });
-    }
     const requestedDeliverables = normalizeDeliverables(deliverables);
     const imageRequested = requestedDeliverables.includes('image') ||
       inferRequiredDeliverables(normalizedObjective).includes('image');
@@ -1361,6 +1381,8 @@ const createAgentRunService = ({
     userId,
     objective,
     assetIds,
+    sourceArtifactIds,
+    sourceConversationId,
     fileEditTargets,
     maxCredits,
     capabilities,
@@ -1393,7 +1415,26 @@ const createAgentRunService = ({
       throw new ApiError(503, 'AGENT_PAYLOAD_KEY_MISSING', { retryable: false });
     }
     const normalizedObjective = normalizeObjective(objective);
+    if (planToken) {
+      verifyAgentPlanToken({
+        env,
+        token: planToken,
+        userId,
+        objective: normalizedObjective,
+        revision: Number(planRevision) || 1
+      });
+    }
     const normalizedAssetIds = normalizeAssetIds(assetIds);
+    const normalizedSourceArtifactIds = normalizeSourceArtifactIds(sourceArtifactIds);
+    const normalizedSourceConversationId = sourceConversationId === undefined || sourceConversationId === null
+      ? null
+      : String(sourceConversationId).trim();
+    if (
+      (normalizedSourceArtifactIds.length && !UUID_RE.test(normalizedSourceConversationId || '')) ||
+      (!normalizedSourceArtifactIds.length && normalizedSourceConversationId)
+    ) {
+      throw new ApiError(400, 'AGENT_SOURCE_ARTIFACTS_INVALID', { field: 'sourceConversationId' });
+    }
     const normalizedFileEditTargets = normalizeFileEditTargets(fileEditTargets, normalizedAssetIds);
     const normalizedDeliverables = normalizeDeliverables(deliverables);
     if (
@@ -1465,6 +1506,8 @@ const createAgentRunService = ({
       const requestHash = hashRequest({
         objective: normalizedObjective,
         assetIds: normalizedAssetIds,
+        sourceArtifactIds: normalizedSourceArtifactIds,
+        sourceConversationId: normalizedSourceConversationId,
         ...(normalizedFileEditTargets.length ? { fileEditTargets: normalizedFileEditTargets } : {}),
         maxCredits: budget,
         capabilities: normalizedCapabilities,
@@ -1552,7 +1595,11 @@ const createAgentRunService = ({
         if (!secureEqual(replay.rows[0].request_hash, requestHash)) {
           throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
         }
-        return { row: replay.rows[0], replayed: true };
+        return {
+          row: replay.rows[0],
+          sourceArtifacts: await listSourceArtifactsWithClient(client, replay.rows[0].id),
+          replayed: true
+        };
       }
       await validateFileEditTargets(client, dbUserId, normalizedFileEditTargets, projectId);
       if (
@@ -1580,13 +1627,47 @@ const createAgentRunService = ({
         );
         if (!project.rowCount) throw new ApiError(404, 'PROJECT_NOT_FOUND');
       }
-      if (normalizedAssetIds.length) {
+      let sourceArtifactRows = [];
+      if (normalizedSourceArtifactIds.length) {
+        const sources = await client.query(
+          `SELECT DISTINCT artifact.id AS artifact_id,artifact.asset_id,artifact.filename,
+                  artifact.mime_type,artifact.byte_size
+             FROM design_conversations conversation
+             JOIN design_executions execution ON execution.conversation_id=conversation.id
+             JOIN agent_runs source_run ON source_run.id=execution.agent_run_id
+             JOIN agent_artifacts artifact ON artifact.run_id=source_run.id
+             JOIN assets asset ON asset.id=artifact.asset_id
+            WHERE conversation.id=$1 AND conversation.user_id=$2
+              AND source_run.user_id=$2 AND source_run.status='succeeded'
+              AND artifact.id=ANY($3::uuid[])
+              AND artifact.verification_status='passed'
+              AND artifact.asset_id IS NOT NULL
+              AND (artifact.expires_at IS NULL OR artifact.expires_at>clock_timestamp())
+              AND asset.owner_user_id=$2
+              AND asset.gc_state='active' AND asset.delete_requested_at IS NULL
+              AND (asset.expires_at IS NULL OR asset.expires_at>clock_timestamp())`,
+          [normalizedSourceConversationId, dbUserId, normalizedSourceArtifactIds]
+        );
+        if (sources.rowCount !== normalizedSourceArtifactIds.length) {
+          throw new ApiError(404, 'AGENT_SOURCE_ARTIFACT_NOT_FOUND');
+        }
+        const filenames = sources.rows.map((source) => String(source.filename || '').trim().toLowerCase());
+        if (new Set(filenames).size !== filenames.length) {
+          throw new ApiError(400, 'AGENT_SOURCE_ARTIFACT_FILENAME_DUPLICATE');
+        }
+        sourceArtifactRows = sources.rows;
+      }
+      const inputAssetIds = [...new Set([
+        ...normalizedAssetIds,
+        ...sourceArtifactRows.map((source) => source.asset_id).filter(Boolean)
+      ])];
+      if (inputAssetIds.length) {
         const owned = await client.query(
           `SELECT id FROM assets
             WHERE owner_user_id=$1 AND id=ANY($2::uuid[])`,
-          [dbUserId, normalizedAssetIds]
+          [dbUserId, inputAssetIds]
         );
-        if (owned.rowCount !== normalizedAssetIds.length) {
+        if (owned.rowCount !== inputAssetIds.length) {
           throw new ApiError(404, 'AGENT_INPUT_ASSET_NOT_FOUND');
         }
       }
@@ -1636,6 +1717,15 @@ const createAgentRunService = ({
           liveConfig.queueMaxWaitHours
         ]
       );
+      if (normalizedSourceArtifactIds.length) {
+        for (const sourceArtifactId of normalizedSourceArtifactIds) {
+          await client.query(
+            `INSERT INTO agent_run_source_artifacts (run_id,source_artifact_id)
+             VALUES ($1,$2)`,
+            [runId, sourceArtifactId]
+          );
+        }
+      }
       const payloadId = crypto.randomUUID();
       const encrypted = encryptAgentPayload({
         runId,
@@ -1643,7 +1733,8 @@ const createAgentRunService = ({
         kind: 'objective',
         value: {
           objective: normalizedObjective,
-          assetIds: normalizedAssetIds,
+          assetIds: inputAssetIds,
+          sourceArtifactIds: normalizedSourceArtifactIds,
           fileEditTargets: normalizedFileEditTargets,
           deliverables: normalizedDeliverables,
           taskSpec: normalizedTaskSpec,
@@ -1703,8 +1794,10 @@ const createAgentRunService = ({
           data: { planRevision: Number(planRevision) || 1 }
         });
       }
+      const sourceArtifacts = await listSourceArtifactsWithClient(client, runId);
       return {
         row: { ...inserted.rows[0], free_credits_reserved: hold.freeCredits },
+        sourceArtifacts,
         replayed: false
       };
     }).catch((error) => {
@@ -1727,7 +1820,13 @@ const createAgentRunService = ({
         throw error;
       }
     }
-    return { ...publicRun(created.row, { maxSteps: liveConfig.maxSteps }), replayed: created.replayed };
+    return {
+      ...publicRun(created.row, {
+        maxSteps: liveConfig.maxSteps,
+        publicFields: { sourceArtifacts: created.sourceArtifacts || [] }
+      }),
+      replayed: created.replayed
+    };
   };
 
   const listRuns = async ({ userId, limit = 30, cursor = null }) => withTransaction(
@@ -1808,6 +1907,7 @@ const createAgentRunService = ({
       [runId]
     );
     const subagents = await listSubagentsWithClient(client, runId);
+    const sourceArtifacts = await listSourceArtifactsWithClient(client, runId);
     return publicRun(row, {
       maxSteps: config.maxSteps,
       subagents: subagents.map(publicSubagent),
@@ -1831,7 +1931,8 @@ const createAgentRunService = ({
           decidedAt: approval.decided_at,
           createdAt: approval.created_at
         })),
-        artifacts: artifacts.rows.map(publicArtifact)
+        artifacts: artifacts.rows.map(publicArtifact),
+        sourceArtifacts
       }
     });
   });
@@ -1848,7 +1949,26 @@ const createAgentRunService = ({
           LIMIT $3`,
         [runId, cursor, Math.max(1, Math.min(500, Number(limit) || 250))]
       );
-      return result.rows.map(publicEvent);
+      const events = result.rows.map(publicEvent);
+      const payloadIds = events.filter((event) => event.type === 'run.input_received')
+        .map((event) => event.data.messagePayloadId).filter((id) => UUID_RE.test(String(id || '')));
+      if (payloadIds.length) {
+        const payloads = await client.query(
+          `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input'
+            AND id=ANY($2::uuid[]) AND expires_at>now()`, [runId, payloadIds]
+        );
+        const contents = new Map(payloads.rows.map((record) => [record.id, decryptAgentPayload({
+          runId, payloadId: record.id, kind: 'user_input', record, env
+        })]));
+        for (const event of events) {
+          const value = contents.get(event.data.messagePayloadId);
+          if (event.type === 'run.input_received' && typeof value?.message === 'string') {
+            event.data = { ...event.data, messageText: value.message,
+              ...(Array.isArray(value.attachments) ? { attachments: value.attachments } : {}) };
+          }
+        }
+      }
+      return events;
     }
   );
 
@@ -2288,6 +2408,8 @@ const createAgentRunService = ({
     userId,
     runId,
     message,
+    assetIds,
+    assetNames,
     approvalId,
     decision,
     decisionReason,
@@ -2295,20 +2417,41 @@ const createAgentRunService = ({
     takeoverApprovalId = null,
     inputId = null
   }) => {
+    const normalizedMessage = String(message || '').trim();
+    const inputAssets = normalizeInputAttachments(assetIds, assetNames);
+    if (inputAssets.assetIds.length && (approvalId || takeoverEnded)) {
+      throw new ApiError(400, 'AGENT_INPUT_ATTACHMENTS_NOT_ALLOWED');
+    }
+    const inputRequestHash = hashRequest({
+      message: normalizedMessage, ...inputAssets,
+      approvalId: approvalId || null, decision: decision || null,
+      decisionReason: decisionReason || null, takeoverEnded, takeoverApprovalId
+    }).toString('hex');
     let shouldEnqueue = false;
     const result = await withTransaction(pool, async (client) => {
       const { dbUserId, row } = await resolveOwnedRun(client, { userId, runId, lock: true });
-      if (TERMINAL_STATUSES.has(row.status)) throw new ApiError(409, 'AGENT_RUN_TERMINAL');
       const normalizedInputId = String(inputId || '').trim().slice(0, 120);
       if (normalizedInputId) {
         const duplicate = await client.query(
-          `SELECT 1 FROM agent_events
+          `SELECT data FROM agent_events
             WHERE run_id=$1 AND data->>'inputId'=$2
             LIMIT 1`,
           [runId, normalizedInputId]
         );
-        if (duplicate.rowCount) return false;
+        if (duplicate.rowCount) {
+          const previousHash = duplicate.rows[0].data?.inputRequestHash;
+          if ((previousHash && previousHash !== inputRequestHash) ||
+              (!previousHash && inputAssets.assetIds.length)) {
+            throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
+          }
+          // A retry can follow a lost queue-publish response after the input
+          // transaction committed. Publishing the same queued Run is idempotent.
+          shouldEnqueue = row.status === 'queued';
+          return false;
+        }
       }
+      if (TERMINAL_STATUSES.has(row.status)) throw new ApiError(409, 'AGENT_RUN_TERMINAL');
+      let messagePayloadId = null;
       let eventType = 'run.input_received';
       let summary = '已收到补充信息';
       if (approvalId) {
@@ -2359,20 +2502,50 @@ const createAgentRunService = ({
         eventType = `approval.${decision}`;
         summary = decision === 'approved' ? '用户已批准关键动作' : '用户已拒绝关键动作';
       } else {
-        const normalizedMessage = String(message || '').trim();
-        if (!normalizedMessage && !takeoverEnded) {
+        if (!normalizedMessage && !inputAssets.assetIds.length && !takeoverEnded) {
           throw new ApiError(400, 'AGENT_INPUT_REQUIRED', { field: 'message' });
         }
         if (normalizedMessage.length > 20_000) {
           throw new ApiError(413, 'AGENT_INPUT_TOO_LARGE', { field: 'message' });
         }
-        if (normalizedMessage) {
+        if (normalizedMessage || inputAssets.assetIds.length) {
+          if (row.status === 'verifying') throw new ApiError(409, 'AGENT_INPUT_FINALIZING');
+          const finalizing = await client.query(
+            `SELECT 1 FROM agent_events WHERE run_id=$1 AND event_type='run.ready_to_finalize' LIMIT 1`, [runId]
+          );
+          if (finalizing.rowCount) throw new ApiError(409, 'AGENT_INPUT_FINALIZING');
+          let attachments = [];
+          if (inputAssets.assetIds.length) {
+            // The legacy Responses executor does not consume the live-input callback.
+            if (row.model_provider === 'openai') throw new ApiError(409, 'AGENT_INPUT_ATTACHMENTS_UNSUPPORTED');
+            const owned = await client.query(
+              `SELECT id,mime_type,byte_size FROM assets
+                WHERE owner_user_id=$1 AND id=ANY($2::uuid[]) AND gc_state='active'
+                  AND delete_requested_at IS NULL AND (expires_at IS NULL OR expires_at>now())
+                FOR SHARE`, [dbUserId, inputAssets.assetIds]
+            );
+            if (owned.rowCount !== inputAssets.assetIds.length) throw new ApiError(404, 'AGENT_INPUT_ASSET_NOT_FOUND');
+            attachments = inputAssets.assetIds.map((id, index) =>
+              attachmentMetadata(owned.rows.find((asset) => asset.id === id), inputAssets.assetNames[id], index));
+            const previous = await client.query(
+              `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind IN ('objective','user_input') AND expires_at>now()`,
+              [runId]
+            );
+            const allIds = new Set(inputAssets.assetIds);
+            for (const record of previous.rows) {
+              const value = decryptAgentPayload({ runId, payloadId: record.id, kind: record.kind, record, env });
+              for (const id of value.assetIds || []) allIds.add(id);
+            }
+            if (allIds.size > MAX_RUN_INPUT_ASSETS) throw new ApiError(413, 'AGENT_RUN_INPUT_ASSET_LIMIT');
+          }
           const payloadId = crypto.randomUUID();
+          messagePayloadId = payloadId;
           const encrypted = encryptAgentPayload({
             runId,
             payloadId,
             kind: 'user_input',
-            value: { message: normalizedMessage },
+            value: { message: normalizedMessage,
+              ...(attachments.length ? { assetIds: inputAssets.assetIds, attachments } : {}) },
             env
           });
           await client.query(
@@ -2475,7 +2648,9 @@ const createAgentRunService = ({
           : {
               takeoverEnded: Boolean(takeoverEnded),
               takeoverApprovalId: takeoverEnded ? takeoverApprovalId : undefined,
-              inputId: normalizedInputId || undefined
+              messagePayloadId: messagePayloadId || undefined,
+              inputId: normalizedInputId || undefined,
+              inputRequestHash: normalizedInputId ? inputRequestHash : undefined
             }
       });
       return true;
@@ -2550,6 +2725,21 @@ const createAgentRunService = ({
       data: { provider: nextProvider, model: nextModel, reason: String(reason).slice(0, 120) }
     });
     return updated.rows[0];
+  });
+
+  const readUserInputs = async ({ runId, workerId, leaseEpoch }) => withTransaction(pool, async (client) => {
+    const run = await client.query('SELECT * FROM agent_runs WHERE id=$1', [runId]);
+    if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+    assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    const result = await client.query(
+      `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input'
+        AND expires_at>now() ORDER BY created_at,id`, [runId]
+    );
+    return result.rows.flatMap((record) => {
+      const value = decryptAgentPayload({ runId, payloadId: record.id, kind: 'user_input', record, env });
+      return typeof value.message === 'string' && !value.type ? [{ id: record.id, message: value.message,
+        ...(Array.isArray(value.assetIds) ? { assetIds: value.assetIds, attachments: value.attachments || [] } : {}) }] : [];
+    });
   });
 
   const loadPrivateContext = async ({ runId }) => withTransaction(pool, async (client) => {
@@ -3427,8 +3617,10 @@ const createAgentRunService = ({
   );
 
   const writePublicMessage = async (client, { runId, text, sourceKey, kind = 'commentary' }) => {
+    // Callers provide only the provider's public content field; reasoning fields are never passed.
+    // Quoted XML/HTML tag names are legitimate document content, not a privacy classifier.
     const body = String(text || '').trim();
-    if (!body || body.length > 128000 || Buffer.byteLength(body) > 512 * 1024 || /<(?:think|analysis)(?:>|\s)/i.test(body)) { if(kind==='final')throw new ApiError(502,'AGENT_PUBLIC_MESSAGE_INVALID'); return null; }
+    if (!body || body.length > 128000 || Buffer.byteLength(body) > 512 * 1024) { if(kind==='final')throw new ApiError(502,'AGENT_PUBLIC_MESSAGE_INVALID'); return null; }
     const payloadId = crypto.randomUUID();
     const encrypted = encryptAgentPayload({ runId, payloadId, kind: 'public_message', value: { text: body, kind }, env });
     const result = await client.query(`INSERT INTO agent_run_payloads
@@ -3465,6 +3657,13 @@ const createAgentRunService = ({
       [runId, workerId, Number(leaseEpoch || 0)]
     );
     if (!lease.rowCount) throw new ApiError(409, 'AGENT_LEASE_LOST');
+    if (['assistant.message', 'context.input_applied'].includes(eventType) && data.messageKey) {
+      const existing = await client.query(
+        `SELECT * FROM agent_events WHERE run_id=$1 AND event_type=$2 AND data->>'messageKey'=$3 LIMIT 1`,
+        [runId, eventType, sanitizeText(data.messageKey, 120)]
+      );
+      if (existing.rowCount) return publicEvent(existing.rows[0]);
+    }
     if (subagentId) {
       const subagent = await client.query(
         'SELECT 1 FROM agent_subagents WHERE id=$1 AND run_id=$2',
@@ -3485,6 +3684,20 @@ const createAgentRunService = ({
       };
     }
     if (eventType === 'run.ready_to_finalize') {
+      if (Array.isArray(data.appliedInputIds)) {
+        const inputs = await client.query(
+          `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input' AND expires_at>now()`, [runId]
+        );
+        const applied = new Set(data.appliedInputIds);
+        const pending = inputs.rows.some((record) => {
+          if (applied.has(record.id)) return false;
+          const value = decryptAgentPayload({ runId, payloadId: record.id, kind: 'user_input', record, env });
+          return typeof value.message === 'string' && !value.type;
+        });
+        if (pending) throw new ApiError(409, 'AGENT_INPUT_PENDING');
+        delete eventData.appliedInputIds;
+      }
+
       const existingBoundary = await client.query(
         `SELECT * FROM agent_events
           WHERE run_id=$1 AND event_type='run.ready_to_finalize'
@@ -3867,7 +4080,7 @@ const createAgentRunService = ({
     mimeType,
     byteSize,
     sha256,
-    version = 1,
+    version = null,
     verificationStatus = 'pending',
     verification = {},
     sources = [],
@@ -3886,6 +4099,21 @@ const createAgentRunService = ({
     // only V2 allowed an old V1 worker to register a passed artifact after
     // takeover and race the new worker's finalization.
     assertWorkerLease(run.rows[0], { workerId, leaseEpoch });
+    if (!parentArtifactId) {
+      const sources = await client.query(
+        `SELECT artifact.id,artifact.version
+           FROM agent_run_source_artifacts relation
+           JOIN agent_artifacts artifact ON artifact.id=relation.source_artifact_id
+          WHERE relation.run_id=$1 AND lower(artifact.filename)=lower($2)
+          ORDER BY relation.created_at,artifact.id
+          LIMIT 2`,
+        [runId, normalizedFilename]
+      );
+      if (sources.rowCount === 1) {
+        parentArtifactId = sources.rows[0].id;
+        if (version === null || version === undefined) version = Number(sources.rows[0].version || 1) + 1;
+      }
+    }
     if (verificationStatus === 'passed' && /^[a-f0-9]{64}$/.test(digest)) {
       const existing = await client.query(
         `SELECT * FROM agent_artifacts
@@ -3988,7 +4216,7 @@ const createAgentRunService = ({
       throw new ApiError(409, 'AGENT_NOT_VERIFYING');
     }
     const artifacts = await client.query(
-      `SELECT role,mime_type,verification_status,sources
+      `SELECT role,mime_type,verification_status,sources,filename
          FROM agent_artifacts WHERE run_id=$1`,
       [runId]
     );
@@ -4047,9 +4275,12 @@ const createAgentRunService = ({
       : [];
     const deliverablesComplete = requiredDeliverablesSatisfied(
       artifacts.rows,
-      requiredDeliverables
+      requiredDeliverables,
+      requirements.requiredArtifactFilenames
     );
-    const textOnly = requiredCount === 0 && requiredDeliverables.length === 0;
+    // A missing preset (for example CSV/TXT) does not make a file run text-only.
+    const textOnly = Number(run.rows[0].runtime_version || 1) === 2 &&
+      requiredCount === 0 && requiredDeliverables.length === 0 && artifacts.rowCount === 0;
     const finalTextHash = String(readyToFinalize?.finalTextSha256 || '').toLowerCase();
     const semanticVerification = readyToFinalize?.semanticVerification &&
       typeof readyToFinalize.semanticVerification === 'object'
@@ -5006,6 +5237,7 @@ const createAgentRunService = ({
   return {
     appendStep,
     appendRuntimeEvent,
+    readUserInputs,
     appendPublicMessage,
     assertWorkerLeaseActive,
     cancelRun,

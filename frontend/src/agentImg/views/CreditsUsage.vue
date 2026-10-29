@@ -345,13 +345,9 @@ const ui = computed(() => {
 
 .usage-page {
   min-height: 100vh;
-  background-color: #050505;
+  background-color: #111311;
   color: #fff;
   font-family: var(--common-font);
-  background-image:
-    linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(204, 255, 0, 0.03) 1px, transparent 1px);
-  background-size: 50px 50px;
 }
 
 .usage-container {

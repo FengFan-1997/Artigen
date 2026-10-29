@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const vm = require('node:vm');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const {
@@ -16,6 +17,73 @@ const {
 
 const readRepoFile = (relativePath) =>
   fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+
+test('Mac worker isolates the DEV Docker config and keeps profile storage namespaces', () => {
+  for (const [profile, configuredPrefix] of [['dev', 'dev/assets'], ['production', '']]) {
+    let launched;
+    let dockerCheck;
+    let removedDockerConfig;
+    const processListeners = [];
+    const usedServices = new Set();
+    const fakeProcess = {
+      argv: ['node', 'runner', profile], execPath: '/synthetic/node',
+      env: { S3_KEY_PREFIX: 'wrong-shell/assets' },
+      once(event, listener) { processListeners.push({ event, listener }); },
+      exit(code) { throw new Error(`Unexpected runner exit: ${code}`); }
+    };
+    vm.runInNewContext(readRepoFile('backend/scripts/run-agent-worker-macos.js'), {
+      __dirname: path.join(repoRoot, 'backend/scripts'), process: fakeProcess, console,
+      require(name) {
+        if (name === 'node:path') return path;
+        if (name === 'node:fs') return {
+          mkdtempSync(prefix) { return `${prefix}fixture`; },
+          rmSync(target, options) { removedDockerConfig = { target, options }; }
+        };
+        if (name === 'node:os') return { tmpdir: () => '/synthetic/tmp' };
+        if (name === 'node:child_process') return {
+          spawnSync: (command, args, options) => {
+            dockerCheck = { command, args, env: options.env };
+            return { status: 0 };
+          },
+          spawn: (_command, _args, options) => { launched = options.env; return { once() {} }; }
+        };
+        if (name === '../lib/local-keychain') return {
+          readMacOsKeychainSecret({ service, account }) {
+            usedServices.add(service);
+            if (account === 'S3_KEY_PREFIX') return configuredPrefix;
+            if (account === 'PG_SSL_CA_BASE64') return '';
+            if (account === 'AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED') return 'true';
+            if (account.endsWith('ACCOUNT_ID')) return 'a'.repeat(32);
+            return 'synthetic';
+          }
+        };
+        if (name === '../lib/agent-models') return { TEXT_MODEL: '@cf/openai/gpt-oss-120b' };
+        if (name === './lib/agent-worker-pool-profile') return { resolveAgentWorkerPoolProfile: () => ({}) };
+        throw new Error(`Unexpected runner import: ${name}`);
+      }
+    });
+    assert.ok(launched);
+    assert.equal(dockerCheck.command, '/Applications/Docker.app/Contents/Resources/bin/docker');
+    assert.deepEqual(Array.from(dockerCheck.args), ['info', '--format', '{{.ServerVersion}}']);
+    if (profile === 'dev') {
+      const dockerConfigDir = '/synthetic/tmp/artigen-agent-dev-docker-config-fixture';
+      assert.equal(dockerCheck.env.DOCKER_CONFIG, dockerConfigDir);
+      assert.equal(launched.DOCKER_CONFIG, dockerConfigDir);
+      assert.equal(launched.ARTIGEN_AGENT_DOCKER_CONFIG_DIR, dockerConfigDir);
+      processListeners.find(({ event }) => event === 'exit').listener();
+      assert.equal(removedDockerConfig.target, dockerConfigDir);
+      assert.equal(removedDockerConfig.options.recursive, true);
+      assert.equal(removedDockerConfig.options.force, true);
+    } else {
+      assert.equal(dockerCheck.env.DOCKER_CONFIG, undefined);
+      assert.equal(launched.DOCKER_CONFIG, undefined);
+      assert.equal(launched.ARTIGEN_AGENT_DOCKER_CONFIG_DIR, undefined);
+      assert.equal(processListeners.some(({ event }) => event === 'exit'), false);
+    }
+    assert.equal(launched.S3_KEY_PREFIX, configuredPrefix || undefined);
+    assert.deepEqual([...usedServices], [`artigen-agent-${profile}-worker`]);
+  }
+});
 
 const workflowEnvValue = (workflow, name) => {
   const match = workflow.match(
@@ -36,6 +104,10 @@ test('Render keeps same-origin frontend bases and uses shallow liveness', () => 
   assert.match(blueprint, /^\s+- key: APP_ORIGIN\s*\n\s+sync: false\s*$/m);
   assert.match(blueprint, /^\s+- key: GOOGLE_OAUTH_CLIENT_ID\s*\n\s+sync: false\s*$/m);
   assert.match(blueprint, /^\s+- key: TURNSTILE_HOSTNAMES\s*\n\s+sync: false\s*$/m);
+  assert.match(
+    blueprint,
+    /^\s+- key: AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED\s*\n\s+value: "true"\s*$/m
+  );
 });
 
 test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundaries', () => {
@@ -82,6 +154,10 @@ test('Render DEV blueprint preserves Aiven free-tier connection and TLS boundari
   assert.match(
     blueprint,
     /^\s+- key: AGENT_RUNTIME_V2_CANARY_USER_IDS\s*\n\s+value: ""\s*$/m
+  );
+  assert.match(
+    blueprint,
+    /^\s+- key: AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED\s*\n\s+value: "true"\s*$/m
   );
 });
 
@@ -177,7 +253,8 @@ test('Mac Agent worker pins free text models, image pricing and the SiliconFlow 
   assert.match(runner, /workerEnv\.AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED/);
   assert.match(runner, /freeAccountId !== accountId/);
   assert.match(runner, /AI_OUTPUT_ALLOWED_HOSTS:[\s\S]*\|\| 's3\.siliconflow\.cn'/);
-  assert.match(runner, /optionalSecretNames = \['PG_SSL_CA_BASE64'\]/);
+  assert.match(runner, /optionalSecretNames = \[[^\]]*'PG_SSL_CA_BASE64'/);
+  assert.match(runner, /optionalSecretNames = \[[^\]]*'S3_KEY_PREFIX'/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA;/);
   assert.match(runner, /delete workerEnv\.PG_SSL_CA_BASE64;/);
   assert.match(runner, /secretNames\.push\('DEV_DATABASE_EXPECTED_HOST'\)/);

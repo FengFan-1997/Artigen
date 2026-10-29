@@ -300,6 +300,7 @@ test('design conversation shares the floating return control without changing it
   await expect(jump).toHaveCount(0);
   await expect.poll(() => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(10);
   await expect(input).toHaveValue('这份草稿保持不变');
+  await expect(input).toBeFocused();
 });
 
 test('finishes the executor readiness check when the backend is unavailable', async ({ page }) => {

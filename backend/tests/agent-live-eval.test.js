@@ -670,7 +670,11 @@ test('Live eval runner is import-safe and loads only the dedicated DEV keychain 
     /KEYCHAIN_SERVICE_INVALID/
   );
   assert.throws(
-    () => loadLiveEvalSecrets({ service: 'artigen-agent-dev-worker', readSecret: () => '' }),
+    () => loadLiveEvalSecrets({
+      env: { NODE_ENV: 'test', AGENT_MODEL_PROVIDER: 'cloudflare' },
+      service: 'artigen-agent-dev-worker',
+      readSecret: () => ''
+    }),
     /KEYCHAIN_INCOMPLETE/
   );
 });
@@ -752,7 +756,11 @@ test('Live Harness closes partial construction state when initialization fails',
   });
   await assert.rejects(
     () => AgentLiveEvalHarness.create({
-      envOverrides: { AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1' },
+      envOverrides: {
+        AGENT_LIVE_EVAL_ALLOW_REAL_PROVIDER: '1',
+        AGENT_MODEL_PROVIDER: 'cloudflare',
+        AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+      },
       pool: {
         connect() {},
         async query() {
@@ -2174,6 +2182,10 @@ test('Live eval terminal failures preserve the partial matrix, limits and reques
       kolorsCalls: 0
     }],
     error,
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare',
+      AGENT_MODEL_NAME: '@cf/openai/gpt-oss-120b'
+    },
     harness: {
       trace: { digest: () => 'dd'.repeat(32) },
       auditor: { qwenCalls: 17, kolorsCalls: 2 }

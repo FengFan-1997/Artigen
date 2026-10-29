@@ -84,7 +84,7 @@ const inferRequiredDeliverables = (objective) => {
       ' '
     )
     .replace(
-      /(?:不要|不需要|无需|不必|禁止)[^。！？\n]{0,12}(?:创建|制作|生成|设计|交付|出)[^。！？\n]{0,80}(?:图片|设计稿|视觉稿|主视觉|海报|概念图)[^。！？\n]*/gi,
+      /(?:不要|不需要|无需|不必|禁止|不(?=(?:创建|制作|生成|设计|交付|出)))[^。！？\n]{0,12}(?:创建|制作|生成|设计|交付|出)[^。！？\n]{0,80}(?:图片|设计稿|视觉稿|主视觉|海报|概念图)[^。！？\n]*/gi,
       ' '
     );
   const required = [];
@@ -117,15 +117,73 @@ const inferRequiredDeliverables = (objective) => {
   ) {
     required.push('image');
   }
+  const textFileTarget = String.raw`(?:\b(?:plain\s+text|text|markdown|md|txt|csv)\s+(?:file|document)\b|\.(?:txt|md|markdown|csv)\b|(?:纯文本|文本|markdown|md|txt|csv)\s*(?:文件|文档))`;
+  const textFileAction = String.raw`(?:\b(?:create|write|save|export|deliver|provide|generate|make|produce)\b|(?:创建|写入|写|保存|导出|交付|提供|生成|制作|输出|整理到))`;
+  const textFileNegation = String.raw`(?:\b(?:do not|don't|dont|must not|never|without)\s+(?:create|creating|write|writing|save|saving|export|exporting|deliver|delivering|provide|providing|generate|generating|make|making|produce|producing)\b|(?:不要|别|不需要|无需|不必|禁止|不(?=(?:创建|写入|写|保存|导出|交付|提供|生成|制作|输出|整理到)))\s*(?:创建|写入|写|保存|导出|交付|提供|生成|制作|输出|整理到))`;
+  const textFileIntentClauses = text.split(
+    /[,，;；。！？\n]+|[.!?](?=\s|$)|\b(?:but|however|and then)\b|(?:但是|而是|不过|可是|然后|并且|并|但)/iu
+  );
+  const textFileRequested = textFileIntentClauses.some((clause) => {
+    const requested = new RegExp(`${textFileAction}.{0,40}${textFileTarget}`, 'iu').test(clause);
+    const negated = new RegExp(`${textFileNegation}.{0,100}${textFileTarget}`, 'iu').test(clause);
+    return requested && !negated;
+  });
+  if (required.length === 0 && textFileRequested) {
+    required.push('text_file');
+  }
   return required;
 };
 
-const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables) => {
+// Conservative extraction of explicitly named text outputs. Input references,
+// negated actions and URLs are not delivery requirements. Unnamed outputs keep
+// the existing format checks; ambiguous prose does not invent extra filenames.
+const inferRequiredTextFilenames = (objective) => {
+  const action = /\b(?:create|write|save|export|deliver|provide|generate|make|produce)\b|创建|写入|保存|导出|交付|提供|生成|制作|输出/iu;
+  const source = /\b(?:read|input|attachment|based on|using|from)\s+|读取|根据|参考|附件|输入/iu;
+  const startsWithSource = /^\s*(?:please\s+|请)?(?:\b(?:read|input|attachment|based on|using|from)\s+|读取|根据|参考|附件|输入)/iu;
+  const boundary = /\b(?:do not|don't|dont|must not|never|without|not|except|excluding|rather than|containing|contains|including|include|with\s+(?:text|content)|that\s+contains|for\s+example|example\s+filename)\b|不要|不需要|(?:别|不必)(?=\s*(?:创建|写入|保存|导出|交付|提供|生成|制作|输出))|不(?=创建|写入|保存|导出|交付|提供|生成|制作|输出)|勿|而非|而不是|无需|不含|禁止|(?:内容|正文)(?:为|是|写|包含|[:：])|(?:包含|例如|比如|示例)(?!\.)/iu;
+  const chainedAction = /^\s*(?:(?:并且|并|且)\s*(?:创建|写入|保存|导出|交付|提供|生成|制作|输出)|(?:and|then)\s+(?:create|write|save|export|deliver|provide|generate|make|produce)\b)\s*/iu;
+  const names = new Set();
+  const text = String(objective || '')
+    .replace(/https?:\/\/[^\s，,；;。]+/giu, ' ')
+    .replace(/(\.(?:markdown|txt|md|csv))(?:和|与|以及)(?=\S)/giu, '$1,');
+  for (const sentence of text.split(/[;；。！？\n]+|[.!?](?=\s|$)|\b(?:but|however)\b|但是|而是|不过|可是/iu)) {
+    let outputList = false;
+    for (let clause of sentence.split(/[,，]/u)) {
+      // Negations and body/example clauses terminate the object list. Their
+      // filenames must never become mandatory extra output files.
+      const end = boundary.exec(clause);
+      if (end) clause = clause.slice(0, end.index);
+      const match = action.exec(clause);
+      if (match) {
+        outputList = true;
+        clause = clause.slice(match.index + match[0].length).replace(chainedAction, '');
+      } else if (startsWithSource.test(clause)) outputList = false;
+      if (outputList) {
+        const input = source.exec(clause);
+        if (input) clause = clause.slice(0, input.index);
+        clause = clause.replace(/[`"'「]([^`"'「」/\\\n]{1,200}\.(?:markdown|txt|md|csv))[`"'」]/giu, (_full, name) => {
+          names.add(name); return ' ';
+        });
+        for (const token of clause.matchAll(/(?<![\p{L}\p{N}_.-])([\p{L}\p{N}_][\p{L}\p{N}_.-]{0,180}\.(?:markdown|txt|md|csv))\b(?!\.[\p{L}\p{N}])/giu)) names.add(token[1]);
+        if (input) outputList = false;
+      }
+      if (end) outputList = false;
+    }
+  }
+  return [...names];
+};
+
+const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables, requiredFilenames = []) => {
   const rows = (Array.isArray(artifacts) ? artifacts : [])
     .filter((artifact) => artifact?.verification_status === 'passed');
   const required = Array.isArray(requiredDeliverables) ? requiredDeliverables : [];
   const has = (predicate) => rows.some(predicate);
-  return required.every((type) => {
+  const namedTextFilesPresent = (Array.isArray(requiredFilenames) ? requiredFilenames : [])
+    .every((filename) => has((artifact) => artifact.filename === filename &&
+      ['source', 'editable'].includes(artifact.role) &&
+      ['text/markdown', 'text/plain'].includes(artifact.mime_type)));
+  return namedTextFilesPresent && required.every((type) => {
     if (type === 'report') {
       return has((artifact) => (
         artifact.role === 'pdf' && artifact.mime_type === 'application/pdf'
@@ -163,6 +221,12 @@ const requiredDeliverablesSatisfied = (artifacts, requiredDeliverables) => {
         artifact.role === 'image' &&
         artifact.verification_status === 'passed' &&
         ['image/png', 'image/jpeg', 'image/webp'].includes(artifact.mime_type)
+      ));
+    }
+    if (type === 'text_file') {
+      return has((artifact) => (
+        ['source', 'editable'].includes(artifact.role) &&
+        ['text/markdown', 'text/plain'].includes(artifact.mime_type)
       ));
     }
     return false;
@@ -430,6 +494,7 @@ module.exports = {
   canonicalSourceUrl,
   createAgentArtifactService,
   inferRequiredDeliverables,
+  inferRequiredTextFilenames,
   quoteShell,
   requiredDeliverablesSatisfied,
   verificationCommand

@@ -9,6 +9,10 @@ const props = withDefaults(defineProps<{ text: string; files?: WorkspaceFile[] }
   files: () => []
 });
 const md = new MarkdownIt({ html: false, linkify: false, breaks: false });
+md.renderer.rules.table_open = (tokens, index, options, _env, self) => {
+  tokens[index]!.attrSet('tabindex', '0');
+  return self.renderToken(tokens, index, options);
+};
 const language = useLanguageStore();
 const zh = computed(() => language.currentLang === 'zh');
 const copyLabel = computed(() => zh.value ? '复制代码' : 'Copy code');
@@ -206,6 +210,10 @@ const onMarkdownClick = (event: MouseEvent) => {
   overflow: auto;
   border-collapse: collapse;
   font-size: 13px;
+}
+.workspace-markdown :deep(table:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 .workspace-markdown :deep(:is(td, th)) {
   min-width: 10ch;

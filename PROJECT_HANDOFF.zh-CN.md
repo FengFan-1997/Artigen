@@ -1,5 +1,59 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-29 首页中文主标题窄屏裁切（本地候选，未部署）
+
+- `/artigen` 首页中文主标题尾句被 `white-space: nowrap` 固定为单行，导致文字越出标题容器。本轮仅去掉该限制，让文本按实际可用宽度换行；品牌文案、标题视觉、其他布局与交互保持不变。
+- 本机 Google Chrome 渲染本地 Vue 页面，固定中文，API/图片请求使用测试替身。桌面1440×960、手机390×844及320×780窄屏的同状态改前/改后截图和并排图册为 `ui-review/landing-headline-wrap-20261029/index.html`；测量改前超出48/14/84px，改后完整且余量6/17/9px。这些证据不代表 DEV、生产或真实设备验收。
+- `frontend/e2e/landing-headline-wrap.spec.ts` 在改前、改后各有桌面和手机1项通过；手机用例另检查320px边界。前端 type-check、目标 ESLint、根 `pnpm check:workspace` 和 `git diff --check` 已运行通过。未运行独立设计自动化（仓库没有与本项对应的设计脚本）；本轮用真实页面截图与 DOM 几何断言验证。
+- 分支 `codex/agent-workspace-polish`，HEAD `e79132ca0fb685cd1b7d03b0483cf1ffb8a02054`。工作树原有大量混合修改均保留；本轮不暂存、不提交、不 push、不创建 PR、不合并、不部署。
+
+## 2026-10-29 工具落地页市场卡片图标统一（本地候选，未部署）
+
+- `/artigen/tools-seo` 的“算力加速”卡片原用电池 Emoji，同页其他功能卡片使用 SVG，与 `frontend/DESIGN.md` 的图标规范不一致。本地候选将其替换为 32px、`currentColor` 描边的 SVG 充电图标，并标记为装饰性；卡片图标槽保持 48px 并让图标几何居中，修正 inline SVG 基线偏移约 5px。卡片整体布局尺寸、路由、统计和交互不变。
+- 本机 Chrome 真实渲染本地 Vue 页面，使用固定中文和合成 API。桌面 1440×960、手机 390×844 有改前/改后默认与键盘焦点截图，桌面有悬停截图；图册 `ui-review/seo-market-icon-20261029/index.html` 另含桌面全页上下文。证据不代表 DEV、生产、真机或其他浏览器验收。
+- `frontend/e2e/seo-market-icon.spec.ts` 覆盖改前 Emoji、改后 SVG/充电图形结构、48px图标槽及几何中心偏差不超过0.5px、键盘焦点、Enter 导航及横向溢出；本机 Chrome 改前、改后桌面/手机均2/2通过。首次加入中心断言时发现并修正inline基线偏移5px，最终截图与测试为修正后版本。前端 type-check、目标 ESLint、根 workspace 门禁（锁文件、文档、发布配置）与 `git diff --check` 均通过。仅清理本轮 `frontend/test-results/seo-market-icon-20261029/` 临时目录。未部署、推送、建 PR 或合并。
+- 本轮基于分支 `codex/agent-workspace-polish`、HEAD `e79132ca0fb685cd1b7d03b0483cf1ffb8a02054`。原工作树包含大量用户修改与未跟踪文件，均予以保留；本轮不暂存或提交混合工作树，也不修改远端。
+
+## 2026-10-29 工具组合流水线设置面板表面（本地候选，未部署）
+
+- `/artigen/tools/image-batch?operation=pipeline` 的 `.pipeline-settings` 原有荧光绿单侧边框和绿色调底色，与 `frontend/DESIGN.md` 的中性表面规则冲突。本地候选仅去掉装饰性边框和绿调，改用无边框中性整体表面及10px圆角；不改变流水线设置或键盘焦点样式。
+- 本机 Chrome 实际渲染本地 Vue 页面，固定中文和合成 API；桌面1440×960、手机390×844的默认、悬停、键盘焦点状态均有改前/改后截图。并排图册：`ui-review/format-factory-pipeline-surface-20261029/index.html`。这不是 DEV、生产、真机或其他浏览器验收。
+- 专项 Playwright 改前、改后均为桌面/手机2/2通过，验证改前荧光左边框、改后四边无边框和中性底色、输入框可见键盘焦点及无横向溢出。前端 type-check、目标 ESLint、workspace 文档/发布配置门禁与 `git diff --check` 均通过。其他列表分隔线不属于本轮，不据此宣称整个工具页已完成设计规范迁移。未部署、推送、建 PR 或合并。
+
+## 点数明细页背景表面收敛（2026-10-29，本地候选，已完成）
+
+- `/artigen/usage` 原先整页铺有高对比荧光网格，偏离产品设计规范中低噪声的石墨背景。本地候选仅移除该装饰网格并改用深色背景 `#111311`；记录卡、筛选、点数和导航行为不变。
+- 本机 Chrome 的本地 Vue 页面使用合成 API 状态；桌面1440×960、手机390×844的改前/改后默认、悬停、键盘焦点真实截图及对照图册保存在 `ui-review/credits-usage-surface-20261028/index.html`。截图不代表 DEV、生产、真实用户或真实设备验收。
+- Playwright 专项改前、改后桌面与手机各2/2通过；最终改后2/2、前端 type-check、目标 ESLint、根 `pnpm check:workspace`（含文档和发布配置检查）与 `git diff --check` 通过。仓库没有针对背景纹理的独立设计自动化脚本；本轮以真实页面截图和计算样式验证。没有部署、提交、推送、创建 PR 或合并。
+
+## 2026-10-14 当前部署状态与成本决定
+
+- 用户决定生产 Render Web Service 暂时保留 Free，接受冷启动；本轮没有升级实例、修改生产配置或触发生产部署。
+- Production Render 实际计划为 Free；本地发布蓝图现也固定为 Free，发布配置检查会阻止无意改回 Starter。Free 服务冷启动时首次直连探针约 14 秒，首次经 Vercel 的 API 探针曾超时；服务唤醒后，Vercel 首页、Vercel `/api/meta` 与 `/healthz`，以及 Render `/healthz`、`/api/meta`、`/readyz` 和 Agent 状态接口均返回 HTTP 200。此结果只证明服务与依赖当前可响应，不等于生产用户完整创作流程已验收。
+- Beta 发布清单现与用户选择对齐：Production 保持 Free 并接受冷启动，发布沟通不得承诺首请求稳定快速；只有用户另行决定接受常驻成本或产品需要稳定首请求时，才重新评估 Starter。
+- Production 的 `main` 与 Render API 当前 exact SHA 为 `47cc56b1e6f94713119e806220ac598c79362435`；`/readyz` 报告的迁移是 `029_secure_console_test_sessions`。DEV 的 Render `/api/meta` 当前 exact SHA 为 `dc4997c2c582d5989deefa8fb6a5f8ef5f0e6414`，`/readyz` 报告迁移 `031_agent_run_artifact_lineage`，数据库、对象存储、Provider 与 Worker 均 ready。
+- PR #244 的文档改动已合入 `dev`，没有生产部署。生产当前仍是较旧的 `main` 版本；升级 Free 实例和生产发布是两个不同操作，均需按用户决定及发布门禁分别处理。
+
+更新时间：2026-10-14（Asia/Shanghai）
+
+## 2026-10-14 测试隔离与商城加载错误提示修复（本地候选，未部署）
+
+- Live Eval 的三个测试原先隐式读取本机 `.env` 中的 Provider 设置，可能在检查 Keychain 缺失、DEV 数据库安全门禁或失败报告模型锁之前就以其他错误退出。测试现在显式固定 Cloudflare profile；终态报告构造器接受可选环境参数，默认仍从运行进程读取，因此脚本运行行为不变。
+- DEV 只读核验中，首次 `/api/meta` 请求 30 秒没有响应；随后 `/healthz` 和 `/api/meta` 均 HTTP 200。DEV SHA 仍为 `dc4997c2c582d5989deefa8fb6a5f8ef5f0e6414`。metadata 自报 `selfServePayments=true`，但 `capabilitySemantics=configured-not-readiness`，这只是配置状态，不等同于支付交易已验收。没有创建订单或调用支付确认。
+- 商城原先把套餐目录请求失败一律显示成“付费功能当前不可用”。现在显示套餐加载失败并提供重试，避免网络/服务响应失败时误报支付开关状态。当前 Render YAML 候选仍将 `PAID_FEATURES_ENABLED` 和 `PAYMENTS_ENABLED` 设为 false，与 DEV metadata 不一致；没有同步蓝图或改线上开关。
+- Production `render.yaml` 从 Starter 改回用户批准的 Free；本地 release-config 检查相应改为强制 Free。这只修正仓库蓝图和本地检查，没有修改 Render Dashboard 或部署。
+- 这些代码和文档仅在本地工作树，未提交、未合并或部署。默认命令 `pnpm --filter backend test` 为 `645 passed / 97 skipped / 0 failed`；三个相关 Live Eval 用例单独运行也全部通过。前端 `218/218` 与 type-check 通过。没有运行 Agent 实机任务、支付交易或 Production 创作流程验收。
+
+## 2026-10-14 Agent Run 工具调用可见性补齐（本地候选，未部署）
+
+- Agent Worker 原先只把模型选中的工具名和工具结果送入测试 trace，没有持久化到 Run 事件，因此用户能看到计划与结果，却看不到中间实际调用了什么。
+- 现在父 Agent 和子 Agent 的工具开始/完成都会写入 `agent_events` 并进入 SSE；运行详情页同时接收计划编译、上下文压缩、语义验证和预算收紧事件，最近动作与审计记录提供中英文工具说明。
+- 工具事件数据采用严格字段白名单，只保留关联调用 ID、工具名和完成状态，不保存工具参数、命令、文件内容或工具输出；子 Agent 事件继续绑定所属子任务。
+- 无需数据库迁移；本地候选没有部署、推送、运行真实 Agent 任务或产生计费。修改文件为 `backend/services/agent-run-service.js`、`backend/services/agent-worker-service.js`、`backend/tests/agent-runtime.test.js`、`frontend/src/agentImg/services/agentRuns.ts`、`frontend/src/agentImg/views/AgentRunDetail.vue`。
+- 本地验证：后端完整测试 `646 passed / 97 skipped / 0 failed`，Agent runtime 定向文件 `143/143`，前端单元测试 `218/218`、前端类型检查与后端 lint 通过；新增回归证明工具参数和输出即使传入事件接口也不会写入审计数据。真实 DEV Agent 任务与部署尚未执行。
+- 继续检查运行历史后，修复了详情页在路由参数变化时复用组件造成的旧 SSE/历史事件混入问题；异步详情读取和交互结果现在按 run ID 隔离。Playwright Chromium 回归 `1/1` 通过（使用已安装的本机 Chrome，默认 Chromium/ffmpeg 缓存缺失；测试媒体输出已删除）。修改 `frontend/src/agentImg/views/AgentRunDetail.vue` 与 `frontend/e2e/agent-workbench.spec.ts`；仍未部署。
+- 本地代码提交为 `b42477beccf214dac962ea5ba898da10b5598ea3`（工具调用事件）和 `224fcba2c981bd893f21955c91ec2e93b14a57b0`（运行历史切换隔离）；均未推送或部署。
+
 ## 2026-09-21 Owner Canary 受控路由候选（未发布）
 
 - 候选分支 `owner-canary-20260920` 基于最新 `dev`，当前 exact SHA 为 `8f78d2514972c4fe0b929afc109915ff8e60fb58`，已推送到 PR #212。生产和 DEV 均未切换，Runtime V2、公众 rollout、Provider fallback 与 Canary 熔断开关保持关闭。
@@ -57,6 +111,16 @@
 - 生产环境未在本轮修改或切流；不得将 DEV 的局部真实成功等同于生产 Agent 或 24-slot 门禁通过。`ui-review/`、网络代理与 Karing/B2U2 配置均未读取或修改。
 
 文档性质：**GitHub 正式项目状态与持久事实总入口**
+
+## 2026-09-21 邀请制 Web Beta 发布契约（PR 候选，未部署）
+
+- 首阶段为邀请制 Web Beta；密码注册、OTP 与 Google 自动建号都在账户创建层检查邀请，现有用户仍可登录，停用账号使用管理员入口。生产、DEV 与未知环境的公开注册默认关闭，环境变量不能越过发布策略开启。
+- `/api/meta` 区分发布策略与实际配置：返回版本、API SHA、环境、配置能力与 `releasePolicy.violations`。配置不等于 readiness，也不能证明前端和 Worker 已部署相同 SHA。
+- 自助支付统一使用已有 `PAYMENTS_ENABLED`；支付 API、readiness 与 metadata 共用解析器。删除此前只用于展示、未接入运行时的同义开关。Runtime V2 沿用 `AGENT_RUNTIME_V2_ENABLED`，实验能力若被实际开启会出现在策略漂移中。
+- 蓝图增加邀请 Secret 声明、关闭支付并固定浅探针，建议生产使用常驻 starter；当前线上实际为 Free，并依据 2026-10-14 决定暂时保留。生成和 OTP 等开关仍待真实依赖验证后开启，蓝图不代表已完成供应商配置。
+- `pnpm check:release-config` 检查蓝图并运行 smoke 工具回归；`pnpm smoke:beta` 按完整 SHA、环境与非 skipped readiness 进行只读检查。发布、管理员操作和恢复记录模板见 `docs/RELEASE_V0_CHECKLIST.zh-CN.md`。
+- 验证：独立工作树未复制本地 `.env`，`pnpm check:core` 通过（前端 218、后端 645、邮件 7 项测试通过，后端 97 项依赖外部环境的测试跳过）；认证/支付/元数据定向 98/98、smoke 工具 8/8、OTP 浏览器回归 4/4。真实恢复、Worker 重启、生产部署和邀请用户任务尚未执行。
+- 本轮生产只读复核：Vercel 与 Render 的 `/healthz`、`/readyz` 正常，API 元数据均为 `47cc56b1e6f94713119e806220ac598c79362435`，仍是旧契约；不包含本 PR，也不证明前端构建或 Worker 的 SHA。
 
 ## 2026-09-09 UI 工作台交互硬化（历史 PR #190）
 
@@ -261,6 +325,12 @@ latest main → hotfix/* → PR to main → main → dev 同步 PR
 
 ### 2026-09-14 migration 028 deployment compatibility
 Migration 028 now explicitly drops legacy `expires_at` NOT NULL constraints before moving design conversation and message expiry to `NULL`, allowing existing DEV/production schemas to adopt permanent history safely during startup migration.
+
+### 2026-10-14 项目生成返回原项目工作区（本地提交，未部署）
+- 从项目工作区发起的 V2 生图任务会沿用已有 `projectId`/`parentVersionId`，后端在任务排队时创建待处理版本、成功结算时关联产物；前端现在只在任务成功且拿到有效产物后，清除本地恢复任务并返回原项目。
+- 项目页通过一次性 `generated=1` 路由标记展示成功提示，加载已保存的最新版本后移除该标记；项目版本按创建时间倒序，因此新版本出现在画廊顶部。方向建议、普通生图和失败任务不会触发返回。
+- 回归验证：`useAgentImgGenerationV2.test.ts` 6/6；`projects-page.spec.ts` 在系统 Chrome 6/6；前端 type-check、目标 ESLint、`git diff --check` 和本地提交钩子均通过。没有运行真实付费生成、修改线上环境或部署。
+- 本地代码提交 `f688ddb`，仅含 `frontend/src/agentImg/composables/useAgentImgGenerationV2.ts`、其单元测试、`frontend/src/agentImg/index.vue`、`frontend/src/agentImg/views/ProjectWorkspace.vue` 和 `frontend/e2e/projects-page.spec.ts`；未 push、未创建 PR。之前工作树已有改动仍保留。
 
 ## 2026-10-14：Agent 工作区前三批本地候选（未发布）
 
@@ -899,3 +969,185 @@ Chrome目录由用户主动选择，按需展开；目录连接不上传。账�
 - 产品开发文档明确约束可见图形与控件边界至少8px、图文间距、导航图标轴线、标题首行及快捷键标签对齐，要求检查实际绘制轮廓而非只看DOM盒和点击区。
 - 原生select箭头须在目标浏览器检查实际呈现；必要时保留原生选择语义并复用共享SVG箭头，同时校验键盘、焦点、系统外观与逻辑方向。受影响的图标/控件/布局改动必须按DESIGN进行明暗、桌面/手机、适用状态和长文案验收，未覆盖环境明确记录。
 - 本次只更新开发规则和文档，不代表截图中的现有UI已修复，也不声称已有自动化CI可验证原生箭头的可见轮廓。未push、创建PR、合并或部署。
+
+### Agent 图标与原生控件统一（2026-10-27，本地候选，分批进行）
+
+- 已将工作区共享的35种手写图标映射到按需导入的 `@lucide/vue`，沿用语义名称、可访问名称和现有控件行为。职业形象与旧照片弹窗标题复用同一图标库并去掉图标装饰边框；原生选择框共享箭头框架，保留原生选择与键盘交互，强制颜色模式恢复系统箭头。资源标签区分隔线内缩并调整选中圆角。
+- 开源许可和 Feather 派生图标的 ISC/MIT 原文已记录；本地 Chrome 页面及合成 API 数据的图册 `Artigen-agent-chrome-polish/icon-refresh-20261027` 保留40组原始前后图及哈希。明暗与320–1920px工作区和390/1440px职业形象页面通过采集；不是 DEV 或真实 Agent 验收。
+- 尚未完成全产品图标迁移：其他页面仍存在内联 SVG、图标字体和第三方组件图标，需按语义盘点并分批替换；未对全产品色彩和间距完成重构。需继续核实品牌标识、插画、交互和各状态，避免覆盖已有工作树；未 push、创建 PR、合并或部署。
+- 验证：249项前端单测、类型检查、lint、文档检查和生产构建通过；首屏88.2 KiB gzip / 250 KiB。Chrome 回归首轮166通过、1跳过、2项因测试定位器匹配新增容器失败；修正定位器后两项单独重跑通过，未重新运行完整套件。未覆盖Firefox/Safari、真实DEV/Agent或系统原生菜单。
+
+### 图片工作坊工具入口图标（2026-10-27，本地候选）
+
+- 五个工具入口、卡片动作、使用场景和 FAQ 的手写图标替换为同一 Lucide Vue 图标体系；工具入口图标设置明确尺寸并去除装饰白框，提升可辨识度。卡片悬停保留中性边界、焦点保留完整轮廓；FAQ 使用原生 disclosure，移除绿色单侧悬停边线，图标与边缘留白并保留键盘焦点。
+- 本地 Chrome 与合成 API 数据的图册 `Artigen-agent-chrome-polish/icon-workshop-20261027` 保存中文/英文、390/768/1440px 的12组原始前后图及哈希。新增4项图标几何与键盘回归、既有2项工具打开与路由回归通过；前端249项单测、类型检查及 lint 通过。首次新增测试因本机缺少 Playwright 视频编码器无法启动，关闭临时测试视频后4项通过。
+- 图片工作坊当前为深色页面，未声称浅色产品主题验收；未验真实 DEV、真实 Agent、真机或 Firefox/Safari。全产品其他页面的图标和配色仍需继续盘点迁移。未 push、创建 PR、合并或部署。
+- 本轮生产构建通过，首屏 JavaScript 88.2 KiB gzip / 250 KiB；`pnpm check:workspace` 和文档检查通过。
+
+### 顶部导航与 Agent PDF 图标（2026-10-27，本地候选）
+
+- 多页面共用顶部导航的菜单、关闭、地球和语言展开图标接入 Lucide Vue；语言选择项使用可聚焦按钮和选中状态，Esc 关闭并返回入口，选择语言后返回入口焦点。下拉面板与条目使用整体中性色表面、圆角和完整焦点轮廓；手机导航保留原有开合与触屏尺寸。
+- Agent PDF 翻页图标接入相同图标体系，移除页码两侧多余竖线；PDF 加载、渲染、页数与错误处理不变。
+- Chrome 本地 Vue 与合成 API 图册 `Artigen-agent-chrome-polish/icon-product-next-20261027` 保留16组前后原图与哈希；PDF 覆盖明暗与390/1440px，顶部导航覆盖中英文和390/1440px，使用的工作坊页面为深色。PDF 实际 worker、单页边界和错误状态桌面/手机6项通过；顶部导航键盘/语言/尺寸4项通过。PDF 改后采集四项均通过，但采集进程退出卡住后人工中断；独立回归正常退出。
+- 前端249项单测、类型及 lint 通过。其他页面的图标和配色仍需逐步迁移；未验真实 DEV、真实 Agent、真机或 Firefox/Safari，未 push、创建 PR、合并或部署。
+- 本轮生产构建、`pnpm check:workspace`、文档门禁及首屏 JavaScript 预算通过，首屏88.2 KiB gzip / 250 KiB。
+
+### 共享 FAQ 展开项完整边框（2026-10-27，本地候选）
+
+- 首页、工具页、工具介绍、图片工作坊和价格页的 FAQ 共用中性完整四边框、圆角和背景；收起项沿用中性分隔线，悬停不再引入彩色单侧线。统一原生 summary 的键盘焦点、触屏高度和图标内距，并移除图片工作坊重复的局部 FAQ 样式。
+- Chrome 本地 Vue、合成 API 的图册 `Artigen-agent-chrome-polish/faq-border-20261027` 留存五页面在390/1440px展开与收起的20组前后原图和哈希，另有4张英文展开状态；这些页面当前 FAQ 为深色视觉，不能代表浅色主题或 DEV。
+- 15项 Chrome 回归覆盖五页面英文键盘、完整边框、触屏尺寸、强制高对比度及工作坊图标，最终全部通过；首轮9项因边框过渡尚未结束即比较颜色失败，测试改为等待颜色稳定后完整重跑通过。前端249项单测、类型与 lint、生产构建及首屏88.2 KiB gzip / 250 KiB预算通过；未验真实 DEV、真机、Firefox/Safari 或浅色主题，未 push、创建 PR、合并或部署。
+
+### Agent 编辑器上游明暗主题（2026-10-27，本地候选）
+
+- 保留 CodeMirror 6 和现有搜索、编辑、保存及只读差异，源码和两侧差异改用 `@uiw/codemirror-theme-vscode` 的完整浅色/深色主题，工作区 resolvedTheme 为唯一外观来源。Compartment 原位切换，普通编辑器保留输入、选区、撤销与滚动；删除自制语法颜色及与差异主题冲突的覆盖。文件路径使用紧凑中性圆角面包屑。
+- 使用官方单主题包按需加载，补充 MIT 许可证清单并移除不再由前端直接使用的语言/高亮依赖；未新增后端接口。Chrome 本地 Vue 和合成 API 图册 `Artigen-agent-chrome-polish/editor-theme-20261027` 保存明暗、390/1440px源码与差异8组原始前后图及哈希，不代表 DEV。
+- 25项编辑器/格式回归和16项主题、保存/冲突/差异/搜索定向回归通过；主题切换覆盖编辑器实例、选区、撤销、滚动及系统主题，差异两侧保持只读。首次25项中1项错误依赖上游未保证的 CSS 类，改为检测实际画布颜色后整套重跑通过。前端249项单测、类型检查、lint、构建与首屏88.2 KiB gzip / 250 KiB预算通过。
+- 当前窄屏差异仍为双栏，尚未实现此前提出的单栏差异；未验真实 DEV、真实 Agent、真机或 Firefox/Safari。未 push、创建 PR、合并或部署。
+
+### 项目素材上传、会话附件和窄屏差异（2026-10-27，本地候选）
+
+- 项目素材上传状态移到对应素材卡：上传期间防止重复提交，失败可重试；上传成功但重新读取失败明确区分，刷新素材时保留未保存表单。无虚构进度百分比。
+- Agent 和设计会话复用同一附件条带：图片本地预览、文件名与大小、键盘可操作的移除和按需横向翻页；移除及卸载释放临时图片 URL。参考另一桌面会话的交互结构，其 React 组件不直接引入 Vue 项目；原上传服务、限制与提交时机保留。
+- 工作区差异在编辑器实际可用宽度小于 720px 时采用 CodeMirror 官方单栏 unifiedMergeView，宽屏沿用双栏；均只读，实际写回仍须显式应用。宽度跨越阈值时切换比较视图，普通编辑器不因尺寸变化重建。
+- Chrome 本地 Vue 与合成 API 的图册 `Artigen-agent-chrome-polish/upload-reference-20261027` 有4组前后原图，`Artigen-agent-chrome-polish/editor-unified-20261027` 有8组前后原图；两者不是 DEV 数据。编辑器图册尚未达到原先单独12组的目标。
+- 上传与原有输入流程30项浏览器回归通过，新增刷新失败分支单独6项通过；编辑器、格式和图册29项通过，另3项覆盖主题和宽度切换。前端249项单测、类型检查、lint、生产构建及首屏88.2 KiB gzip / 250 KiB预算通过。UI 检测无反模式，仍提示现有页面色值和附件覆盖层色值待设计系统核对。
+- 未验真实 DEV、真实 Agent、真实设备或 Firefox/Safari；未 push、创建 PR、合并或部署。
+
+### 差异页顶部操作收敛（2026-10-27，本地候选）
+
+- 只读差异页不再显示只对文件编辑生效的预览、源码和工具栏保存按钮；文件页仍提供这些操作，差异页保留下载、比较来源以及显式应用或保存当前修改。手机上路径与下载并排，收紧文件名与说明间距，给差异内容留出更多空间。
+- Chrome 本地 Vue 和合成 API 图册 `Artigen-agent-chrome-polish/diff-header-20261027` 留存明暗、390/1440px 的源码与差异8组前后图；不代表 DEV。未 push、创建 PR、合并或部署。
+- Chrome 编辑器、主题与格式回归30项通过；差异工具栏和导航图标8项通过。首次新增图标测试错误假定浅色切换到跟随系统必然变暗，固定模拟系统深色后8项重跑通过；首次差异工具栏测试因过早判断导航可见而误关闭桌面面板，等待工作区加载后修正通过。前端类型检查、lint 与工作区文档门禁通过。
+
+### 工作区侧栏图标对齐（2026-10-27，本地候选）
+
+- 工作区侧栏的按钮和链接统一清除默认内距并按44px控件居中；修复按钮图标偏右约7px及右边缘留白不足，保留原图标、焦点、主题切换与导航行为。
+- 图册 `Artigen-agent-chrome-polish/rail-alignment-20261027` 保存深浅主题和1024/1440px的4组 Chrome 本地页面截图与图形测量；手机工作区隐藏该侧栏，不将桌面截图冒充手机验收。使用合成 API，未验证 DEV、真机及其他浏览器，未修改远端。
+- 显式应用和撤销继续按原流程分别写入并恢复文件；补充4种明暗/尺寸的真实交互断言，重跑通过。初次新增断言误认为应用和撤销不写入，核对实际请求后更正。
+
+### Agent 文件目录密度与筛选框（2026-10-27，本地候选）
+
+- 文件目录筛选框增加图标与边缘留白、统一中性背景和圆角；文件树统一目录箭头与图标列、行高与内距，选中文件图标使用中性色。文件打开、筛选、文件夹展开和本机权限行为不变。
+- Chrome 本地 Vue 和合成 API 图册 `Artigen-agent-chrome-polish/file-tree-polish-20261027` 保留明暗及390/1440px的4组前后图，非 DEV。浏览器11项覆盖筛选、清除焦点、文件打开、编辑器主题和差异行为；类型检查、lint、设计检测通过。初次测试未考虑紧凑布局打开文件后目录自动隐藏，补充重新打开目录步骤后整套通过。未验 DEV、真机和非 Chrome 浏览器，未提交或部署。
+
+### Agent 网站成果的右侧预览（2026-10-27，本地候选）
+
+- 网站成果预览由全屏弹窗改为右侧工作区临时网页标签；可在文件、任务与预览间切换，关闭预览返回任务及原入口焦点。切换运行时清除旧预览，过期加载结果不会覆盖新的运行或较新的预览。复用既有网站成果 ZIP 加载与 iframe 沙箱，不支持任意 URL，不新增侧边会话或浏览器服务。
+- `Artigen-agent-chrome-polish/website-dock-20261027` 留存 Chrome 本地 Vue 和合成网站 ZIP 的明暗、390/1440px四组前后图；不是 DEV 或真实 Agent。预览的文件切换、焦点、Esc、长文件名及沙箱在明暗与手机/桌面回归通过。未提交、push、创建 PR、合并或部署。
+- 补充 Chrome 回归：15项文件树、差异、主题和侧栏检查通过；桌面与手机的预览及历史切换4项通过。实际编辑未保存文件后切换网页并返回，内容保留且没有触发文件保存。前端类型、lint 与工作区门禁通过。
+- 生产构建通过，首屏 JavaScript 88.2 KiB gzip / 250 KiB；未验证真实 DEV、真机及非 Chrome 浏览器。
+
+### 右侧工作区紧凑标签与预览操作（2026-10-27，本地候选）
+
+- 右栏资源标签按内容宽度靠左排列，关闭资源区保持独立位置；窄面板横向滚动标签并自动露出当前选项。预览标题栏及桌面关闭按钮收紧；手机和平板保留44px触屏目标与完整焦点，长名称仍省略并保留完整提示。
+- Chrome 本地页面与合成网站 ZIP 图册 `Artigen-agent-chrome-polish/panel-polish-20261027` 保存深浅主题及390/1440px四组前后图，非 DEV。320/390/768/1440px深浅预览8项及文件、差异、主题、导航和草稿16项回归通过；前端类型与 lint 通过。未验证真实 DEV、真实设备或非 Chrome 浏览器，未提交或部署。
+- 本轮生产构建与文档门禁通过，首屏 JavaScript 88.2 KiB gzip / 250 KiB。
+
+### Agent 编辑器目录布局（2026-10-27，本地候选）
+
+- 参考宽屏代码工作台，将文件目录移到代码画布左侧，DOM 顺序与视觉顺序一致，使用中性结构分隔；窄面板仍按原规则切换目录与文件。代码行高调整为1.6，保留 CodeMirror 编辑、明暗主题和差异引擎。
+- Chrome 本地 Vue 和合成 TypeScript 的图册 `Artigen-agent-chrome-polish/trae-theme-20261027` 保留明暗390/1440/1920px六组对照；不是 DEV 或 Trae 本身。Chrome 14项覆盖宽屏位置、未保存草稿、文件树、差异和主题；类型、lint、构建与设计检测通过，首屏88.2 KiB gzip / 250 KiB。没有替换语法主题；未验真实 DEV、真机及非 Chrome，未提交或部署。
+
+### 文件状态栏内距（2026-10-27，本地候选）
+
+- 文件状态栏的中性结构分隔线按工作区内距收进两侧，调整操作文字及间距；保存状态、版本比较和加入会话的原逻辑不变。
+- Chrome 本地 Vue、合成数据图册 `Artigen-agent-chrome-polish/status-surface-20261027` 保留明暗390/1440/1920px六组对照，非 DEV。中英文320/390/1440/1920px状态栏及编辑器主题、布局13项回归通过，前端类型与 lint 通过。新增测试首次误以为英文普通编辑器已有英文可访问名称，按现有实际名称修正后重跑通过；当时名称尚待国际化，后续已修复，见编辑器可访问名称国际化条目。未部署、未提交。
+
+## 2026-10-27 附件卡片复用补充
+
+- 对照 Sedna 上传组件，将其文件类型 SVG 资源复用于 Agent/设计会话共享附件栏；损坏的图片预览显示中性占位，保留文件名与移除操作。上传及确认逻辑未改。
+- 本地 Chrome 合成 API 验证：项目素材与附件交互回归 7 项、前后截图采集 2 项通过；type-check、lint 和 git diff --check 通过。截图：`Artigen-agent-chrome-polish/upload-card-20261027/index.html`。并非 DEV 实测，未提交或部署。
+
+### 输入框附件位置与对齐（2026-10-27，本地候选）
+
+- 共享输入框将附件放在文字输入区上方；第一张附件与文字左侧对齐，多附件仅在需要时为对应方向的滚动箭头留出空间。上传、输入与删除行为沿用原有流程。
+- Chrome 本地页面、合成 API 在明暗和390/1440px采集4组前后对照；上传及位置相关11项浏览器回归、type-check、lint通过。首轮新增测试误将再次选择视为替换，实际为追加；纠正预期后整套11项通过。未验证 DEV、真实设备及非 Chrome，未部署或提交。
+
+### 附件滚动边缘淡出（2026-10-27，本地候选）
+
+- 输入框附件列表按左右滚动剩余量显示边缘淡出，避免卡片硬截断；附件获键盘焦点或系统强制颜色启用时取消遮罩，保留滚动箭头与原有上传行为。
+- Chrome 本地合成 API 截图覆盖明暗、390/1440px及起始/中间位置，图册 `Artigen-agent-chrome-polish/attachment-fade-20261027`；上传、焦点和滚动回归15项及截图4项通过，type-check 与 lint 通过。未验证 DEV、真机及非 Chrome，未提交或部署。
+
+### 会话回到底部键盘焦点（2026-10-28，本地候选）
+
+- 运行详情与设计会话中，键盘触发回到底部后将焦点移至可用输入框；运行已结束时可回到新建任务入口。鼠标触发不主动转移焦点，滚动与未读状态沿用原逻辑。提示图标和文字间距调整至 8px，保留 44px 操作高度。
+- Chrome 本地 Vue、合成 API 测试覆盖运行详情明暗390/1440px和设计会话390px，5项通过；运行详情图册 `Artigen-agent-chrome-polish/jump-focus-20261028` 包含4组前后对照及跳转后焦点截图；type-check、lint通过。默认端口被其他进程占用，换端口重跑通过；补充 Chrome 终态键盘回退明暗390/1440px四项回归通过；未验证 DEV、真机和非 Chrome，未提交或部署。
+
+### 编辑器可访问名称国际化（2026-10-28，本地候选）
+
+- 源码编辑器使用界面语言提供中文或英文可访问名称；名称更新通过 CodeMirror Compartment 原位生效，不为改名重建编辑器。原编辑、保存与差异行为不变。
+- 本地 Chrome 合成 API：中英文390/1440px截图4项、编辑器主题和差异3项、状态栏中英文320/390/1440/1920px 8项通过；type-check和lint通过。截图及DOM名称对照在 `Artigen-agent-chrome-polish/editor-label-20261028`，视觉外观基本不变。基线采集初次桌面因面板尚未挂载即判断可见而失败，等待顶栏后重跑通过。补充 Chrome 运行时语言状态切换回归：程序触发语言 store，核验名称、实例、编辑内容、选区、滚动和撤销保留；未验证 DEV、真机和非Chrome，未提交或部署。
+
+### 会话编辑图标居中（2026-10-28，本地候选）
+
+- 项目会话编辑按钮清除继承的内距，使用固定图标槽居中；桌面按钮32px，触屏44px，增加中性悬停反馈和完整焦点轮廓。编辑入口和表单行为不变。
+- 本地 Chrome 合成 API 覆盖明暗390/1440px，键盘打开和取消4项通过；截图 `Artigen-agent-chrome-polish/session-icon-20261028` 的 SVG 盒子中心测量：改前桌面偏右7px、手机约4.2px，改后偏差不超过1px，另人工检查截图。type-check与lint通过。首轮采集使用了错误的手机入口名称，中断后纠正并重跑通过，所启动测试服务已清理。未验证 DEV、真机和非 Chrome，未提交或部署。
+
+### 消息复制入口的平板触屏支持（2026-10-28，本地候选）
+
+- Agent 消息复制入口在粗指针设备上常显且可点击，触控目标44px；鼠标设备保留悬停及键盘聚焦显现，复制与状态反馈逻辑不变。
+- 本地 Chrome 和合成 API：明暗1024px模拟平板及1440px桌面截图与触控验证4项通过；消息复制的桌面、手机及平板行为回归通过，type-check与lint通过。图册 `Artigen-agent-chrome-polish/copy-touch-20261028`。首次回归筛选误匹配整个桌面测试项目，前24项通过后主动中止并单独重跑目标用例通过，临时服务已清理。未验证 DEV、真实平板和非Chrome，未提交或部署。
+
+### Markdown 表格键盘滚动（2026-10-28，本地候选）
+
+- 共享 Markdown 表格保留原生表格语义并可通过键盘聚焦，提供完整焦点轮廓，支持方向键横向查看；表格即使内容不溢出也会成为一个 Tab 停点。
+- 本地 Chrome 合成 API 深浅390/1440px四项键盘和截图检查、既有 Markdown 表格和代码滚动两项回归通过；type-check和lint通过。图册 `Artigen-agent-chrome-polish/table-focus-20261028` 改后显示焦点，改前无法聚焦；非 DEV。未验证真实设备与非 Chrome，未提交或部署。
+
+### PDF 翻页箭头居中（2026-10-28，本地候选）
+
+- PDF 翻页按钮清除继承内距，使桌面箭头居中；保留原32px桌面、44px触屏尺寸与翻页行为。
+- 本地 Chrome 合成 PDF 的明暗390/1440px四组前后截图和几何检查通过；桌面 SVG 盒子中心改前偏右约6.4px，改后不超过1px。既有 PDF 单页边界、加载失败2项回归、type-check、lint通过；图册 `Artigen-agent-chrome-polish/pdf-arrow-20261028`。首次采集未展开 docs 文件夹被中断，修正后重跑通过，测试服务已清理。补充 Chrome 两页合成 PDF 明暗390/1440px四项回归通过，检查键盘翻页、页码边界和画布内容更新；未验证真实设备、非 Chrome 和 DEV，未提交或部署。
+
+### 工具页卡片悬停表面（2026-10-28，本地候选）
+
+- **巡检与唯一修复项：** 对照 `frontend/DESIGN.md` 检查工具、项目、价格和设计会话页面。工具页卡片仍有荧光绿悬停边框、2px近直角、上移和重阴影、右上径向光晕，偏离中性表面及克制层级；本轮只改这一处。按用户既有要求，登录页和 Agent 运行页排除。
+- **实现：** `frontend/src/agentImg/views/FormatFactory.vue` 将卡片改为10px圆角、透明装饰边框和轻微中性悬停底色，删除悬停位移、阴影及径向光晕；保留全轮廓键盘焦点、品牌强调、禁用状态和点击/收藏逻辑。新回归 `frontend/e2e/tool-card-surface.spec.ts` 逐状态检查计算样式并采集原页面截图。
+- **真实浏览器证据：** `ui-review/tool-card-surface-20261028/index.html` 展示本机 Chrome 下同一路由 `/artigen/tools`、深色主题、1440×960桌面和390×844手机的默认、悬停、键盘焦点六组前后对照。页面使用本地合成数据，不是 DEV 数据；手机悬停状态为指针模拟。
+- **验证：** 前后截图采集4项、项目页/设计会话38项、FAQ/工作坊30项、卡片键盘可访问性2项、价格2项、图片工作坊14项定向浏览器用例通过；根目录 `pnpm type-check`、`pnpm lint` 和 `git diff --check` 通过。测试运行时本地 API 代理出现缺服务的 ECONNREFUSED 日志；本地 mock 页面回归仍通过，不代表真实后端或 DEV 验收。
+- **后续记录：** Impeccable 对整个 `FormatFactory.vue` 静态扫描报告118条建议，涵盖该页已有网格背景、缓动和旧色值等；属于整页静态提示，本轮未逐条视觉复现或修改。其他发现留待后续逐项验收，不能据此认定为已修。未验真实 DEV、真机及 Firefox/Safari；未提交、push、创建 PR、合并或部署。
+
+### 价格页套餐卡片空白区域交互提示（2026-10-28，本地候选）
+
+- 巡检 `/artigen/market` 时确认 `.pricing-card` 是无点击处理器的容器，实际购买入口只有内部“立即购买”按钮；此前空白区域悬停仍会抬升、加重阴影并改变边框颜色，错误暗示整卡可点击。本轮仅移除卡片本身的指针、悬停位移/阴影/边框变化、按压缩放及角标悬停高亮；保留静态套餐层级、颜色、购买按钮及原购买流程。
+- 本地 Chrome 真 Vue 路由和合成套餐 API 的桌面1440×960、手机390×844图册：`ui-review/market-card-affordance-20261028/index.html`。默认、悬停和购买按钮键盘焦点状态均保留前后实图；不是 DEV 数据。新增套餐卡片回归桌面/手机2项、现有 Afdian 下单校验流程桌面/手机2项通过；前端 type-check、lint、工作区文档门禁及 `git diff --check` 通过。
+- 设计检测仍报告 AetherMarket 原有网格背景、未归档色值和常驻套餐主题阴影等提示；本轮没有逐项更改这些不相关既有样式。未验真实 DEV、真机及 Firefox/Safari；未提交、push、创建 PR、合并或部署。
+
+### 项目列表页顶部 Hero 密度与表面（2026-10-28，本地候选）
+
+- 按逐轮只修一处的规则，巡检非登录页、非 Agent 运行页后，本轮选择项目列表页顶部 Hero 过度占据首屏这一项：移除荧光径向光晕和装饰边框，改为中性整体表面；收紧标题、说明、留白与卡片圆角，主按钮桌面/手机统一以44px作为最小高度。保留品牌色文字和行动按钮、完整键盘焦点及原有创建行为；不改项目列表、表单或数据流程。
+- 真实页面证据：本机 Chrome 打开 Vue 路由 `/artigen/projects`，同一合成 API fixture，桌面1440×960、手机390×844；默认、悬停和键盘焦点的改前/改后截图保存在 `ui-review/project-hub-hero-surface-20261028/index.html`。截图不是 DEV、生产或真实用户数据。
+- Chrome 桌面/手机的新 Hero 几何与截图测试、既有项目页操作和响应式边界回归合计14项通过；回归发现按钮40px低于既有点击尺寸约束，已收敛到44px并重跑全套通过。前端 type-check、目标 ESLint、工作区文档检查与 `git diff --check` 通过。浏览器测试日志中有本机 API 代理缺少服务的 ECONNREFUSED 提示，相关页面状态由测试 fixture 驱动，不视为后端或 DEV 验收。
+- Impeccable 静态检测提示本页原有若干未归档色值；这些全页色值迁移不属于本轮唯一问题，留待之后逐项检查。未验真实 DEV、真机及 Firefox/Safari；未提交、push、创建 PR、合并或部署。
+
+### 我的订单页窄屏头部（2026-10-28，本地候选）
+
+- `/artigen/orders` 在手机宽度仍把标题与刷新、点数明细、商城三个操作挤在同一横排，标题和按钮文字被拆成竖向多行，信息层级不清。仅在640px及以下将标题放在独立一行、操作放在下一行；标题收敛为24px，操作可换行且最小高度44px。桌面排列和现有操作行为不变。
+- 本机 Chrome Vue 路由使用合成登录、订单和点数 API；1440px、390px和360px分别采集默认、悬停、键盘焦点状态，改前/改后对照在 `ui-review/credits-orders-responsive-header-20261028/index.html`。不是 DEV 或生产数据；采集覆盖视口，不代表真实设备验收。
+- 专项浏览器回归3/3通过，包含手机横向溢出、标题左对齐并与操作分层、控件边界和44px高度，以及1440px原横排位置；前端 type-check、目标 ESLint、`pnpm check:workspace`、`git diff --check`通过。未验证 DEV、真机及 Firefox/Safari；未提交、push、创建 PR、合并或部署。
+
+### 图片编辑器空状态中性表面（2026-10-28，本地候选）
+
+- 对照 `frontend/DESIGN.md`，仅移除图片编辑器 2.0 空状态卡片的荧光绿虚线装饰边框；保留暗色承托面、圆角、上传入口和拖放流程。绿色仍用于上传动作与键盘焦点，不再包围内容卡片。
+- 本机 Chrome 的真实 Vue 路由 `/artigen/image-workshop/image-editor?editor=v2`，1440×960 和 390×844 同路由前后截图、桌面悬停/键盘焦点及手机键盘焦点对照保存在 `ui-review/image-editor-empty-stage-20261028/index.html`。专项 E2E 检查改前虚线样式、改后无边框、焦点轮廓仍可见和手机无横向溢出，1/1 通过；既有 Editor 2.0 无障碍回归2/2通过。
+- 本地 Vite 的认证和事件 API 代理因未启动后端出现 `ECONNREFUSED`，页面使用合成测试状态；截图不是 DEV、生产或真实用户数据。未验真机、Firefox/Safari；未提交、push、创建 PR、合并或部署。
+
+### 配料标签空白预览占位可读性（2026-10-28，本地候选）
+
+- 配料标签工具的白色空白纸张原以 `rgba(0,0,0,0.08)` 显示“预览”，在纸面上辨识度过低。仅把占位字调为中性 `rgba(0,0,0,0.42)`；白色打印画布、标签生成内容、表单、按钮及相关流程保持不变。生成本地排版后占位字仍隐藏。
+- Chrome 真实 Vue 路由 `/artigen/image-workshop/ingredient-label` 使用合成输入，在 1440×960 桌面与 390×844 手机采集默认、适用的悬停及键盘焦点改前/改后截图，图册为 `ui-review/ingredient-preview-watermark-20261028/index.html`。桌面和手机 E2E 各1项通过；改后占位字对白底的计算对比度为3.04:1，键盘焦点可见，生成排版后占位字 `display:none`。目标 ESLint、前端 type-check 与 `git diff --check`通过；未验 DEV、真机、Firefox/Safari，未提交、push、创建 PR、合并或部署。
+
+### 关于页团队卡片桌面网格平衡（2026-10-28，本地候选）
+
+- 全产品单点巡检排除登录和 Agent 运行页。本轮确认 `/artigen/about` 六张团队卡片在1440px因 `auto-fill` 形成 `[5,1]` 两行，最后一张孤立；仅将桌面网格设为3列形成 `[3,3]`。原有平板/手机断点、卡片内容、悬停与其他区块未改。
+- 真实本机 Chrome + Vue 页面，深色/中文/未登录合成会话；桌面1440×1200和手机390×844同路由状态的改前/改后截图在 `ui-review/about-team-grid-balance-20261028/index.html`。默认、桌面悬停和手机默认有对照。静态卡片没有键盘交互，因此没有伪造焦点截图。
+- Playwright 改前2/2、改后2/2通过：桌面 `[5,1]` → `[3,3]`；手机前后均六行单列；文档宽度不超过视口。改后命令从 `frontend/` 执行：`ARTIGEN_E2E_CHROME_CHANNEL=1 ARTIGEN_ABOUT_TEAM_GRID_PHASE=after pnpm exec playwright test e2e/about-team-grid-balance.spec.ts --project=chromium-desktop --project=chromium-mobile-390 --reporter=line --output=test-results/about-team-grid-20261028/after`。目标 ESLint、前端 type-check、根目录 `pnpm check:workspace` 与 `git diff --check` 均通过。仓库未提供单独的设计检测脚本，本轮未将静态人工审查冒充自动检测。
+- About 页的团队/投资方资料准确性与 `href="#"` 社交链接只记录为待核验项，本轮不处理；未验 DEV、真机、Firefox/Safari。仅清理本轮专属 `frontend/test-results/about-team-grid-20261028/`；保留真实截图、图册与测试。原有脏工作树保留，未提交、push、创建 PR、合并或部署。
+
+### SEO 工具卡片键盘可达性（2026-10-28，本地候选）
+
+- `/artigen/tools-seo` 三张功能卡片原先是带点击事件的 `div`：鼠标可以打开目标页，但 Tab 无法到达，键盘用户也没有焦点提示。本轮只把三张卡片替换为原生 RouterLink 锚点，路由保持 `/artigen/tools`、`/artigen/ai`、`/artigen/market`，并继续记录原有点击/转化统计；增加3px完整 `:focus-visible` 轮廓及系统强制配色支持。移除改动后不再有调用方的 `goMarket` 包装函数。
+- 卡片默认背景、边框、圆角、悬停反馈与内容居中保持不变；E2E 对比改前的真实页面计算样式。没有触碰第三张卡片原有 emoji 等本轮之外问题。
+- 本机 Chrome 的真实 Vue 路由 `/artigen/tools-seo`，深色中文页面与本地合成 API 状态；1440×960桌面和390×844手机的默认、悬停改前/改后，以及改后键盘焦点截图保存在 `ui-review/seo-feature-card-keyboard-20261028/index.html`。焦点截图保留实际视口以避免整页截图错置固定导航。非 DEV/生产验收；手机悬停为指针模拟。改前卡片不可聚焦，未伪造改前焦点截图。
+- 专项 Playwright 改前桌面/手机2项通过、改后桌面/手机2项通过。验证改前 `DIV` 无 Tab 停点；改后三个原生链接、居中排版和表面/悬停一致，Tab 出现完整3px焦点轮廓，Enter 导航到目标路由。目标 ESLint、前端 type-check、`pnpm check:workspace` 与 `git diff --check`通过。仓库没有针对本项的独立设计自动检测脚本，因此由真实浏览器回归检查样式与键盘状态。
+- 页面由本机应用渲染、API采用通用合成响应，不代表DEV或真实用户会话；未验真机、Firefox/Safari。仅清理本轮专属 `frontend/test-results/seo-feature-card-keyboard-20261028/`；保留图册、截图、计算样式及 E2E 源码。未提交、push、创建 PR、合并或部署。

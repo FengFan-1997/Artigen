@@ -3,6 +3,11 @@ import { defineConfig, devices } from '@playwright/test';
 const localChrome = process.env.ARTIGEN_E2E_CHROME_CHANNEL === '1'
   ? { channel: 'chrome' as const }
   : {};
+const requestedPort = Number.parseInt(process.env.ARTIGEN_E2E_PORT || '', 10);
+const e2ePort = Number.isInteger(requestedPort) && requestedPort >= 1024 && requestedPort <= 65535
+  ? requestedPort
+  : 51731;
+const e2eBaseUrl = `http://127.0.0.1:${e2ePort}`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -17,14 +22,14 @@ export default defineConfig({
   reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
   outputDir: 'test-results/e2e',
   use: {
-    baseURL: 'http://127.0.0.1:51731',
+    baseURL: e2eBaseUrl,
     trace: 'retain-on-failure',
     video: 'retain-on-failure',
     screenshot: 'only-on-failure'
   },
   webServer: {
-    command: 'pnpm dev --host 127.0.0.1 --port 51731 --strictPort',
-    url: 'http://127.0.0.1:51731',
+    command: `pnpm dev --host 127.0.0.1 --port ${e2ePort} --strictPort`,
+    url: e2eBaseUrl,
     reuseExistingServer: false,
     timeout: 120_000
   },

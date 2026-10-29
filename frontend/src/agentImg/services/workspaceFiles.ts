@@ -13,11 +13,13 @@ export type WorkspaceFile = {
   editable?: boolean;
   editTarget?: { source: string; id: string; name: string; sha256: string } | null;
 };
+export type MessageAttachment = { assetId: string; filename: string; mimeType: string; byteSize: number };
 export type PublicMessage = {
   id: string;
   role: 'user' | 'assistant';
   kind: string;
   text: string;
+  attachments?: MessageAttachment[];
   createdAt: string;
 };
 const filesPath = (projectId: string) =>

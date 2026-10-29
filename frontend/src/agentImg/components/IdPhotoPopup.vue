@@ -3,7 +3,7 @@
     :visible="visible"
     :title="ui.title"
     :subtitle="ui.subtitle"
-    icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><line x1="15" y1="8" x2="17" y2="8"></line><line x1="15" y1="12" x2="17" y2="12"></line><line x1="7" y1="16" x2="17" y2="16"></line></svg>'
+    :icon="IdCard"
     :upload-text="ui.uploadText"
     :upload-hint="ui.uploadHint"
     :reupload-text="ui.reupload"
@@ -18,9 +18,9 @@
 
         <div class="form-item">
           <label :for="styleId">{{ ui.typeLabel }}</label>
-          <select :id="styleId" v-model="selectedType" class="portrait-style" @change="trackEvent('ID_Photo', 'select_type', selectedType)">
+          <NativeSelectFrame><select :id="styleId" v-model="selectedType" class="portrait-style" @change="trackEvent('ID_Photo', 'select_type', selectedType)">
             <option v-for="option in photoTypes" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
+          </select></NativeSelectFrame>
         </div>
 
         <div class="type-desc">
@@ -81,6 +81,8 @@
 </template>
 
 <script setup lang="ts">
+import NativeSelectFrame from './NativeSelectFrame.vue';
+import { IdCard } from '@lucide/vue';
 import { computed, ref, watch, useId } from 'vue';
 import BaseTaskPopup from './BaseTaskPopup.vue';
 import { trackEvent } from '../../utils/analytics';
@@ -232,6 +234,8 @@ const handleGenerate = () => {
   color: #888;
   margin-bottom: 8px;
 }
+
+.form-item :deep(.native-select-frame) { width: 100%; }
 
 .portrait-style {
   box-sizing: border-box;

@@ -19,6 +19,7 @@ const {
   opaqueReference
 } = require('../lib/privacy-metadata');
 const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
+const { buildReleaseMetadata } = require('../services/release-metadata');
 
 const installSystemRoutes = (app, deps) => {
   const NODE_ENV = deps?.NODE_ENV;
@@ -497,20 +498,23 @@ const installSystemRoutes = (app, deps) => {
     "/api/meta",
     rateLimit("meta", { max: 300, windowMs: 60 * 1000 }),
     (req, res) => {
+      const release = buildReleaseMetadata({
+        env: readinessEnv,
+        appEnv: APP_ENV,
+        nodeEnv: NODE_ENV
+      });
       res.json({
         ok: true,
         nodeEnv: NODE_ENV,
         appEnv: APP_ENV,
         uptimeSec: Math.floor(process.uptime()),
         rid: String(res.locals.requestId || ""),
-        gitSha:
-          String(
-            readinessEnv.RENDER_GIT_COMMIT ||
-              readinessEnv.VERCEL_GIT_COMMIT_SHA ||
-              readinessEnv.RAILWAY_GIT_COMMIT_SHA ||
-              readinessEnv.GIT_SHA ||
-              "",
-          ).trim() || null,
+        version: release.version,
+        environment: release.environment,
+        releasePolicy: release.releasePolicy,
+        capabilities: release.capabilities,
+        capabilitySemantics: release.capabilitySemantics,
+        gitSha: release.gitSha,
       });
     },
   );

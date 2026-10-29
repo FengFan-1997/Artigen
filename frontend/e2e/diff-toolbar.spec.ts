@@ -1,0 +1,34 @@
+import { expect, test } from '@playwright/test';
+import { installWorkspaceFixture } from './helpers/workspaceReplicaFixtures';
+import { inputRunId } from './helpers/agentInputFixtures';
+
+for (const theme of ['dark', 'light']) for (const width of [390, 1440]) test(`comparison toolbar preserves explicit apply and file controls ${theme} ${width}`, async ({ page }) => {
+  const fixture = await installWorkspaceFixture(page, theme);
+  const original = fixture.workspace.files[0].text;
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  await expect(page.locator('.workspace-topbar')).toBeVisible();
+  const nav = page.getByRole('navigation', { name: '资源面板', exact: true });
+  if (!(await nav.isVisible())) await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  await nav.getByRole('button', { name: '文件', exact: true }).click();
+  const tree = page.getByRole('complementary', { name: '文件目录', exact: true });
+  await tree.getByRole('button', { name: 'docs', exact: true }).click();
+  await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+  const toolbar = page.locator('.file-toolbar');
+  await expect(toolbar.getByRole('button', { name: '源码', exact: true })).toBeVisible();
+  await nav.getByRole('button', { name: '变更', exact: true }).click();
+  await page.getByRole('combobox', { name: '比较来源' }).selectOption(fixture.workspace.files[2].id);
+  await expect(toolbar.getByRole('button', { name: '源码', exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: '保存', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '应用到当前文件' })).toBeVisible();
+  await expect(page.locator('.workspace-code-editor [contenteditable="true"]')).toHaveCount(0);
+  expect(fixture.workspace.saves).toHaveLength(0);
+  await page.getByRole('button', { name: '应用到当前文件' }).click();
+  const undo = page.getByRole('button', { name: '撤销最近一次应用' });
+  await expect(undo).toBeVisible(); await undo.click();
+  await expect.poll(() => fixture.workspace.saves.length).toBe(2);
+  expect(fixture.workspace.saves[1].text).toBe(original);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  await nav.getByRole('button', { name: '文件', exact: true }).click();
+  await expect(toolbar.getByRole('button', { name: '源码', exact: true })).toBeVisible();
+});

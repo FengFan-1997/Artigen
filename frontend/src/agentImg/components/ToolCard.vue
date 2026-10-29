@@ -18,25 +18,13 @@
 
     <div class="card-footer">
       <span class="launch-text">{{ launch }}</span>
-      <span class="arrow"
-        ><svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          width="16"
-          height="16"
-        >
-          <line x1="5" y1="12" x2="19" y2="12"></line>
-          <polyline points="12 5 19 12 12 19"></polyline></svg
-      ></span>
+      <span class="arrow"><ArrowRight :size="16" :stroke-width="1.75" aria-hidden="true" /></span>
     </div>
   </button>
 </template>
 
 <script setup lang="ts">
+import { ArrowRight } from '@lucide/vue';
 defineProps<{
   toolId: string;
   badge: string;
@@ -71,7 +59,7 @@ const emit = defineEmits<{
 
 .tool-card:hover {
   background: rgba(30, 30, 30, 0.6);
-  border-color: rgba(204, 255, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.22);
   transform: translateY(-5px);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
 }
@@ -79,7 +67,7 @@ const emit = defineEmits<{
 .tool-card:focus-visible {
   outline: 3px solid #ccff00;
   outline-offset: 4px;
-  border-color: rgba(204, 255, 0, 0.75);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .card-header {
@@ -92,7 +80,7 @@ const emit = defineEmits<{
 
 .tool-id {
   font-family: 'JetBrains Mono', monospace;
-  color: #666;
+  color: #a0a69f;
   font-size: 12px;
 }
 
@@ -115,15 +103,17 @@ const emit = defineEmits<{
 }
 
 .tool-icon {
-  font-size: 48px;
-  border: 2px solid #fff;
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: #e8ebe7;
+}
+
+.tool-icon :deep(svg) {
+  display: block;
+  width: 36px;
+  height: 36px;
 }
 
 .tool-title {
@@ -152,7 +142,7 @@ const emit = defineEmits<{
 .launch-text {
   font-family: 'JetBrains Mono', monospace;
   font-weight: 700;
-  color: #666;
+  color: #a0a69f;
   transition: color 0.3s;
 }
 
@@ -187,7 +177,13 @@ const emit = defineEmits<{
   }
 
   .tool-icon {
-    font-size: 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .tool-icon :deep(svg) {
+    width: 32px;
+    height: 32px;
   }
 
   .tool-title {

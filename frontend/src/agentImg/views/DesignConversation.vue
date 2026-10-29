@@ -74,6 +74,7 @@
       <ComposerBox
         :draft="draft"
         :attachments="selectedAttachments"
+        :zh="zh"
         :busy="sending"
         :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
         :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
@@ -178,11 +179,12 @@
       </div>
 
       <div class="docked-composer">
-        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="scrollToBottom(true)" />
+        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="jumpToLatest" />
         <DraftRestoredNotice v-if="draftRestored" :zh="zh" />
         <ComposerBox
           :draft="draft"
           :attachments="selectedAttachments"
+        :zh="zh"
           :busy="sending"
           :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
           :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
@@ -674,6 +676,14 @@ const scrollToBottom = async (force = false) => {
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'auto' });
   nearBottom.value = true;
   hasUnreadUpdates.value = false;
+};
+const jumpToLatest = async (event: MouseEvent) => {
+  const button = event.currentTarget as HTMLButtonElement;
+  const target = button.parentElement?.querySelector<HTMLTextAreaElement>('textarea:not(:disabled)');
+  const restoreFocus = event.detail === 0 && document.activeElement === button;
+  await scrollToBottom(true);
+  await nextTick();
+  if (restoreFocus && target?.isConnected && document.activeElement === document.body) target.focus({ preventScroll: true });
 };
 
 const stopConversationMonitoring = () => {

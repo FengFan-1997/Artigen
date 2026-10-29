@@ -92,15 +92,15 @@ async function choose(node: TreeNode) {
 }
 .file-tree button {
   display: grid;
-  grid-template-columns: 12px 14px minmax(0, 1fr);
+  grid-template-columns: 14px 14px minmax(0, 1fr);
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   width: 100%;
   min-width: 0;
-  min-height: 32px;
-  padding: 6px 7px;
+  min-height: 36px;
+  padding: 6px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -110,7 +110,7 @@ async function choose(node: TreeNode) {
 }
 .file-tree-caret {
   display: grid;
-  width: 12px;
+  width: 14px;
   place-items: center;
   color: var(--muted);
 }
@@ -125,7 +125,7 @@ async function choose(node: TreeNode) {
   font-weight: 600;
 }
 .file-tree button[aria-current='page'] .file-tree-kind {
-  color: var(--acid-text);
+  color: var(--text);
 }
 .file-tree-name {
   overflow: hidden;

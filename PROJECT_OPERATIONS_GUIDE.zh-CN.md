@@ -7,7 +7,7 @@
 | 环境 | 代码来源 | 前端/后端 | 数据 | 发布方式 |
 | --- | --- | --- | --- | --- |
 | 本机 | 功能或 hotfix 分支 | Vite + Express | 本机 PostgreSQL 与本地/测试存储 | 手工启动 |
-| DEV | `dev` | Render 同源服务，可有 Vercel Preview | 独立 DEV PostgreSQL 与 S3 命名空间 | 合并 `dev` 后自动部署 |
+| DEV | `dev` | Render 同源服务，可有 Vercel Preview | Aiven DEV PostgreSQL；S3 当前与生产共桶，命名空间隔离待完成 | 合并 `dev` 后自动部署 |
 | 生产 | `main` 的选定不可变提交 | Vercel 前端 + Render API | 生产 PostgreSQL 与共享 S3 | 人工确认和发布 |
 
 事实优先级：
@@ -100,7 +100,10 @@ git switch -c feature-name-20260918 origin/dev
 1. `AGENTS.md`
 2. `PROJECT_HANDOFF.zh-CN.md`
 3. 被 Git 忽略的 `HANDOFF.local.md`
-4. 与改动相关的现行专题文档
+4. 开发必读的[平台账号与接管报告](./docs/INFRA_ACCOUNT_REGISTER.zh-CN.md)
+5. 与改动相关的现行专题文档
+
+新增、更新或停用平台 / 账号，改变登录方式、权限、凭据存放位置或环境归属时，必须同步账号报告、受影响的 runbook 和正式 Handoff；发现旧记录不符时也应修正。有 PR 时与变更一起提交，不能只留在聊天或本地记录中。账号报告只保留脱敏事实，未核验项明确标注。
 
 用户已有工作树内容不得覆盖、清理、格式化或混入提交。大任务优先使用独立 worktree。
 
@@ -146,6 +149,8 @@ PR 必须准确填写：
 - 正式 Handoff 已更新，或具体不适用原因。
 
 CI 会检查 Handoff 二选一。声明“已更新”时 diff 必须包含 `PROJECT_HANDOFF.zh-CN.md`；声明“不需要”时必须填写具体理由。外部贡献者不需要提交本机 `HANDOFF.local.md`。
+
+Vercel Preview 是 PR 检查的一部分。状态失败时先用该检查提供的命令读取对应部署日志；如果 `vercel inspect` 报 CLI token 无效，这只说明当前本机 CLI 不能读取日志，不能据此判断项目构建根因或账号不可用。恢复 CLI 登录后再检查，不要因此轮换项目 Secret 或更改部署配置；必需的 Vercel 检查仍失败时不要合并 PR。
 
 ## 7. DEV 发布与 smoke
 

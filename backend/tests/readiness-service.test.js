@@ -24,6 +24,7 @@ const billing = require('../services/billing-service');
 const { installSystemRoutes } = require('../routes/system');
 const { installToolTaskRoutes } = require('../routes/tool-tasks');
 const { getAgentConfig } = require('../services/agent-config');
+const { buildReleaseMetadata } = require('../services/release-metadata');
 
 const migratedRow = Object.freeze({
   has_tasks: true,
@@ -1193,6 +1194,28 @@ test('system meta exposes the deployment environment and Render commit', () => {
   assert.equal(res.payload.nodeEnv, 'production');
   assert.equal(res.payload.appEnv, 'dev');
   assert.equal(res.payload.gitSha, 'render-commit-sha');
+  assert.equal(res.payload.version, '1.0.0');
+  assert.equal(res.payload.environment, 'dev');
+  assert.equal(res.payload.releasePolicy.name, 'private-dev');
+  assert.equal(res.payload.capabilities.publicSignup, false);
+  assert.equal(res.payload.capabilities.agentRuntimeV2, false);
+});
+
+test('release metadata keeps public signup closed and reports canonical runtime flags', () => {
+  const metadata = buildReleaseMetadata({
+    env: {
+      APP_ENV: 'production',
+      ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'true',
+      ARTIGEN_SELF_SERVE_PAYMENTS_ENABLED: 'true',
+      ARTIGEN_AGENT_RUNTIME_V2_ENABLED: 'true',
+      RENDER_GIT_COMMIT: 'release-sha'
+    }
+  });
+  assert.equal(metadata.environment, 'production');
+  assert.equal(metadata.gitSha, 'release-sha');
+  assert.equal(metadata.capabilities.publicSignup, false);
+  assert.equal(metadata.capabilities.selfServePayments, false);
+  assert.equal(metadata.capabilities.agentRuntimeV2, false);
 });
 
 test('system readyz uses the injected generation adapter and readiness dependencies', async () => {
@@ -1232,4 +1255,19 @@ test('system readyz uses the injected generation adapter and readiness dependenc
   } finally {
     await fs.promises.rm(rootDir, { recursive: true, force: true });
   }
+});
+
+test('metadata exposes active configuration drift instead of claiming disabled capabilities', () => {
+  const metadata = buildReleaseMetadata({ env: {
+    APP_ENV: 'production', PAID_FEATURES_ENABLED: 'true', PAYMENTS_ENABLED: 'true',
+    AGENT_FEATURE_ENABLED: 'true', AGENT_RUNTIME_V2_ENABLED: 'true',
+    AGENT_SUBAGENTS_ENABLED: 'true', AGENT_PROVIDER_SCHEDULER_ENABLED: 'true'
+  } });
+  assert.equal(metadata.capabilitySemantics, 'configured-not-readiness');
+  assert.equal(metadata.capabilities.selfServePayments, true);
+  assert.equal(metadata.capabilities.agentRuntimeV2, true);
+  assert.equal(metadata.releasePolicy.allowedCapabilities.agentRuntimeV2, false);
+  assert.deepEqual(metadata.releasePolicy.violations, ['selfServePayments', 'agentRuntimeV2', 'agentSubagents', 'providerScheduler']);
+  assert.equal(buildReleaseMetadata({ env: { APP_ENV: 'production' } }).capabilities.generation, false);
+  assert.equal(buildReleaseMetadata({ env: { APP_ENV: 'preview', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'true' } }).capabilities.publicSignup, false);
 });

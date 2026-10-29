@@ -1,8 +1,8 @@
 import { authFetch } from '@/login/authFetch';
 import { buildApiUrl } from '@/utils/api';
 import { TEXT_MODEL, IMAGE_MODEL } from '../constants/models';
+import type { AgentArtifact, AgentQuote } from './agentRuns';
 import type { WorkspaceFileRef } from './workspaceFiles';
-import type { AgentQuote } from './agentRuns';
 
 export type DesignRouteKind = 'reply' | 'local_tool' | 'tool_task' | 'agent_run';
 export type DesignExecutionStatus =
@@ -23,6 +23,16 @@ export type DesignAttachmentManifest = {
   name: string;
   mimeType: string;
   byteSize: number;
+};
+
+export type DesignSourceArtifact = {
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  byteSize: number;
+  version: number;
+  role: AgentArtifact['role'];
+  sourceRunId: string;
 };
 
 export type DesignMemory = {
@@ -66,8 +76,11 @@ export type DesignMessage = {
   role: 'user' | 'assistant';
   kind: 'text' | 'clarification' | 'execution' | 'error';
   status: 'pending' | 'complete' | 'failed';
+  retryableMessageId?: string;
+  planningStatus?: 'queued' | 'running' | 'succeeded' | 'failed';
   text: string;
   attachments: DesignAttachmentManifest[];
+  sourceArtifacts: DesignSourceArtifact[];
   questions: string[];
   assumptions: string[];
   memoryCandidates: Array<{ field: keyof DesignMemory; value: unknown }>;
@@ -80,6 +93,7 @@ export type DesignExecutionPlan = {
   executor?: string;
   uploadRequired?: boolean;
   attachmentClientIds?: string[];
+  sourceArtifactIds?: string[];
   options?: Record<string, unknown>;
   objective?: string;
   capabilities?: Record<string, boolean>;
@@ -89,6 +103,7 @@ export type DesignExecutionPlan = {
     persistSession?: boolean;
   };
   assumptions?: string[];
+  conversationContextMessages?: number;
   complexity?: 'simple' | 'medium' | 'high';
   confidence?: number;
   skillIds?: string[];
@@ -248,17 +263,30 @@ export const deleteDesignConversation = async (conversationId: string) => {
 export const sendDesignMessage = async (
   conversationId: string,
   message: string,
-  attachments: DesignAttachmentManifest[] = []
+  attachments: DesignAttachmentManifest[] = [],
+  sourceArtifactIds: string[] = []
 ) => {
   const result = await requestJson<{ message: DesignMessage }>(
     `/api/design-conversations/${encodeURIComponent(conversationId)}/messages`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, attachments })
+      body: JSON.stringify({
+        message,
+        attachments,
+        ...(sourceArtifactIds.length ? { sourceArtifactIds } : {})
+      })
     }
   );
   return result.message;
+};
+
+export const retryDesignPlanning = async (conversationId: string, messageId: string) => {
+  const result = await requestJson<{ ok: boolean; messageId: string; status: 'queued' }>(
+    `/api/design-conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/retry`,
+    { method: 'POST' }
+  );
+  return { messageId: result.messageId, status: result.status };
 };
 
 export const uploadDesignAttachments = async (
@@ -392,6 +420,7 @@ export const openDesignEventStream = (
   const known = [
     'conversation.created',
     'message.received',
+    'planning.retry_requested',
     'clarification.required',
     'execution.ready',
     'planning.failed',

@@ -265,7 +265,7 @@ onBeforeUnmount(() => {
   margin-left: auto;
   width: fit-content;
 }
-@media (max-width: 799px) {
+@media (max-width: 799px), (pointer: coarse) {
   .timeline-message button {
     min-height: 44px;
   }

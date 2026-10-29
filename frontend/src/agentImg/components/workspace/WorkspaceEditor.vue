@@ -3,10 +3,9 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import { basicSetup } from 'codemirror';
 import { EditorView, keymap } from '@codemirror/view';
-import { EditorState, type Extension } from '@codemirror/state';
-import { MergeView } from '@codemirror/merge';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { tags } from '@lezer/highlight';
+import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { MergeView, unifiedMergeView } from '@codemirror/merge';
+import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
 const props = withDefaults(
   defineProps<{
     modelValue: string;
@@ -14,6 +13,7 @@ const props = withDefaults(
     readonly?: boolean;
     compareTo?: string;
     label?: string;
+    theme: 'light' | 'dark';
   }>(),
   { readonly: false, label: '文件编辑器' }
 );
@@ -22,6 +22,11 @@ const host = ref<HTMLElement | null>(null);
 let editor: EditorView | null = null;
 let merge: MergeView | null = null;
 let revision = 0;
+let unified: boolean | null = null;
+let resizeObserver: ResizeObserver | null = null;
+const themeSlot = new Compartment();
+const labelSlot = new Compartment();
+const currentTheme = () => props.theme === 'dark' ? vscodeDark : vscodeLight;
 async function mountEditor() {
   const ticket = ++revision;
   let language: Extension[] = [];
@@ -45,54 +50,23 @@ async function mountEditor() {
     language = [css()];
   }
   if (ticket !== revision || !host.value) return;
+  const scrollTop = editor?.scrollDOM.scrollTop ?? merge?.b.scrollDOM.scrollTop ?? 0;
   editor?.destroy();
   merge?.destroy();
   editor = null;
   merge = null;
   host.value.replaceChildren();
-  const theme = EditorView.theme({
-    '&': { height: '100%', backgroundColor: 'var(--bg)', color: 'var(--text)', fontSize: '13px' },
-    '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace,SFMono-Regular,monospace' },
-    '.cm-content': { caretColor: 'var(--focus)', padding: '16px 0' },
-    '.cm-gutters': { backgroundColor: 'var(--bg)', color: 'var(--muted)', border: 'none' },
-    '.cm-activeLine,.cm-activeLineGutter': { backgroundColor: 'var(--surface)' },
-    '&.cm-focused .cm-selectionBackground,.cm-selectionBackground': {
-      backgroundColor: 'var(--surface-hover)'
-    },
-    '.cm-cursor': { borderLeftColor: 'var(--focus)' },
-    '.cm-panels': { backgroundColor: 'var(--surface)', color: 'var(--text)' },
-    '.cm-search input,.cm-search button': {
-      backgroundColor: 'var(--bg)',
-      color: 'var(--text)',
-      borderColor: 'var(--border)'
-    },
-    '.cm-matchingBracket': {
-      backgroundColor: 'var(--surface-hover)',
-      color: 'var(--text)',
-      outline: '1px solid var(--focus)'
-    }
+  const layout = EditorView.theme({
+    '&': { height: '100%', fontSize: '13px' },
+    '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace,SFMono-Regular,monospace', lineHeight: '1.6' },
+    '.cm-content': { padding: '16px 0' }
   });
   const extensions = [
     basicSetup,
-    syntaxHighlighting(
-      HighlightStyle.define([
-        { tag: [tags.keyword, tags.operator, tags.heading], color: 'var(--acid-text)' },
-        { tag: [tags.string, tags.regexp, tags.attributeValue], color: 'var(--success)' },
-        {
-          tag: [tags.number, tags.bool, tags.null, tags.atom, tags.typeName],
-          color: 'var(--warning)'
-        },
-        { tag: [tags.comment, tags.meta], color: 'var(--muted)' },
-        {
-          tag: [tags.propertyName, tags.variableName, tags.attributeName, tags.tagName],
-          color: 'var(--text)'
-        },
-        { tag: [tags.link, tags.url], color: 'var(--acid-text)', textDecoration: 'underline' }
-      ])
-    ),
     ...language,
-    theme,
-    EditorView.contentAttributes.of({ 'aria-label': props.label }),
+    themeSlot.of(currentTheme()),
+    layout,
+    labelSlot.of(EditorView.contentAttributes.of({ 'aria-label': props.label })),
     keymap.of([
       {
         key: 'Mod-s',
@@ -104,19 +78,33 @@ async function mountEditor() {
     ])
   ];
   if (props.compareTo !== undefined) {
+    unified = host.value.clientWidth < 720;
     const readonly = [
       ...extensions,
       EditorState.readOnly.of(true),
       EditorView.editable.of(false),
       EditorView.contentAttributes.of({ tabindex: '0', 'aria-readonly': 'true' })
     ];
-    merge = new MergeView({
-      parent: host.value,
-      a: { doc: props.compareTo, extensions: readonly },
-      b: { doc: props.modelValue, extensions: readonly },
-      highlightChanges: true
-    });
-  } else
+    if (unified) {
+      editor = new EditorView({
+        parent: host.value,
+        state: EditorState.create({
+          doc: props.modelValue,
+          extensions: [...readonly, unifiedMergeView({ original: props.compareTo, mergeControls: false })]
+        })
+      });
+      editor.scrollDOM.scrollTop = scrollTop;
+    } else {
+      merge = new MergeView({
+        parent: host.value,
+        a: { doc: props.compareTo, extensions: readonly },
+        b: { doc: props.modelValue, extensions: readonly },
+        highlightChanges: true
+      });
+      merge.b.scrollDOM.scrollTop = scrollTop;
+    }
+  } else {
+    unified = null;
     editor = new EditorView({
       parent: host.value,
       state: EditorState.create({
@@ -130,11 +118,27 @@ async function mountEditor() {
         ]
       })
     });
+  }
 }
+watch(() => props.theme, () => {
+  if (editor) editor.dispatch({ effects: themeSlot.reconfigure(currentTheme()) });
+  if (merge) {
+    merge.a.dispatch({ effects: themeSlot.reconfigure(currentTheme()) });
+    merge.b.dispatch({ effects: themeSlot.reconfigure(currentTheme()) });
+  }
+});
+watch(() => props.label, (label) => {
+  const effect = () => labelSlot.reconfigure(EditorView.contentAttributes.of({ 'aria-label': label }));
+  if (editor) editor.dispatch({ effects: effect() });
+  if (merge) {
+    merge.a.dispatch({ effects: effect() });
+    merge.b.dispatch({ effects: effect() });
+  }
+});
 watch(
   () => props.modelValue,
   (value) => {
-    if (merge) {
+    if (props.compareTo !== undefined) {
       void mountEditor();
       return;
     }
@@ -148,9 +152,17 @@ watch(
     void mountEditor();
   }
 );
-onMounted(() => void mountEditor());
+onMounted(() => {
+  resizeObserver = new ResizeObserver(() => {
+    if (props.compareTo !== undefined && unified !== null && host.value && (host.value.clientWidth < 720) !== unified)
+      void mountEditor();
+  });
+  if (host.value) resizeObserver.observe(host.value);
+  void mountEditor();
+});
 onBeforeUnmount(() => {
   revision++;
+  resizeObserver?.disconnect();
   editor?.destroy();
   merge?.destroy();
 });
@@ -224,18 +236,6 @@ onBeforeUnmount(() => {
 .workspace-code-editor :deep(.cm-editor) {
   height: 100%;
   container-type: inline-size;
-}
-.workspace-code-editor :deep(.cm-merge-a) {
-  background: color-mix(in srgb, var(--danger) 5%, var(--bg));
-}
-.workspace-code-editor :deep(.cm-merge-b) {
-  background: color-mix(in srgb, var(--success) 5%, var(--bg));
-}
-.workspace-code-editor :deep(.cm-deletedChunk) {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-}
-.workspace-code-editor :deep(.cm-insertedChunk) {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 @media (max-width: 799px), (pointer: coarse) {
   .workspace-code-editor :deep(.cm-search) { --search-close-size: 44px; }

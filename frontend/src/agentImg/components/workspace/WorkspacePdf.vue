@@ -9,7 +9,7 @@
         :disabled="loading || error || pageNumber <= 1"
         @click="pageNumber--"
       >
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 4-6 6 6 6" /></svg>
+        <ChevronLeft :size="16" :stroke-width="1.75" aria-hidden="true" />
       </button>
       <output
         class="pdf-page-counter"
@@ -38,7 +38,7 @@
         :disabled="loading || error || pageNumber >= count"
         @click="pageNumber++"
       >
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 4 6 6-6 6" /></svg>
+        <ChevronRight :size="16" :stroke-width="1.75" aria-hidden="true" />
       </button>
     </div>
     <div v-if="error" class="pdf-error" role="status">
@@ -53,6 +53,7 @@
 </template>
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ChevronLeft, ChevronRight } from '@lucide/vue';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 const props = defineProps<{ blob: Blob; zh: boolean }>();
@@ -146,6 +147,7 @@ onBeforeUnmount(() => {
   display: grid;
   width: 32px;
   height: 32px;
+  padding: 0;
   place-items: center;
   border: 0;
   border-radius: 6px;
@@ -182,8 +184,6 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 0;
   padding: 0 8px;
-  border-right: 1px solid var(--border);
-  border-left: 1px solid var(--border);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }

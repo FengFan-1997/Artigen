@@ -13,7 +13,7 @@
       >
         <div class="modal-header">
           <div class="header-left">
-            <span class="header-icon" aria-hidden="true" v-html="icon"></span>
+            <span class="header-icon" aria-hidden="true"><component :is="icon" :size="24" :stroke-width="1.75" /></span>
             <h2 id="base-task-popup-title" class="header-title">{{ title }}</h2>
           </div>
           <CloseButton @click="closePopup" />
@@ -42,6 +42,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import type { Component } from 'vue';
 import CloseButton from './CloseButton.vue';
 import ImageUploadArea from './ImageUploadArea.vue';
 
@@ -49,7 +50,7 @@ const props = defineProps<{
   visible: boolean;
   title: string;
   subtitle: string;
-  icon: string;
+  icon: Component;
   uploadText: string;
   uploadHint: string;
   reuploadText: string;
@@ -167,11 +168,10 @@ function onDialogKeydown(event: KeyboardEvent): void {
 
 .header-icon {
   flex: none;
-  font-family: 'JetBrains Mono', monospace;
-  border: 1px solid #fff;
-  padding: 2px 6px;
-  font-size: 20px;
-  font-weight: 700;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
   color: #fff;
 }
 
@@ -200,7 +200,7 @@ function onDialogKeydown(event: KeyboardEvent): void {
   color: #888;
   font-size: 12px;
   margin-bottom: 24px;
-  margin-left: 54px;
+  margin-left: 36px;
 }
 
 .modal-body {

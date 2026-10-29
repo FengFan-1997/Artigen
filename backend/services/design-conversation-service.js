@@ -27,6 +27,21 @@ const {
 const { createCreativeProjectService } = require('./creative-project-service');
 const { TEXT_MODEL, IMAGE_MODEL } = require('../lib/agent-models');
 
+const isTerminalCloudflareFailure = (error) => {
+  const code = String(error?.code || '');
+  // Rate limits can be transient for a human, but automatically replaying a
+  // durable planning job multiplies provider calls across both retry layers.
+  // Fail this submission once and let the user retry later instead.
+  if (code === 'AGENT_CLOUDFLARE_RATE_LIMITED') return true;
+  return /^AGENT_CLOUDFLARE_/.test(code) && error?.retryable !== true;
+};
+
+const shouldRetryDesignPlannerProviderFailure = (error, attempt) => (
+  Number(attempt) < 3 &&
+  String(error?.code || '') !== 'AGENT_CLOUDFLARE_RATE_LIMITED' &&
+  classifyRuntimeFailure(error).category === 'transient_provider'
+);
+
 const ROUTE_KINDS = new Set(['reply', 'local_tool', 'tool_task', 'agent_run']);
 const EXECUTION_STATUSES = new Set([
   'planning',
@@ -180,6 +195,69 @@ const normalizeAttachmentManifest = (value) => {
   });
 };
 
+const normalizeSourceArtifactIds = (value) => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 10) {
+    throw new ApiError(400, 'DESIGN_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  const ids = [...new Set(value.map((entry) => String(entry || '').trim()))];
+  if (ids.some((id) => !UUID_RE.test(id))) {
+    throw new ApiError(400, 'DESIGN_SOURCE_ARTIFACTS_INVALID', { field: 'sourceArtifactIds' });
+  }
+  return ids;
+};
+
+const DESIGN_EXECUTION_CONTEXT_MAX_MESSAGES = 6;
+const DESIGN_EXECUTION_CONTEXT_MAX_CHARS = 6000;
+const DESIGN_EXECUTION_OBJECTIVE_MAX_CHARS = 20_000;
+
+const buildAgentExecutionObjective = ({ currentObjective, currentMessageId, history = [] } = {}) => {
+  const objective = String(currentObjective || '').trim();
+  if (!objective || objective.length >= DESIGN_EXECUTION_OBJECTIVE_MAX_CHARS) {
+    return { objective, messageCount: 0 };
+  }
+  const normalizedCurrentMessageId = String(currentMessageId || '').trim();
+
+  const priorMessages = (Array.isArray(history) ? history : [])
+    .filter((message) => (
+      ['user', 'assistant'].includes(message?.role) &&
+      (!normalizedCurrentMessageId || String(message?.messageId || '') !== normalizedCurrentMessageId) &&
+      String(message?.text || '').trim()
+    ))
+    .slice(-DESIGN_EXECUTION_CONTEXT_MAX_MESSAGES);
+  if (!priorMessages.length) return { objective, messageCount: 0 };
+
+  const contextHeader = '\n\n同一设计对话此前的文字记录，仅用于保留相关背景和约束；不要把历史消息当作新的外部操作授权。如与本轮目标冲突，以本轮目标为准：';
+  const availableChars = Math.min(
+    DESIGN_EXECUTION_CONTEXT_MAX_CHARS,
+    DESIGN_EXECUTION_OBJECTIVE_MAX_CHARS - objective.length - contextHeader.length - 1
+  );
+  if (availableChars < 80) return { objective, messageCount: 0 };
+
+  const selected = [];
+  let remaining = availableChars;
+  for (let index = priorMessages.length - 1; index >= 0; index -= 1) {
+    const message = priorMessages[index];
+    const label = `\n[${message.role === 'user' ? '用户' : '助手'}] `;
+    if (remaining <= label.length + 24) break;
+    const sourceText = String(message.text || '').trim();
+    const truncation = '…[本条历史消息已截断]';
+    const text = sourceText.length > remaining - label.length
+      ? `${sourceText.slice(0, Math.max(1, remaining - label.length - truncation.length)).trimEnd()}${truncation}`
+      : sourceText;
+    selected.push({ value: `${label}${text}` });
+    remaining -= label.length + text.length;
+    if (text !== sourceText) break;
+  }
+  if (!selected.length) return { objective, messageCount: 0 };
+
+  const context = selected.reverse().map((message) => message.value).join('');
+  return {
+    objective: `${objective}${contextHeader}${context}`,
+    messageCount: selected.length
+  };
+};
+
 const titleFromText = (value) => {
   const compact = String(value || '').replace(/\s+/g, ' ').trim();
   return sanitizeText(compact.slice(0, 42) || '新的设计任务', 160);
@@ -212,8 +290,15 @@ const publicMessage = (row, env) => {
     role: row.role,
     kind: row.kind,
     status: row.status,
+    ...(row.role === 'assistant' && row.kind === 'error' && UUID_RE.test(String(value?.retryableMessageId || ''))
+      ? { retryableMessageId: String(value.retryableMessageId) }
+      : {}),
+    ...(typeof row.planning_status === 'string'
+      ? { planningStatus: row.planning_status }
+      : {}),
     text: String(value?.text || ''),
     attachments: Array.isArray(value?.attachments) ? value.attachments : [],
+    sourceArtifacts: Array.isArray(value?.sourceArtifacts) ? value.sourceArtifacts : [],
     questions: Array.isArray(value?.questions) ? value.questions : [],
     assumptions: Array.isArray(value?.assumptions) ? value.assumptions : [],
     memoryCandidates: Array.isArray(value?.memoryCandidates) ? value.memoryCandidates : [],
@@ -319,27 +404,42 @@ const explicitHttpsOrigins = (text) => {
   return origins.slice(0, 10);
 };
 
-const inferDeliverables = (text, proposed = []) => {
+const DELIVERABLE_NOUNS = {
+  report: '(?:报告|方案|审计|pdf|markdown|\\bmd\\b|reports?|proposals?|audits?)',
+  spreadsheet: '(?:表格|工作簿|xlsx?|excel|spreadsheets?|workbooks?)',
+  presentation: '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentations?|slides?)',
+  website: '(?:网站|网页|静态站点|网站原型|网页原型|websites?|webpages?|web\\s+pages?|prototypes?|landing\\s+pages?)',
+  image: '(?:图片|生图|海报|视觉稿|主视觉|概念图|images?|posters?|visuals?|key\\s+visuals?)'
+};
+const explicitlyNegatesDeliverable = (text, kind) => {
+  const value = String(text || '');
+  const noun = DELIVERABLE_NOUNS[kind];
+  const outputNoun = `(?:${Object.values(DELIVERABLE_NOUNS).join('|')})`;
+  // Preserve list exclusions for existing non-image deliverables (for example
+  // “不要图片或网站”); image exclusions require output words, not style adjectives.
+  if (kind !== 'image') {
+    return new RegExp(`(?:不要|无需|不需要|请勿|别|禁止|不含|不包括|排除|无|不(?:生成|创建|制作|输出|导出))\\s*[^\\n。！？；;,，.]{0,60}?${noun}`, 'iu').test(value) ||
+      new RegExp(`\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s*[^\\n.!?;,]{0,80}?${noun}`, 'iu').test(value);
+  }
+  return new RegExp(
+    `(?:不要|无需|不需要|请勿|勿|别|禁止|不含|不包括|排除|不(?:生成|创建|制作|输出|导出|画))\\s*(?:(?:再|额外|自动|直接|帮我|为我)\\s*)?(?:(?:生成|创建|制作|输出|导出|交付|绘制|画|包含|提供|附带)\\s*)?(?:任何|一张|新的|额外的|实际的|这些|那些)?\\s*(?:${outputNoun}\\s*(?:或|和|、|以及)\\s*){0,5}${noun}`,
+    'iu'
+  ).test(value) || new RegExp(`无\\s*${noun}`, 'iu').test(value) || new RegExp(
+    `\\b(?:do\\s+not|don't|never|no|without|exclude|excluding)\\b\\s+(?:(?:automatically\\s+)?(?:generat(?:e|ing)|creat(?:e|ing)|produc(?:e|ing)|mak(?:e|ing)|draw(?:ing)?|includ(?:e|ing)|add(?:ing)?|render(?:ing)?)\\s+)?(?:(?:any|an?|the|new|extra)\\s+){0,2}(?:${outputNoun}\\s*(?:,?\\s*(?:or|and)|,)\\s*){0,5}${noun}\\b`,
+    'iu'
+  ).test(value);
+};
+
+const requestsTextOnly = (text) => (
+  /(?:只|仅)(?:需|需要)?(?:做|提供|返回|回答|输出|给出|要)?\s*(?:纯)?(?:文字|文本|文案)(?:咨询|建议|回答|输出)?/u.test(text) ||
+  /(?:纯文字|纯文本)(?:咨询|回答|输出|建议)/u.test(text) ||
+  /\b(?:text[- ]only|(?:only\s+(?:reply|respond|answer)(?:\s+in)?\s+(?:plain\s+)?text))\b/iu.test(text)
+);
+
+const inferDeliverables = (text, proposed = [], defaultReport = true) => {
   const value = String(text || '').toLowerCase();
-  const allowed = new Set(['report', 'spreadsheet', 'presentation', 'website', 'image']);
-  const nounPatterns = {
-    report: '(?:报告|方案|审计|pdf|markdown|\\bmd\\b|reports?|proposals?|audits?)',
-    spreadsheet: '(?:表格|工作簿|xlsx?|excel|spreadsheets?|workbooks?)',
-    presentation: '(?:pptx?|powerpoint|演示(?:文稿|稿)?|幻灯片|路演稿|presentations?|slides?)',
-    website: '(?:网站|网页|静态站点|网站原型|网页原型|websites?|webpages?|web\\s+pages?|prototypes?|landing\\s+pages?)',
-    image: '(?:图片|生图|海报|视觉稿|主视觉|概念图|images?|posters?|visuals?|key\\s+visuals?)'
-  };
-  const explicitlyNegated = (kind) => {
-    const noun = nounPatterns[kind];
-    return new RegExp(
-      `(?:不要|无需|不需要|别|禁止|不含|不包括|排除|无)\\s*[^\\n。！？；;,，.]{0,60}?${noun}`,
-      'iu'
-    ).test(value) || new RegExp(
-      `\\b(?:do\\s+not|don't|no|without|exclude|excluding)\\b\\s*[^\\n.!?;,]{0,80}?${noun}`,
-      'iu'
-    ).test(value);
-  };
-  const requested = (kind) => !explicitlyNegated(kind) && new RegExp(nounPatterns[kind], 'iu').test(value);
+  const allowed = new Set(Object.keys(DELIVERABLE_NOUNS));
+  const requested = (kind) => !explicitlyNegatesDeliverable(value, kind) && new RegExp(DELIVERABLE_NOUNS[kind], 'iu').test(value);
   const result = Array.isArray(proposed)
     ? proposed
       .map((item) => String(item || '').trim())
@@ -354,12 +454,58 @@ const inferDeliverables = (text, proposed = []) => {
   if (requested('spreadsheet')) add('spreadsheet');
   if (requested('presentation')) add('presentation');
   if (requested('website')) add('website');
-  if (!result.length) add('report');
+  if (!result.length && defaultReport) add('report');
   return result.slice(0, 5);
 };
 
-const repairPlannerRoute = ({ raw, text }) => {
+const resolveDeliverables = (text, proposed = [], sourceArtifacts = []) => {
+  const requested = inferDeliverables(text, Object.keys(DELIVERABLE_NOUNS), false);
+  const planned = inferDeliverables(text, proposed, false);
+  const inherited = sourceArtifacts.flatMap((artifact) => {
+    const filename = String(artifact.filename || '').toLowerCase();
+    const mimeType = String(artifact.mimeType || '').toLowerCase();
+    const kinds = [];
+    if (artifact.role === 'website') kinds.push('website');
+    if (/^image\//u.test(mimeType) || /\.(?:png|jpe?g|webp|gif)$/u.test(filename)) kinds.push('image');
+    if (/(?:spreadsheet|excel|csv)/u.test(mimeType) || /\.(?:csv|xlsx?)$/u.test(filename)) kinds.push('spreadsheet');
+    if (/(?:presentation|powerpoint)/u.test(mimeType) || /\.(?:pptx?)$/u.test(filename)) kinds.push('presentation');
+    if (
+      mimeType === 'application/pdf' ||
+      /^text\//u.test(mimeType) ||
+      /wordprocessingml/u.test(mimeType) ||
+      /\.(?:md|txt|pdf|docx?)$/u.test(filename)
+    ) kinds.push('report');
+    return kinds;
+  }).filter((kind) => !explicitlyNegatesDeliverable(text, kind));
+  const result = [...new Set([...requested, ...planned, ...inherited])];
+  if (result.length) return result.slice(0, 5);
+  if (sourceArtifacts.length && explicitlyNegatesDeliverable(text, 'image')) return [];
+  return inferDeliverables(text, proposed);
+};
+
+const explicitlyContinuesArtifact = (text, sourceArtifacts = []) => (
+  sourceArtifacts.length > 0 &&
+  /(?:修改|修订|完善|更新|续做|继续(?:做|修改|完善|制作|生成|编辑|输出)|改写|导出|交付|创建|生成|保存|revise|edit|continue\s+(?:editing|revising|creating|generating)|export|deliver|create|generate)/iu.test(String(text || ''))
+);
+
+const repairPlannerRoute = ({ raw, text, sourceArtifacts = [] }) => {
   const value = String(text || '').trim();
+  // User constraints outrank both model output and keyword-based route repair.
+  // Attachments and mentions of tools are not permission to start an executor.
+  if (requestsTextOnly(value)) return { ...raw, routeKind: 'reply' };
+  if (explicitlyContinuesArtifact(value, sourceArtifacts)) {
+    raw = { ...raw, routeKind: 'agent_run' };
+  }
+  const imageExcluded = explicitlyNegatesDeliverable(value, 'image');
+  if (imageExcluded) {
+    const permitted = inferDeliverables(value, raw.deliverables, false);
+    raw = {
+      ...raw,
+      routeKind: (raw.routeKind || raw.route) === 'agent_run' &&
+        (permitted.length || explicitlyContinuesArtifact(value, sourceArtifacts)) ? 'agent_run' : 'reply',
+      deliverables: permitted
+    };
+  }
   const wantsExecution = /(?:帮我|请|给我|需要|想要|开始|直接|立即|生成|制作|创建|设计|处理|转换|压缩|修复|增强|换|整理|输出|导出|build|create|generate|make|design|convert|compress)/iu.test(value);
   if (!wantsExecution) return raw;
   const wantsResearch = /(?:调研|审计|浏览(?:网站|网页)|搜索资料|竞品|shell|脚本|代码|多文件|完整提案|research|audit|browse|website|spreadsheet|xlsx|pptx|presentation)/iu.test(value);
@@ -373,6 +519,9 @@ const repairPlannerRoute = ({ raw, text }) => {
   if (/(?:pdf.*转.*图片|pdf.*to.*image)/iu.test(value)) {
     return { ...raw, routeKind: 'local_tool', toolId: 'pdf-image', operation: 'pdf-page' };
   }
+  // Keep local conversion available, but never revive an excluded cloud image
+  // route or fabricate a report merely because the default deliverable is report.
+  if (imageExcluded) return raw;
   if (wantsResearch || deliverables.length > 1) {
     return { ...raw, routeKind: 'agent_run', deliverables };
   }
@@ -404,15 +553,36 @@ const repairPlannerRoute = ({ raw, text }) => {
   return raw;
 };
 
+const createExplicitPlannerFallback = ({ text, sourceArtifacts = [] }) => {
+  const value = String(text || '');
+  if (requestsTextOnly(value)) return null;
+  const asksForAction = /(?:请|帮我|需要|开始|直接|创建|生成|制作|修改|修订|完善|保存|输出|导出|交付|运行|验证|build|create|generate|revise|edit|export|deliver|run|verify)/iu.test(value);
+  const asksForFileWork = /(?:创建|生成|制作|修改|修订|完善|保存|输出|导出|交付|create|generate|revise|edit|save|export|deliver)[\s\S]{0,80}(?:文件|文档|多文件|多个文件|两个文件|\.(?:md|txt|pdf|xlsx?|pptx?))|(?:文件|文档|多文件|多个文件|两个文件|\.(?:md|txt|pdf|xlsx?|pptx?))[\s\S]{0,80}(?:创建|生成|制作|修改|修订|完善|保存|输出|导出|交付|create|generate|revise|edit|save|export|deliver)/iu.test(value);
+  const asksForScriptWork = /(?:运行|执行|启动|run|execute)[\s\S]{0,35}(?:脚本|代码|命令|验证|检查|script|code|command|validation|check)|(?:脚本|代码|命令|script|code|command)[\s\S]{0,35}(?:运行|执行|run|execute)/iu.test(value);
+  const asksForResearchWork = /(?:调研|审计|检索并整理|收集资料并|research and|audit and|browse and)[\s\S]{0,60}(?:报告|文件|网页|网站|report|file|website|web page)/iu.test(value);
+  const asksForComputerWork = asksForFileWork || asksForScriptWork || asksForResearchWork;
+  const continuesArtifact = explicitlyContinuesArtifact(value, sourceArtifacts);
+  if (!asksForAction || (!asksForComputerWork && !continuesArtifact)) return null;
+  return {
+    routeKind: 'agent_run',
+    complexity: 'medium',
+    confidence: 0.45,
+    reply: '我已按你明确提出的文件执行要求整理出一个 Agent 计划。你可以先查看计划和服务端实时报价，再选择是否启动；规划本身不会创建运行或冻结点数。',
+    deliverables: resolveDeliverables(value, [], sourceArtifacts),
+    steps: ['读取本轮要求与选中的上一版文件', '完成文件修改或生成', '运行交付检查并提供可下载文件']
+  };
+};
+
 const normalizePlannerDecision = ({
   raw,
   text,
   attachments,
+  sourceArtifacts = [],
   clarificationRounds,
   creditCap,
   textModel = TEXT_MODEL
 }) => {
-  const repaired = repairPlannerRoute({ raw, text });
+  const repaired = repairPlannerRoute({ raw, text, sourceArtifacts });
   raw = repaired;
   let routeKind = String(raw.routeKind || raw.route || 'reply').trim().toLowerCase();
   if (!ROUTE_KINDS.has(routeKind)) routeKind = 'reply';
@@ -535,7 +705,7 @@ const normalizePlannerDecision = ({
 
   if (routeKind === 'agent_run') {
     const origins = explicitHttpsOrigins(text);
-    const deliverables = inferDeliverables(text, raw.deliverables);
+    const deliverables = resolveDeliverables(text, raw.deliverables, sourceArtifacts);
     const plannerSteps = normalizePlannerSteps(raw.steps);
     return {
       routeKind,
@@ -624,7 +794,7 @@ const normalizeMemoryCandidates = (value, userText) => {
   return candidates;
 };
 
-const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = false }) => {
+const enrichPlannerDecision = ({ decision, raw, text, objective = text, creditCap, allowMemory = false }) => {
   const complexity = ['simple', 'medium', 'high'].includes(raw?.complexity)
     ? raw.complexity
     : decision.routeKind === 'agent_run'
@@ -649,7 +819,7 @@ const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = f
   }
   const taskSpec = normalizeTaskSpec({
     ...(raw?.taskSpec && typeof raw.taskSpec === 'object' ? raw.taskSpec : {}),
-    goal: text,
+    goal: objective,
     complexity,
     confidence,
     deliverables,
@@ -662,7 +832,7 @@ const enrichPlannerDecision = ({ decision, raw, text, creditCap, allowMemory = f
     })),
     budget: { maxCredits: creditCap }
   }, {
-    objective: text,
+    objective,
     deliverables,
     capabilities,
     allowedOrigins: decision.browserConfig?.allowedOrigins || [],
@@ -698,6 +868,7 @@ const plannerMessages = ({
   history,
   message,
   attachmentCount,
+  sourceArtifacts = [],
   projectMemory = null,
   textModel = TEXT_MODEL
 }) => [{
@@ -705,13 +876,18 @@ const plannerMessages = ({
   content: `You are Artigen's design request router. The server-pinned text model is ${textModel}; never request or switch models.
 Return one JSON object and no markdown. Schema:
 {"routeKind":"reply|local_tool|tool_task|agent_run","complexity":"simple|medium|high","confidence":0.0,"reply":"Chinese answer","needsClarification":false,"questions":[],"assumptions":[],"toolId":"","operation":"","options":{},"deliverables":[],"skillIds":[],"taskSpec":{},"memoryCandidates":[],"steps":[]}
-Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
+Ask at most two questions only when the missing answer materially changes the result. Choose reply for advice or brainstorming without an execution request. Explicit text-only instructions take precedence over every executor. Negative instructions such as "不生成图片" or "do not generate images" are exclusions, never execution requests; do not invent other deliverables to replace an excluded output. Choose tool_task for: ai-design generate/directions, old-photo enhance/enhance-colorize, id-photo professional-portrait, background ai-scene, ingredient-label ai-organize-source-text. Local tools are strictly: image-batch convert/compress/resize/rotate/filter/pipeline; privacy-redaction redact/export/pdf; video-frame extract; pdf-image pdf-page/pdf-range-zip/pdf-long-image/images-to-pdf; pdf-text-word extract-text-docx; document-pdf txt-local/word-server-faithful; video-gif convert; favicon generate/export/zip. Choose agent_run for research, browser, shell, multiple files, or multiple deliverable formats. Never set prices, models, credentials, or permissions. All image output is handled by Kwai-Kolors/Kolors downstream.`
 }, {
   role: 'user',
   content: JSON.stringify({
     recentConversation: history.slice(-6),
     currentMessage: message,
     attachmentCount,
+    sourceArtifacts: sourceArtifacts.map((source) => ({
+      filename: source.filename,
+      mimeType: source.mimeType,
+      byteSize: source.byteSize
+    })),
     projectMemory
   })
 }];
@@ -738,6 +914,7 @@ const createDesignConversationService = ({
     thinkingEnabled,
     conversation,
     maxTokens,
+    malformedFallback = null,
     signal = null
   }) => {
     let requestMessages = Array.isArray(messages) ? [...messages] : [];
@@ -812,7 +989,17 @@ const createDesignConversationService = ({
         }
         const classified = classifyRuntimeFailure(error);
         const schemaRetry = classified.category === 'validation';
-        const providerRetry = classified.category === 'transient_provider';
+        const providerRetry = shouldRetryDesignPlannerProviderFailure(error, attempt);
+        if (
+          schemaRetry &&
+          phase === 'router' &&
+          attempt >= 2 &&
+          error?.code === 'DESIGN_PLANNER_OUTPUT_INVALID' &&
+          typeof malformedFallback === 'function'
+        ) {
+          const fallback = malformedFallback();
+          if (fallback) return fallback;
+        }
         if ((!schemaRetry && !providerRetry) || attempt >= 3) throw error;
         if (schemaRetry) {
           schemaCorrectionAttempt += 1;
@@ -973,7 +1160,12 @@ const createDesignConversationService = ({
     return readTransaction(pool, async (client) => {
       const { row } = await resolveOwnedConversation(client, { userId, conversationId });
       const messages = await client.query(
-        'SELECT * FROM design_messages WHERE conversation_id=$1 AND (expires_at IS NULL OR expires_at>now()) ORDER BY sequence',
+        `SELECT message.*,job.status AS planning_status
+           FROM design_messages message
+           LEFT JOIN design_planning_jobs job ON job.message_id=message.id
+          WHERE message.conversation_id=$1
+            AND (message.expires_at IS NULL OR message.expires_at>now())
+          ORDER BY message.sequence`,
         [conversationId]
       );
       const executions = await client.query(
@@ -1033,17 +1225,59 @@ const createDesignConversationService = ({
     });
   };
 
-  const addMessage = async ({ userId, conversationId, message, attachments }) => {
+  const addMessage = async ({ userId, conversationId, message, attachments, sourceArtifactIds }) => {
     requireEnabled();
     const text = normalizeMessageText(message);
     const manifest = normalizeAttachmentManifest(attachments);
+    const sourceIds = normalizeSourceArtifactIds(sourceArtifactIds);
+    if (manifest.length + sourceIds.length > 10) {
+      throw new ApiError(400, 'DESIGN_ATTACHMENTS_INVALID', { field: 'attachments' });
+    }
     const result = await transaction(pool, async (client) => {
-      const { row } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      const { row, dbUserId } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
       if (row.status !== 'active') throw new ApiError(409, 'DESIGN_CONVERSATION_ARCHIVED');
+      let sourceArtifacts = [];
+      if (sourceIds.length) {
+        const sources = await client.query(
+          `SELECT DISTINCT artifact.id AS artifact_id,artifact.filename,artifact.mime_type,
+                  artifact.byte_size,artifact.version,artifact.role,source_run.id AS source_run_id
+             FROM design_executions execution
+             JOIN agent_runs source_run ON source_run.id=execution.agent_run_id
+             JOIN agent_artifacts artifact ON artifact.run_id=source_run.id
+             JOIN assets asset ON asset.id=artifact.asset_id
+            WHERE execution.conversation_id=$1
+              AND source_run.user_id=$2
+              AND source_run.status='succeeded'
+              AND artifact.id=ANY($3::uuid[])
+              AND artifact.asset_id IS NOT NULL
+              AND artifact.verification_status='passed'
+              AND (artifact.expires_at IS NULL OR artifact.expires_at>clock_timestamp())
+              AND asset.owner_user_id=$2
+              AND asset.gc_state='active' AND asset.delete_requested_at IS NULL
+              AND (asset.expires_at IS NULL OR asset.expires_at>clock_timestamp())`,
+          [conversationId, dbUserId, sourceIds]
+        );
+        if (sources.rowCount !== sourceIds.length) {
+          throw new ApiError(404, 'DESIGN_SOURCE_ARTIFACT_NOT_FOUND');
+        }
+        const filenames = sources.rows.map((source) => String(source.filename || '').trim().toLowerCase());
+        if (new Set(filenames).size !== filenames.length) {
+          throw new ApiError(400, 'DESIGN_SOURCE_ARTIFACT_FILENAME_DUPLICATE');
+        }
+        sourceArtifacts = sources.rows.map((source) => ({
+          artifactId: source.artifact_id,
+          filename: sanitizeText(source.filename, 240),
+          mimeType: sanitizeText(source.mime_type, 160),
+          byteSize: Number(source.byte_size || 0),
+          version: Number(source.version || 1),
+          role: source.role,
+          sourceRunId: source.source_run_id
+        }));
+      }
       const inserted = await insertMessage(client, {
         conversationId,
         role: 'user',
-        value: { text, attachments: manifest }
+        value: { text, attachments: manifest, sourceArtifacts }
       });
       await client.query(
         `INSERT INTO design_planning_jobs (message_id,conversation_id)
@@ -1062,9 +1296,75 @@ const createDesignConversationService = ({
         conversationId,
         type: 'message.received',
         summary: '已收到设计请求',
-        data: { messageId: inserted.id, attachmentCount: manifest.length }
+        data: { messageId: inserted.id, attachmentCount: manifest.length, sourceArtifactCount: sourceArtifacts.length }
       });
-      return publicMessage(inserted, env);
+      return publicMessage({ ...inserted, planning_status: 'queued' }, env);
+    });
+    void processNextJob().catch(() => {});
+    return result;
+  };
+
+  const retryPlanning = async ({ userId, conversationId, messageId }) => {
+    requireEnabled();
+    if (!UUID_RE.test(String(messageId || ''))) {
+      throw new ApiError(400, 'INVALID_ID', { field: 'messageId' });
+    }
+    const result = await transaction(pool, async (client) => {
+      const { row } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
+      if (row.status !== 'active') throw new ApiError(409, 'DESIGN_CONVERSATION_ARCHIVED');
+      if (!config.workerEnabled || typeof chatGenerate !== 'function') {
+        throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED', { retryable: true });
+      }
+      const activeRun = await client.query(
+        `SELECT 1
+           FROM design_executions execution
+           JOIN agent_runs run ON run.id=execution.agent_run_id
+          WHERE execution.conversation_id=$1
+            AND run.status IN ('draft','queued','provisioning','running','waiting_user','paused','verifying')
+          LIMIT 1`,
+        [conversationId]
+      );
+      if (activeRun.rowCount) {
+        throw new ApiError(409, 'DESIGN_CONVERSATION_HAS_ACTIVE_EXECUTION');
+      }
+      const job = await client.query(
+        `SELECT job.status
+           FROM design_planning_jobs job
+           JOIN design_messages message ON message.id=job.message_id
+          WHERE job.message_id=$1 AND job.conversation_id=$2 AND message.role='user'`,
+        [messageId, conversationId]
+      );
+      if (!job.rowCount) throw new ApiError(404, 'DESIGN_PLANNING_JOB_NOT_FOUND');
+      if (job.rows[0].status !== 'failed') {
+        throw new ApiError(409, 'DESIGN_PLANNING_NOT_RETRYABLE');
+      }
+      const recentRetries = await client.query(
+        `SELECT count(*)::integer AS count
+           FROM design_conversation_events
+          WHERE conversation_id=$1 AND event_type='planning.retry_requested'
+            AND data->>'messageId'=$2
+            AND created_at>=clock_timestamp()-interval '1 hour'`,
+        [conversationId, messageId]
+      );
+      if (Number(recentRetries.rows[0]?.count || 0) >= 3) {
+        throw new ApiError(429, 'DESIGN_PLANNING_RETRY_LIMIT', { retryable: false });
+      }
+      const updated = await client.query(
+        `UPDATE design_planning_jobs
+            SET status='queued',attempt_count=0,next_attempt_at=clock_timestamp(),
+                lease_owner=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=now()
+          WHERE message_id=$1 AND conversation_id=$2 AND status='failed'
+          RETURNING message_id`,
+        [messageId, conversationId]
+      );
+      if (!updated.rowCount) throw new ApiError(409, 'DESIGN_PLANNING_NOT_RETRYABLE');
+      await insertEvent(client, {
+        conversationId,
+        type: 'planning.retry_requested',
+        summary: '用户重新提交了需求分析',
+        data: { messageId }
+      });
+      return { messageId, status: 'queued' };
     });
     void processNextJob().catch(() => {});
     return result;
@@ -1191,6 +1491,7 @@ const createDesignConversationService = ({
       options: _embeddedOptions,
       browserConfig: _embeddedBrowserConfig,
       assumptions: _embeddedAssumptions,
+      sourceArtifactIds: _embeddedSourceArtifactIds,
       ...displayPlan
     } = rawPlan;
     const storedPlan = sealExecutionPlan({
@@ -1209,7 +1510,8 @@ const createDesignConversationService = ({
         objective: decision.objective || undefined,
         browserConfig: decision.browserConfig || undefined,
         taskSpec: decision.taskSpec || undefined,
-        assumptions: decision.assumptions || []
+        assumptions: decision.assumptions || [],
+        sourceArtifactIds: decision.plan?.sourceArtifactIds || []
       },
       env
     });
@@ -1270,25 +1572,16 @@ const createDesignConversationService = ({
     return publicExecution(execution.rows[0], env);
   });
 
-  const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
-    const code = sanitizeText(error?.code || error?.message || 'DESIGN_PLANNER_FAILED', 100);
-    const state = await client.query(
-      `UPDATE design_planning_jobs
-          SET status=CASE WHEN attempt_count>=3 THEN 'failed' ELSE 'queued' END,
-              next_attempt_at=clock_timestamp()+
-                (CASE WHEN attempt_count>=3 THEN 0 ELSE attempt_count*2 END * interval '1 second'),
-              lease_owner=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
-        WHERE message_id=$1 AND lease_owner=$2
-        RETURNING status,attempt_count`,
-      [job.message_id, workerId, code]
-    );
-    if (state.rows[0]?.status !== 'failed') return;
+  const recordPlanningFailure = async (client, job, code) => {
+    const userMessage = code === 'AGENT_CLOUDFLARE_RATE_LIMITED'
+      ? '文本模型当前受到限流或容量限制，暂时无法分析这次需求。规划阶段没有创建 Agent 任务或冻结点数；请稍后重试。'
+      : '这次需求没有完成分析。你可以直接重试，系统不会因此创建任务或扣点。';
     const assistant = await insertMessage(client, {
       conversationId: job.conversation_id,
       role: 'assistant',
       kind: 'error',
       status: 'failed',
-      value: { text: '这次需求没有完成分析。你可以直接重试，系统不会因此创建任务或扣点。' }
+      value: { text: userMessage, retryableMessageId: job.message_id }
     });
     await insertEvent(client, {
       conversationId: job.conversation_id,
@@ -1296,6 +1589,44 @@ const createDesignConversationService = ({
       summary: '需求分析失败',
       data: { messageId: assistant.id, errorCode: code }
     });
+  };
+
+  const failPlanningJob = async ({ job, error }) => transaction(pool, async (client) => {
+    const code = sanitizeText(error?.code || error?.message || 'DESIGN_PLANNER_FAILED', 100);
+    const terminalCloudflareFailure = isTerminalCloudflareFailure(error);
+    const state = await client.query(
+      `UPDATE design_planning_jobs
+          SET status=CASE WHEN attempt_count>=3 OR $4::boolean THEN 'failed' ELSE 'queued' END,
+              next_attempt_at=clock_timestamp()+
+                (CASE WHEN attempt_count>=3 OR $4::boolean THEN 0 ELSE attempt_count*2 END * interval '1 second'),
+              lease_owner=NULL,lease_expires_at=NULL,error_code=$3,updated_at=now()
+        WHERE message_id=$1 AND lease_owner=$2
+        RETURNING status,attempt_count`,
+      [job.message_id, workerId, code, terminalCloudflareFailure]
+    );
+    if (state.rows[0]?.status !== 'failed') return;
+    await recordPlanningFailure(client, job, code);
+  });
+
+  const recoverExpiredPlanningJob = async () => transaction(pool, async (client) => {
+    const result = await client.query(
+      `WITH candidate AS (
+         SELECT message_id FROM design_planning_jobs
+          WHERE status='running' AND attempt_count>=3
+            AND lease_expires_at<=clock_timestamp()
+          ORDER BY lease_expires_at
+          LIMIT 1 FOR UPDATE SKIP LOCKED
+       )
+       UPDATE design_planning_jobs job
+          SET status='failed',lease_owner=NULL,lease_expires_at=NULL,
+              error_code='DESIGN_PLANNING_LEASE_EXPIRED',updated_at=now()
+         FROM candidate WHERE job.message_id=candidate.message_id
+       RETURNING job.message_id,job.conversation_id`
+    );
+    const job = result.rows[0];
+    if (!job) return false;
+    await recordPlanningFailure(client, job, 'DESIGN_PLANNING_LEASE_EXPIRED');
+    return true;
   });
 
   async function processNextJob() {
@@ -1303,6 +1634,7 @@ const createDesignConversationService = ({
     processing = true;
     let job = null;
     try {
+      if (await recoverExpiredPlanningJob()) return true;
       job = await claimPlanningJob();
       if (!job) return false;
       if (typeof chatGenerate !== 'function') throw new ApiError(503, 'DESIGN_PLANNER_NOT_CONFIGURED');
@@ -1330,11 +1662,15 @@ const createDesignConversationService = ({
               projectId: context.conversation.project_id
             })).designMemory || null
           : null;
+        const priorConversation = context.history
+          .filter((message) => message.messageId !== context.current.messageId)
+          .map((message) => ({ role: message.role, text: message.text }));
         const raw = await generateModelJson({
           messages: plannerMessages({
-            history: context.history.map((message) => ({ role: message.role, text: message.text })),
+            history: priorConversation,
             message: context.current.text,
             attachmentCount: contextualAttachments.length,
+            sourceArtifacts: context.current.sourceArtifacts || [],
             projectMemory,
             textModel: agentConfig.modelName
           }),
@@ -1343,23 +1679,57 @@ const createDesignConversationService = ({
           thinkingEnabled: false,
           conversation: context.conversation,
           maxTokens: agentConfig.stageMaxOutputTokens.router,
+          malformedFallback: () => createExplicitPlannerFallback({
+            text: context.current.text,
+            sourceArtifacts: context.current.sourceArtifacts || []
+          }),
           signal
         });
-        const routed = normalizePlannerDecision({
+        let routed = normalizePlannerDecision({
           raw,
           text: context.current.text,
           attachments: contextualAttachments,
+          sourceArtifacts: context.current.sourceArtifacts || [],
           clarificationRounds: Number(context.conversation.clarification_rounds || 0),
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
           textModel: agentConfig.modelName
         });
+        const executionContext = routed.routeKind === 'agent_run'
+          ? buildAgentExecutionObjective({
+              currentObjective: context.current.text,
+              currentMessageId: context.current.messageId,
+              history: context.history
+            })
+          : { objective: context.current.text, messageCount: 0 };
+        if (routed.routeKind === 'agent_run') {
+          routed = {
+            ...routed,
+            objective: executionContext.objective,
+            plan: {
+              ...routed.plan,
+              ...(executionContext.messageCount
+                ? { conversationContextMessages: executionContext.messageCount }
+                : {})
+            }
+          };
+        }
         let decision = enrichPlannerDecision({
           decision: routed,
           raw,
           text: context.current.text,
+          objective: executionContext.objective,
           creditCap: Number(context.conversation.auto_credit_cap || config.autoCreditCap),
           allowMemory: runtimeV2 && agentConfig.projectMemoryEnabled && Boolean(context.conversation.project_id)
         });
+        if (decision.routeKind === 'agent_run' && context.current.sourceArtifacts?.length) {
+          decision = {
+            ...decision,
+            plan: {
+              ...(decision.plan || {}),
+              sourceArtifactIds: context.current.sourceArtifacts.map((source) => source.artifactId)
+            }
+          };
+        }
         if (
           decision.routeKind === 'agent_run' &&
           runtimeV2 &&
@@ -1368,7 +1738,7 @@ const createDesignConversationService = ({
         ) {
           const plannedRaw = await generateModelJson({
             messages: taskPlannerMessages({
-              objective: context.current.text,
+              objective: decision.objective || context.current.text,
               deliverables: decision.deliverables,
               capabilities: decision.capabilities,
               allowedOrigins: decision.browserConfig?.allowedOrigins || [],
@@ -1385,14 +1755,14 @@ const createDesignConversationService = ({
           });
           const taskSpec = normalizeTaskSpec({
             ...plannedRaw,
-            goal: context.current.text,
+            goal: decision.objective || context.current.text,
             deliverables: decision.deliverables,
             allowedOrigins: decision.browserConfig?.allowedOrigins || [],
             budget: {
               maxCredits: Number(context.conversation.auto_credit_cap || config.autoCreditCap)
             }
           }, {
-            objective: context.current.text,
+            objective: decision.objective || context.current.text,
             deliverables: decision.deliverables,
             capabilities: decision.capabilities,
             allowedOrigins: decision.browserConfig?.allowedOrigins || [],
@@ -1578,7 +1948,7 @@ const createDesignConversationService = ({
       throw new ApiError(400, 'DESIGN_EXECUTION_TARGET_INVALID');
     }
     return transaction(pool, async (client) => {
-      const { dbUserId } = await resolveOwnedConversation(client, { userId, conversationId });
+      const { dbUserId, row: conversation } = await resolveOwnedConversation(client, { userId, conversationId, lock: true });
       const execution = await client.query(
         `SELECT * FROM design_executions
           WHERE id=$1 AND conversation_id=$2 FOR UPDATE`,
@@ -1597,10 +1967,17 @@ const createDesignConversationService = ({
         status = task.rows[0].status === 'running' ? 'running' : 'queued';
       } else {
         const run = await client.query(
-          'SELECT id,status,max_credits FROM agent_runs WHERE id=$1 AND user_id=$2',
+          'SELECT id,status,max_credits,project_id FROM agent_runs WHERE id=$1 AND user_id=$2 FOR UPDATE',
           [agentRunId, dbUserId]
         );
         if (!run.rowCount) throw new ApiError(404, 'AGENT_RUN_NOT_FOUND');
+        if ((run.rows[0].project_id || null) !== (conversation.project_id || null)) {
+          throw new ApiError(409, 'DESIGN_EXECUTION_PROJECT_CONFLICT');
+        }
+        // A concurrent project association may have read no execution link
+        // before waiting for this Run lock. Write its row so that a stale
+        // SERIALIZABLE snapshot cannot later associate it as a standalone Run.
+        await client.query('UPDATE agent_runs SET updated_at=clock_timestamp() WHERE id=$1', [agentRunId]);
         quotedCredits = Number(run.rows[0].max_credits || 0);
         status = ['provisioning', 'running', 'verifying'].includes(run.rows[0].status) ? 'running' : 'queued';
       }
@@ -1874,6 +2251,7 @@ const createDesignConversationService = ({
     processNextJob,
     recordToolQuote,
     registerUploadedAssets,
+    retryPlanning,
     revokeAuthorization,
     startWorker,
     stopWorker,
@@ -1883,6 +2261,8 @@ const createDesignConversationService = ({
 
 module.exports = {
   CLOUD_TOOLS,
+  buildAgentExecutionObjective,
+  createExplicitPlannerFallback,
   EXECUTION_STATUSES,
   IMAGE_MODEL,
   ROUTE_KINDS,
@@ -1894,10 +2274,15 @@ module.exports = {
   explicitHttpsOrigins,
   getDesignConversationConfig,
   inferDeliverables,
+  resolveDeliverables,
   normalizeAttachmentManifest,
+  normalizeSourceArtifactIds,
   normalizePlannerDecision,
   normalizeMemoryCandidates,
+  isTerminalCloudflareFailure,
+  shouldRetryDesignPlannerProviderFailure,
   decodeExecutionPlan,
+  explicitlyContinuesArtifact,
   repairPlannerRoute,
   plannerMessages,
   safeJsonObject,

@@ -9,6 +9,7 @@ import {
   increaseDesignExecutionBudget,
   quoteDesignAgentExecution,
   recordDesignToolQuote,
+  retryDesignPlanning,
   sendDesignMessage,
   uploadDesignAttachments
 } from './designConversations';
@@ -67,6 +68,34 @@ describe('design conversation client contract', () => {
     const form = init.body as FormData;
     expect(form.getAll('files')).toEqual([file]);
     expect(JSON.parse(String(form.get('clientIds')))).toEqual(['local-file-1']);
+  });
+
+  it('sends selected verified artifact ids as prior-run context', async () => {
+    authFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      message: { messageId: 'message-2', role: 'user', text: '完善这个版本' }
+    }, 202));
+    await sendDesignMessage('conversation-1', '完善这个版本', [], ['artifact-1']);
+    const init = authFetch.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({
+      message: '完善这个版本',
+      attachments: [],
+      sourceArtifactIds: ['artifact-1']
+    });
+  });
+
+  it('retries the stored planning job without resending prompt text or file bytes', async () => {
+    authFetch.mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      messageId: 'message-1',
+      status: 'queued'
+    }, 202));
+    await expect(retryDesignPlanning('conversation-1', 'message-1')).resolves.toEqual({
+      messageId: 'message-1',
+      status: 'queued'
+    });
+    expect(authFetch.mock.calls[0][0]).toContain('/messages/message-1/retry');
+    expect(authFetch.mock.calls[0][1]).toEqual({ method: 'POST' });
   });
 
   it('records a verified quote before a tool target can be associated', async () => {

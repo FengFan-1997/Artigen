@@ -7,26 +7,57 @@ DEV 是受保护的线上集成环境，不是生产，不承载正式用户数�
 - 服务：`dev-artigen-app-fengfan`
 - 地址：<https://dev-artigen-app-fengfan.onrender.com>
 - 部署分支：`dev`
-- 数据库：独立 DEV PostgreSQL
-- 资产：独立 DEV S3 命名空间
+- 数据库：Aiven DEV PostgreSQL 18；账号接管见[平台账号报告](./docs/INFRA_ACCOUNT_REGISTER.zh-CN.md)
+- 资产：当前与生产共用 S3 endpoint / bucket，尚未实现环境命名空间隔离
 - 访问：HTTP Basic 首次认证后签发短时安全 Cookie
 
 DEV 口令只存 Render Secret 和本机安全存储，不写入 Git、文档、命令历史或截图。
+
+### 历史事件：Render Free 限额暂停（2026-09-28）
+
+Render Hobby 工作区当月 Free Instance Hours 已使用 `749.98 / 750` 小时；账单页显示没有付款方式，Render CLI 显示工作区的 4 个 Web 服务均因 billing 暂停。DEV 的 `/api/meta`、`/healthz`、`/readyz` 当前都返回 HTTP 503。此状态是托管额度，不是应用或 Aiven 故障；服务暂停期间不要运行云端 smoke、Worker 或 Provider 任务。
+
+该快照仅代表 2026-09-28，不作为当前服务状态。
+
+### 当前托管状态（2026-10-08）
+
+- Render CLI 显示 Artigen DEV 与 Production 均未暂停，实际服务方案均为 Free；本次没有读取账单页、月度实例时数或带宽用量，不能据此断言剩余额度已重置。DEV 服务仅做 restart，没有发布代码；Production 未操作。Production 的实际 Free 方案与仓库 `render.yaml` 的 Starter 声明存在配置漂移，暂不调整。
+- Aiven 既有 DEV PostgreSQL Free 服务此前为 Powered off；通过服务自己的 Power on 操作恢复，未升级或添加付款方式。随后从 Mac 确认 PostgreSQL 接受连接，且 DEV `/readyz` 数据库迁移检查通过。
+- DEV `/healthz`、`/api/meta` 与 `/readyz` 均 HTTP 200；部署 SHA 为 `ba96b521f43e7edc3bd0d1995d56ef84e9578e6b`，迁移为 `031_agent_run_artifact_lineage`，database、S3、payload、Provider、payment、auth/mail、Agent、pricing 和 design-conversation readiness 均通过。
+- 专用 DEV Mac Worker 已对齐同一 SHA 并启动；`/api/agent/status` 的 Worker、模型、浏览器、受限出口、桌面中继状态全部 ready，队列深度为 0。Runtime V2 与 subagents 仍关闭。本次没有运行真实 Provider 任务或支付测试。
+
+恢复服务不等于月度额度余量、完整用户任务或生产环境都已验收。每次发布或重启后仍要核对服务状态、精确 SHA、`/healthz` 和 `/readyz`；Render Free 限额说明见[官方文档](https://render.com/docs/free)。
 
 ## 2. 安全配置
 
 DEV 当前用于真实集成 smoke，因此部分能力可以开启，但必须满足：
 
-- 只使用合成用户、合成输入和 DEV 钱包；
-- 邮件 OTP 关闭，不调用生产邮件中继；
-- 支付只验证套餐、未付款订单、跳转、pending、幂等和钱包不入账，禁止真实付款；
+- 使用合成输入和 DEV 钱包；真实登录只使用项目所有者指定并授权的测试账号；
+- 邮件 OTP 在获批的登录验收中使用；默认模板不代表线上开关，当前状态从 `/api/meta` 和 `/readyz` 核验；
+- 支付保持既有配置；当前 Beta 验收只做只读检查，不创建订单或执行真实付款；
 - Qwen/Kolors 可以用于获批的真实 Provider smoke，但不得冒充生产结果；
 - Cloudflare GPT-OSS 明确返回免费配额耗尽（错误码 `3036`）时，服务端最多回退一次到
   SiliconFlow `Qwen/Qwen3-8B`；容量不足、超时、5xx、认证失败或模糊错误不触发回退；
-- 数据库、S3、Cookie、加密密钥和 Worker 身份与生产隔离；
+- 数据库、Cookie、加密密钥和 Worker 身份必须与生产隔离；S3 隔离尚未完成，禁止桶级清理和生产对象操作，恢复演练只允许使用唯一临时前缀下的合成对象；
 - 页面显式显示 DEV 标记，外层访问门禁始终开启。
 
+登录 / 注册验证码处若 Cloudflare Turnstile 无法加载，用户可以主动选“验证不可用？直接发送验证码”。此备用参数只对邮箱登录验证码有效，仍受 OTP 数据库配额约束；密码重置继续要求 Turnstile。设置 `AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED=false` 可停用此备用通道。配置边界与 Production 相同，见[生产运行手册](./PRODUCTION_RUNBOOK.zh-CN.md#邮箱登录与人机验证备用通道)。
+
 Render Dashboard 的实际变量可能覆盖 `render.dev.yaml` 的安全默认值。变更变量后必须重新部署，并以 `/readyz` 而不是模板推断状态。
+
+### S3 新文件命名空间的启用与回滚
+
+`S3_KEY_PREFIX` 是可选配置，默认空值保留旧对象键。配置示例为 `dev/assets`，只允许字母、数字、下划线、短横线及分隔目录的单个斜线。它同时用于新资产和直传 staging 会话；不是独立桶或存储服务 IAM 隔离。
+
+启用前必须先恢复 Worker 连接、盘点历史资产并暂停新的上传 / 生成，等待所有活动任务和旧直传会话完成或过期，包括已签发的上传 URL。不能在有旧上传会话时直接切换前缀。
+
+将同一前缀配置到 DEV API 的平台变量和 DEV Worker 的 Keychain `S3_KEY_PREFIX` 项，所有写入方使用同一已验收版本；然后重启并核验新文件、直传分片、下载、删除与旧文件读取。Worker 启动脚本读取该可选 Keychain 项；不修改生产前缀。
+
+保存的旧 URI 原样读取，不迁移或删除已有对象。配置前缀后，适配器拒绝前缀外的覆盖、删除和分片操作（`ASSET_NAMESPACE_WRITE_FORBIDDEN`）；旧资产的 GC / 删除需要单独安排迁移，不能移除保护来清理共桶对象。存储凭据若仍有整桶权限，前缀保护不能代替 IAM。
+
+回滚优先回到支持命名空间的已验收版本并保留前缀。移除配置会让新文件恢复使用旧键，并失去适配器的前缀外写保护；必须再次暂停写入、处理完活动会话并确认没有混用 Worker 后才能操作。没有迁移数据库 schema 或自动改写历史 URI。
+
+当前仅具备代码支持，平台及 Worker 尚未配置前缀；不能把本节作为线上隔离已完成的证据。
 
 ## 3. 本机开发
 
@@ -104,7 +135,7 @@ required checks 通过后合并。等待 Render 自动部署，再确认 `/api/m
 - `/artigen`、`/artigen/create`、`/artigen/agent` 和受影响页面；
 - `/api/meta`、`/readyz`；
 - 登录/权限、控制台错误、移动端溢出；
-- 数据库和 S3 写入是否只落 DEV。
+- 数据库写入是否只落 DEV；S3 测试是否只触碰本次创建的合成对象，不能把共桶测试通过写成环境隔离完成。
 
 ### 图片与工具
 

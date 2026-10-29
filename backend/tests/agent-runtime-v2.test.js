@@ -141,6 +141,16 @@ test('Runtime V2 treats Cloudflare free quota and paid-only responses as termina
     retryable: true,
     maxAttempts: 2
   });
+  for (const code of [
+    'AGENT_CLOUDFLARE_CREDENTIAL_INVALID',
+    'AGENT_CLOUDFLARE_ENDPOINT_NOT_FOUND'
+  ]) {
+    assert.deepEqual(classifyRuntimeFailure({ code }), {
+      category: 'security_terminal',
+      retryable: false,
+      maxAttempts: 0
+    });
+  }
 });
 
 test('Runtime V2 preserves the goal, verification phase and unresolved failure under compaction', () => {
@@ -178,6 +188,18 @@ test('Runtime V2 preserves the goal, verification phase and unresolved failure u
   assert.match(compacted.messages[1].content, /制作一份带来源的报告/u);
   assert.match(compacted.messages[1].content, /PDF_RENDER_FAILED/u);
   assert.ok(compacted.contextBudgetTokens <= 1880);
+});
+
+test('Runtime V2 accepts the server-inferred text-file deliverable', () => {
+  const taskSpec = normalizeTaskSpec({
+    goal: '创建并验证一个 TXT 文件',
+    deliverables: ['text_file'],
+    plan: [
+      { id: 'create', label: '创建文本文件', phase: 'production' },
+      { id: 'verify', label: '验证文本文件', phase: 'verification' }
+    ]
+  }, { capabilities: { files: true, shell: true }, maxCredits: 10 });
+  assert.deepEqual(taskSpec.deliverables, ['text_file']);
 });
 
 test('Runtime V2 preserves durable plan progress instead of restarting the first step', () => {

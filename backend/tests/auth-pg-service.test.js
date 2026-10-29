@@ -57,6 +57,19 @@ const createAuthPool = () => {
       const user = state.users.find((item) => item.legacy_user_id === params[0]);
       return { rowCount: user ? 1 : 0, rows: user ? [{ id: user.id }] : [] };
     }
+    if (q.includes('from user_identities i')) {
+      const identity = state.identities.find((item) => item.provider === params[0] && item.subject === params[1]);
+      const user = state.users.find((item) => item.id === identity?.user_id);
+      return { rowCount: user ? 1 : 0, rows: user ? [{ ...user }] : [] };
+    }
+    if (q.startsWith('select * from users where email=$1')) {
+      const user = state.users.find((item) => item.email === params[0]);
+      return { rowCount: user ? 1 : 0, rows: user ? [{ ...user }] : [] };
+    }
+    if (q.startsWith('update users set email=')) {
+      const user = state.users.find((item) => item.id === params[0]);
+      return { rowCount: user ? 1 : 0, rows: user ? [{ ...user }] : [] };
+    }
     if (q.startsWith('insert into user_identities')) {
       const [userId, provider, subject] = params;
       let identity = state.identities.find((item) => item.provider === provider && item.subject === subject);
@@ -165,7 +178,8 @@ test('PostgreSQL login creates one wallet and restart-safe hashed sessions', asy
     DATABASE_URL: 'postgres://test',
     SESSION_TOKEN_HASH_SECRET: 'session-hash-secret-for-tests',
     CSRF_SECRET: 'csrf-secret-for-tests',
-    CREDITS_INIT: '125'
+    CREDITS_INIT: '125',
+    ARTIGEN_INVITE_EMAILS: 'restart@example.com'
   };
   const firstProcess = createAuthService({ pool, env, now: () => new Date(clock.value) });
   const registered = await firstProcess.registerWithPassword({
@@ -228,7 +242,8 @@ test('database sessions reject expiry and SESSION_NOT_BEFORE', async () => {
     DATABASE_URL: 'postgres://test',
     SESSION_TOKEN_HASH_SECRET: 'session-hash-secret-for-tests',
     CSRF_SECRET: 'csrf-secret-for-tests',
-    SESSION_TTL_MS: '60000'
+    SESSION_TTL_MS: '60000',
+    ARTIGEN_INVITE_EMAILS: 'expiry@example.com'
   };
   const service = createAuthService({ pool, env, now: () => new Date(clock.value) });
   const account = await service.registerWithPassword({
@@ -270,4 +285,34 @@ test('production middleware rejects bearer user auth before session lookup', asy
     status: 401,
     error: 'BEARER_AUTH_DISABLED'
   });
+});
+
+for (const provider of ['email', 'google']) {
+  test(`invite gate covers ${provider} auto-provisioning without blocking existing users`, async () => {
+    const pool = createAuthPool();
+    const env = { NODE_ENV: 'production', SESSION_TOKEN_HASH_SECRET: 'test-secret', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'true' };
+    const service = createAuthService({ pool, env });
+    const input = { email: 'invited@example.com', username: 'invited', identity: { provider, subject: 'verified-subject' } };
+    await assert.rejects(service.loginWithVerifiedIdentity(input), { code: 'INVITE_REQUIRED', status: 403 });
+    assert.equal(pool.state.users.length, 0);
+    assert.equal(pool.state.wallets.size, 0);
+    assert.equal(pool.state.sessions.length, 0);
+    assert.ok(pool.state.transactions.includes('rollback'));
+    env.ARTIGEN_INVITE_EMAILS = '  Invited@Example.com  ';
+    const created = await service.loginWithVerifiedIdentity(input);
+    assert.ok(created.session.token);
+    assert.equal(pool.state.users.length, 1);
+    delete env.ARTIGEN_INVITE_EMAILS;
+    const existing = await service.loginWithVerifiedIdentity(input);
+    assert.equal(existing.user.dbUserId, created.user.dbUserId);
+    assert.equal(pool.state.users.length, 1);
+    assert.equal(pool.state.ledger.length, 1);
+  });
+}
+test('password registration cannot bypass the shared production invitation policy', async () => {
+  const pool = createAuthPool();
+  const service = createAuthService({ pool, env: { APP_ENV: 'production', ARTIGEN_PUBLIC_SIGNUP_ENABLED: 'true' } });
+  await assert.rejects(service.registerWithPassword({ email: 'blocked@example.com', password: 'StrongPass1' }), { code: 'INVITE_REQUIRED' });
+  assert.equal(pool.state.users.length, 0);
+  assert.equal(pool.state.transactions.length, 0);
 });

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { initialCredits } = require('../services/signup-credits');
 
 const {
   readJson,
@@ -37,10 +38,7 @@ const ensureWallet = (userId, opts) => {
   const uid = normalizeUserId(userId);
   if (!uid) return null;
 
-  const initCredits = (() => {
-    const v = Number.parseInt(String(opts?.initCredits ?? process.env.CREDITS_INIT ?? '100'), 10);
-    return Number.isFinite(v) && v >= 0 ? v : 100;
-  })();
+  const initCredits = initialCredits(process.env, opts?.initCredits);
 
   const wallets = readWalletMap();
   const cur = wallets[uid];

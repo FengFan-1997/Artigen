@@ -9,6 +9,7 @@ const {
 const { getPool, isDatabaseConfigured } = require('../db/pool');
 const { agentFeatureEnabled, isProductionIntent } = require('../services/agent-config');
 const { createAgentRunService } = require('../services/agent-run-service');
+const { createAgentProjectAssociationService } = require('../services/agent-project-association');
 const { issueAgentPlanToken } = require('../services/agent-plan-token');
 const { AgentQueuePublisher } = require('../services/agent-queue-service');
 const {
@@ -76,6 +77,9 @@ const installAgentRoutes = (app, deps = {}) => {
   );
   const integrationService = deps.agentIntegrationService || (
     pool ? createAgentIntegrationService({ pool, env }) : null
+  );
+  const projectAssociationService = deps.agentProjectAssociationService || (
+    pool ? createAgentProjectAssociationService({ pool }) : null
   );
   const requireService = () => {
     if (!agentFeatureEnabled(env)) throw new ApiError(404, 'AGENT_FEATURE_DISABLED');
@@ -238,6 +242,8 @@ const installAgentRoutes = (app, deps = {}) => {
       userId: auth.dbUserId || auth.userId,
       objective: body.objective,
       assetIds: body.assetIds,
+      sourceArtifactIds: body.sourceArtifactIds,
+      sourceConversationId: body.sourceConversationId,
       fileEditTargets: body.fileEditTargets,
       maxCredits: body.maxCredits,
       capabilities: body.capabilities,
@@ -269,6 +275,18 @@ const installAgentRoutes = (app, deps = {}) => {
       runId: req.params.runId
     });
     res.json({ ok: true, run });
+  }));
+
+  app.get('/api/agent-runs/:runId/history', readLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const events = await requireService().listEvents({
+      userId: auth.dbUserId || auth.userId,
+      runId: req.params.runId,
+      after: req.query?.after || 0,
+      limit: 500
+    });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json({ ok: true, events });
   }));
 
   app.get('/api/agent-runs/:runId/activity', readLimiter, asyncRoute(async (req, res) => {
@@ -377,6 +395,22 @@ const installAgentRoutes = (app, deps = {}) => {
     })
   );
 
+  app.get('/api/agent-runs/:runId/project', readLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const userId = await requireService().resolveUserAccess({ userId: auth.dbUserId || auth.userId });
+    res.json({ ok: true, ...await projectAssociationService.getScope({ userId, runId: req.params.runId }) });
+  }));
+
+  app.put('/api/agent-runs/:runId/project', writeLimiter, asyncRoute(async (req, res) => {
+    const auth = requireAuthenticatedUser(req);
+    const userId = await requireService().resolveUserAccess({ userId: auth.dbUserId || auth.userId });
+    res.json({ ok: true, ...await projectAssociationService.associate({
+      userId, runId: req.params.runId, projectId: req.body?.projectId,
+      confirmConversation: req.body?.confirmConversation === true,
+      confirmPaused: req.body?.confirmPaused === true
+    }) });
+  }));
+
   app.post('/api/agent-runs/:runId/input', writeLimiter, asyncRoute(async (req, res) => {
     const auth = requireAuthenticatedUser(req);
     const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -384,6 +418,8 @@ const installAgentRoutes = (app, deps = {}) => {
       userId: auth.dbUserId || auth.userId,
       runId: req.params.runId,
       message: body.message,
+      assetIds: body.assetIds,
+      assetNames: body.assetNames,
       approvalId: body.approvalId,
       decision: body.decision,
       decisionReason: body.decisionReason,

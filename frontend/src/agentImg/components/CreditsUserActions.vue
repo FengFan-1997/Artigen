@@ -70,22 +70,30 @@
     </div>
   </template>
 
-  <button
-    v-else
-    class="login-btn nth-login-btn"
-    type="button"
-    :aria-label="labels.loginOrRegister"
-    @click="handleLoginClick"
-  >
-    <span class="login-label-full">{{ labels.loginOrRegister }}</span>
-    <span class="login-label-compact" aria-hidden="true">{{ labels.loginCompact }}</span>
-  </button>
+  <div v-else class="login-entry">
+    <button
+      class="login-btn nth-login-btn"
+      type="button"
+      :aria-label="labels.loginOrRegister"
+      :aria-describedby="showSignupOffer ? signupOfferId : undefined"
+      @click="handleLoginClick"
+    >
+      <span class="login-label-full">{{ labels.loginOrRegister }}</span>
+      <span class="login-label-compact" aria-hidden="true">{{ labels.loginCompact }}</span>
+    </button>
+    <span v-if="showSignupOffer" :id="signupOfferId" class="signup-offer">
+      {{ signupOfferLabel }}
+    </span>
+  </div>
 
   <slot />
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
+import { getSignupOfferCredits } from '@/login/signupOffer';
+import { useLoginModel } from '@/stores';
+import { useLanguageStore } from '@/stores/language';
 import { useAgentImgLocale } from '../composables/useAgentImgLocale';
 
 const props = defineProps<{
@@ -101,6 +109,20 @@ const props = defineProps<{
 }>();
 
 const { ui } = useAgentImgLocale();
+const loginModel = useLoginModel();
+const language = useLanguageStore();
+const signupOfferId = useId();
+const signupOfferCredits = ref<number | null>(null);
+const showSignupOffer = computed(
+  () => !props.isAuthed && !loginModel.isOpen && signupOfferCredits.value !== null
+);
+const signupOfferLabel = computed(() =>
+  language.t('login.signup_offer', { credits: signupOfferCredits.value ?? '' })
+);
+
+const refreshSignupOffer = async () => {
+  signupOfferCredits.value = await getSignupOfferCredits();
+};
 
 const labels = computed(() => {
   return {
@@ -158,6 +180,7 @@ const onDocMouseDown = (e: MouseEvent) => {
 
 onMounted(() => {
   document.addEventListener('mousedown', onDocMouseDown);
+  if (!props.isAuthed) void refreshSignupOffer();
 });
 
 onBeforeUnmount(() => {
@@ -167,7 +190,10 @@ onBeforeUnmount(() => {
 watch(
   () => props.isAuthed,
   (v) => {
-    if (!v) closePopover();
+    if (!v) {
+      closePopover();
+      void refreshSignupOffer();
+    }
   }
 );
 </script>
@@ -349,6 +375,42 @@ watch(
   letter-spacing: 0.4px;
 }
 
+.login-entry {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.signup-offer {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: min(240px, calc(100vw - 32px));
+  padding: 6px 10px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+  border-radius: 8px;
+  background: var(--bg-card, #1d1e1b);
+  color: var(--text-main, #f1f5f9);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.signup-offer::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  right: 18px;
+  width: 6px;
+  height: 6px;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+  border-left: 1px solid var(--border-color, rgba(255, 255, 255, 0.14));
+  background: inherit;
+  transform: rotate(45deg);
+}
+
 .login-btn {
   background: transparent;
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
@@ -385,6 +447,18 @@ watch(
 
 .login-btn:hover::before {
   left: 100%;
+}
+
+.login-btn:focus-visible {
+  outline: 2px solid var(--text-main, #f1f5f9);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-btn,
+  .login-btn::before {
+    transition: none;
+  }
 }
 
 .login-label-compact {

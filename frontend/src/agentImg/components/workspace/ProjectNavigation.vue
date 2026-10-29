@@ -13,12 +13,12 @@
       /></label>
       <label
         >{{ zh ? '所属项目' : 'Project'
-        }}<select class="workspace-select" v-model="projectChoice">
+        }}<NativeSelectFrame><select class="workspace-select" v-model="projectChoice">
           <option value="">{{ zh ? '未归类' : 'Ungrouped' }}</option>
           <option v-for="p in projects" :key="p.projectId" :value="p.projectId">
             {{ p.title }}
           </option>
-        </select></label
+        </select></NativeSelectFrame></label
       >
       <p v-if="error === 'save'" class="session-save-error" role="alert">{{ zh ? '会话未保存，输入内容已保留，请重试。' : 'Chat was not saved. Your edits are kept; try again.' }}</p>
       <div>
@@ -126,6 +126,7 @@
   </div>
 </template>
 <script setup lang="ts">
+import NativeSelectFrame from '../NativeSelectFrame.vue';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import WorkspaceIcon from './WorkspaceIcon.vue';
@@ -362,14 +363,22 @@ button {
   background: var(--acid);
 }
 .session-row > button {
-  width: 28px;
   display: grid;
+  flex: 0 0 32px;
   place-items: center;
+  width: 32px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
   opacity: 0;
 }
 .session-row:hover > button,
 .session-row:focus-within > button {
   opacity: 1;
+}
+.session-row > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  .session-row > button:hover { color: var(--text); background: var(--surface-hover); }
 }
 .empty-project {
   display: block;
@@ -483,6 +492,7 @@ button {
   }
   .session-row > button {
     opacity: 1;
+    flex-basis: 44px;
     min-width: 44px;
   }
 }

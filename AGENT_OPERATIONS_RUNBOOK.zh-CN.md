@@ -32,13 +32,14 @@ flowchart LR
 - macOS 当前用户保持登录；
 - Node.js 24、pnpm 10；
 - Docker Desktop 正常；
+- DEV Worker 通过临时、独立的 `DOCKER_CONFIG` 启动 Docker CLI，避免 headless LaunchAgent 等待用户 CLI 插件的 metadata；该临时目录随 Worker 退出清理，不改用户交互式 Docker 配置。使用的 CUA 镜像应已存在本机或可匿名拉取；
 - 项目指定的 Python/CUA 工具链；
 - 对应环境的 PostgreSQL、S3、payload 加密、Provider 和桌面中继 Secret；
 - 受控网络能够访问数据库、S3、SiliconFlow 和 Render。
 
 不需要 CUA 云账号，也不在文档中保存 Docker、数据库、S3 或 Provider 的真实凭据。
 
-生产和 DEV 使用完全独立的数据库、S3 命名空间、Worker ID、relay secret、Keychain 项目和 LaunchAgent 配置。
+生产和 DEV 必须使用各自的数据库、Worker ID、relay secret、Keychain 项目和 LaunchAgent 配置。S3 当前仍共用 endpoint / bucket，命名空间代码已部署 DEV，但线上前缀尚未启用；不能把目标隔离状态当作已完成事实，详见[账号接管报告](docs/INFRA_ACCOUNT_REGISTER.zh-CN.md)。
 
 ## 3. 模型与能力
 
@@ -132,6 +133,28 @@ pnpm --filter backend install:agent-worker:production-mac
 
 不要把生成的 plist、Environment Export 或 Keychain 值提交仓库。
 
+### 工作目录丢失后的恢复
+
+临时 worktree 被移动或清理后，LaunchAgent 可能保留已失效的 `WorkingDirectory` 和 runner 路径，出现 `EX_CONFIG`；它与数据库 TCP 超时是两个独立故障。先查看当前 launchctl 状态和日志时间，不能把旧日志当成正在运行的进程证据。
+
+1. 保存私有 plist 回滚副本，确认是否存在活跃 Worker；有活跃进程时先核对 Run、租约和预算状态，再按停机流程处理。
+2. 在不会随开发任务清理的独立目录准备已验证的 DEV SHA，检查工作树、Node 依赖、Python/CUA 和固定 Docker 镜像。保持凭据位于环境专属 Keychain。
+3. 如果启动项没有 PID 且路径已经失效，可卸载这个空闲启动项，修复工作目录和 runner 路径，以 `RunAtLoad=false`、`KeepAlive=false` 重新加载待命，停止无效重试；这一步不启动 Worker，不等于服务恢复。
+4. 严格 TLS 数据库连接通过后，核对活动 Run、租约和预算状态，先前台验证，再启动唯一的 DEV Worker。以 `/api/agent/status` 的新心跳和对应能力检查为准，不能用加载 plist 成功替代验收。
+5. 回滚前先停止并核验新进程，再恢复私有 plist 副本。若旧目录仍不存在，恢复副本只能回退配置，不能恢复服务，保持停机并修正目录后再启动。
+
+### 工作空间版本切换
+
+工作空间迁移032增加公开消息与项目文件版本；先确认API部署完成及数据库迁移就绪，再启动同一已验证dev提交的唯一Worker。仅目录存在或LaunchAgent已加载不能证明API、Worker版本一致；同时核对API元信息、Worker checkout和启动路径，以及状态接口的新心跳。
+
+持久Worker可以复用已有Node依赖和Python虚拟环境以减少本机占用，但必须保留符号链接的实际目标。清理临时验收worktree前确认启动项及依赖不指向它；旧持久checkout和私有plist回滚副本保留。DEV维持按需启动，Mac重启或Docker退出后需要重新验证并启动；不要据Web页面可访问推断Worker在线。
+
+### 数据库连接的分层检查
+
+控制台能打开、API 能连数据库、Mac Worker 能连数据库是不同证据。依次核验目标环境身份、域名解析、TCP、严格 TLS / CA、只读 PostgreSQL 查询和 Worker 心跳。TCP 超时尚未进入密码验证，不应因此重置账号或关闭证书校验。
+
+本机依赖原有网络客户端时，先确认其确实存在有效线路并已连接；TUN 本地接受 TCP 连接不代表远端 PostgreSQL 已连通，必须完成严格 TLS 查询。线路缺失时只从项目所有者的现有可信备份恢复所需条目，保留修复前副本，不把节点凭据写进日志或仓库。当前 DEV 本机依赖和核验状态见[账号接管报告](docs/INFRA_ACCOUNT_REGISTER.zh-CN.md#本机-worker-的网络依赖)。
+
 ## 8. Readiness
 
 API 深度检查：
@@ -203,6 +226,8 @@ Worker 重启只恢复能够用持久回执证明的动作；不能证明的副�
 - 来源必须来自本 Run 的实际浏览观察；
 - LibreOffice/浏览器渲染失败不能只凭扩展名判成功；
 - text-only Run 使用独立验收，不强制生成文件。
+- 明确命名的TXT、Markdown、CSV交付必须逐份登记并验证；类型满足或正文声称完成都不能替代完整文件名单。验收还需从页面实际下载、核对内容与SHA-256，并刷新确认记录和文件可恢复；少一份即判失败，保留原失败证据。
+- 云端文件保存后应直接读回最新版本列表；并发409时保留草稿，恢复历史创建新版本，不能覆盖较新内容。
 
 ## 13. DEV smoke
 
@@ -246,9 +271,19 @@ pnpm eval:agent:live:finalize
 
 ## 15. 故障处理
 
+### 2026-10-15 Agent 界面批次接管核验
+
+PR #248经完整门禁后部署DEV；Render meta与唯一Mac Worker的不可变checkout均核对为 `0c7ba13b53ab12e5b218f3ed8993e1025927b582`。切换前确认无活动任务/有效租约，保留旧checkout与私有启动项，按需策略不变。重启后核对新PID、晚于重启的唯一在线心跳及模型/浏览器/出口/桌面中继ready；不能仅凭旧心跳或启动项已加载宣布接管成功。
+
+本机Docker退出后已恢复，独立引擎探测通过；未修改Docker配置或发起镜像拉取。执行前同时核对当前引擎可达，不能仅依赖先前广播的能力。此处是运行条件证据；浏览器重开后的重新登录、真实新任务与文件操作仍需单独验收，不能用健康探针替代。Production未变。
+
 ### Worker 离线
 
 检查 macOS 登录、Docker、LaunchAgent、工作目录、依赖、数据库、S3 和 Provider。不要启动第二个同 ID Worker或手工重派 Run。
+
+DEV runner 会隔离用户 `~/.docker/cli-plugins`，不应为此删除或移动用户 Docker 插件。若 Docker daemon 在终端可用而 LaunchAgent 仍报 `AGENT_DOCKER_UNAVAILABLE`，确认当前 DEV runner 已包含临时 `DOCKER_CONFIG` 探针与传给 CUA bridge 的配置；修复前不要重复启动 Worker。
+
+切换DEV不可变checkout时，先确认无活动任务和未过期租约，再停止唯一启动项。`bootout`后旧服务可能仍在退出，不能把紧接着的`bootstrap`失败误判为数据库或代码故障；核对目标服务已卸载、plist有效后重新注册。注册失败保留原启动项副本并恢复，实际状态接口确认新Worker就绪之前不得创建验收任务。
 
 ### 出口代理退出
 

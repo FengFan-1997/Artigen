@@ -563,6 +563,7 @@ const {
   canonicalSourceUrl,
   createAgentArtifactService,
   inferRequiredDeliverables,
+  inferRequiredTextFilenames,
   requiredDeliverablesSatisfied,
   verificationCommand
 } = require('../services/agent-artifact-service');
@@ -1672,6 +1673,116 @@ test('worker passes decrypted objective deliverables into the parent model', asy
 
   await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
   assert.deepEqual(observed, [['report']]);
+});
+
+test('worker preserves the persisted plan when a later update is invalid', async () => {
+  const runId = '11111111-1111-4111-8111-111111111141';
+  const userId = '22222222-2222-4222-8222-222222222241';
+  const workerId = 'worker-plan-update-recovery-test';
+  const persistedPlan = [
+    { id: 'prepare', label: 'Create the requested files', phase: 'production', status: 'completed' },
+    { id: 'verify', label: 'Verify and deliver the files', phase: 'verification', status: 'in_progress' }
+  ];
+  let planUpdateResult = null;
+  let malformedPlanResult = null;
+  let ignoredEvent = null;
+  let failure = null;
+  let savePlanCalls = 0;
+  const service = createAgentWorkerService({
+    pool: {},
+    runService: {
+      claimRun: async () => ({
+        id: runId,
+        worker_id: workerId,
+        lease_epoch: 1,
+        lease_expires_at: new Date(Date.now() + 60_000),
+        started_at: new Date(),
+        checkpoint: { plan: persistedPlan },
+        sandbox_ref: null
+      }),
+      loadPrivateContext: async () => ({
+        run: {
+          id: runId,
+          user_id: userId,
+          checkpoint: { plan: persistedPlan },
+          capabilities: { files: true, shell: true },
+          browser_config: {},
+          max_credits: 50,
+          expires_at: new Date(Date.now() + 60_000)
+        },
+        payloads: [{
+          kind: 'objective',
+          value: { objective: 'Create and verify two files.', assetIds: [], deliverables: ['report'] }
+        }],
+        modelCheckpoint: null
+      }),
+      saveCheckpoint: async () => true,
+      transitionRun: async () => true,
+      getControlState: async () => ({
+        status: 'running',
+        cancel_requested: false,
+        pause_requested: false,
+        step_count: 0,
+        replan_count: 0,
+        consecutive_failures: 0,
+        unchanged_screenshots: 0
+      }),
+      savePlan: async () => {
+        savePlanCalls += 1;
+        throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      },
+      appendRuntimeEvent: async (event) => {
+        if (event.type === 'plan.update.ignored') ignoredEvent = event;
+        return true;
+      },
+      appendStep: async () => true,
+      failRun: async (input) => {
+        failure = input;
+        return true;
+      },
+      markSandboxDestroyed: async () => true
+    },
+    env: {
+      AGENT_RUNTIME_DRIVER: 'fixture',
+      AGENT_SANDBOX_PROVIDER: 'fixture',
+      AGENT_WORKER_ID: workerId
+    },
+    sandbox: {
+      provision: async () => ({ name: 'sandbox-plan-update-recovery', displayUrl: null }),
+      systemShell: async () => ({ success: true, stdout: '', stderr: '' }),
+      destroy: async () => ({ ok: true })
+    },
+    model: {
+      execute: async (input) => {
+        planUpdateResult = await input.callbacks.updatePlan({
+          explanation: 'Replace the completed plan.',
+          steps: [
+            { id: 'replacement', label: 'Start over', status: 'in_progress' },
+            { id: 'verify', label: 'Verify and deliver the files', status: 'pending' }
+          ]
+        });
+        malformedPlanResult = await input.callbacks.updatePlan({
+          explanation: 'Replace the completed plan.',
+          steps: [{ id: 'only-one', label: 'Incomplete replacement', status: 'in_progress' }]
+        });
+        throw new ApiError(500, 'AGENT_TEST_STOP');
+      }
+    },
+    integrationService: {},
+    imageService: {}
+  });
+
+  await assert.rejects(service.processRun(runId), { code: 'AGENT_TEST_STOP' });
+  assert.equal(savePlanCalls, 1);
+  assert.deepEqual(planUpdateResult, {
+    accepted: true,
+    changed: false,
+    steps: persistedPlan,
+    correction: 'The latest plan update was invalid. The last valid plan remains active; continue the task without replacing it.'
+  });
+  assert.deepEqual(malformedPlanResult, planUpdateResult);
+  assert.equal(ignoredEvent?.type, 'plan.update.ignored');
+  assert.equal(failure?.errorCode, 'AGENT_TEST_STOP');
 });
 
 test('worker fails a queued run before any execution when its pinned model differs', async () => {
@@ -3012,7 +3123,7 @@ test('SiliconFlow stops after two invalid delegation corrections', async () => {
   assert.equal(attempts, 3);
 });
 
-test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retries', async () => {
+test('SiliconFlow corrects invalid Qwen plans and preserves the last valid plan after repeated bad updates', async () => {
   const planCall = (index, steps) => ({
     id: `chat-plan-${index}`,
     choices: [{
@@ -3088,38 +3199,75 @@ test('SiliconFlow corrects an invalid Qwen plan and fails closed after two retri
     message.content.includes('2-4')
   )));
 
-  const invalidResponses = [1, 2, 3].map((index) => (
-    planCall(index, [{ label: `Invalid ${index}`, status: 'pending' }])
-  ));
-  const failingProvider = new SiliconFlowAgentModelProvider({
+  const recoveryRequests = [];
+  const recoveryResponses = [
+    planCall('recovery-valid', [
+      { id: 'prepare', label: 'Prepare notes', status: 'in_progress' },
+      { id: 'write', label: 'Write the file', status: 'pending' }
+    ]),
+    planCall('recovery-invalid-one', [
+      { id: 'prepare', label: 'Prepare notes', status: 'in_progress' }
+    ]),
+    planCall('recovery-invalid-two', [
+      { id: 'replacement', label: 'Replace the plan', status: 'in_progress' },
+      { id: 'write', label: 'Write the file', status: 'pending' }
+    ]),
+    {
+      id: 'chat-plan-recovery-final',
+      choices: [{ message: { role: 'assistant', content: 'Continued with the last valid plan.' } }],
+      usage: {}
+    }
+  ];
+  const recoveryProvider = new SiliconFlowAgentModelProvider({
     env: {
       AGENT_MODEL_PROVIDER: 'siliconflow',
       AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
       SILICONFLOW_API_KEY: 'test-key',
       AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
     },
-    fetchImpl: async () => new Response(JSON.stringify(invalidResponses.shift()), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
-    })
+    fetchImpl: async (_url, init = {}) => {
+      recoveryRequests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(recoveryResponses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
   });
   let rejected = 0;
-  await assert.rejects(() => failingProvider.execute({
+  let preserved = 0;
+  const recovered = await recoveryProvider.execute({
     objective: 'Prepare offline notes.',
     capabilities: { files: true, shell: true },
-    toolProfile: 'subagent',
+    toolProfile: 'parent',
     maxSteps: 10,
     callbacks: {
-      updatePlan: async () => {
-        rejected += 1;
-        throw new ApiError(400, 'AGENT_PLAN_INVALID');
+      updatePlan: async ({ steps }) => {
+        const allowedIds = new Set(['prepare', 'write']);
+        if (steps.length !== 2 || steps.some((step) => !allowedIds.has(step.id))) {
+          rejected += 1;
+          throw new ApiError(400, 'AGENT_PLAN_INVALID');
+        }
+        preserved += 1;
+        return { accepted: true, steps };
       },
       saveModelState: async () => {},
       clearModelState: async () => {},
       recordUsage: async () => {}
     }
-  }), { code: 'AGENT_PLAN_INVALID' });
-  assert.equal(rejected, 3);
+  });
+  assert.equal(recovered.text, 'Continued with the last valid plan.');
+  assert.equal(preserved, 1);
+  assert.equal(rejected, 2);
+  assert.equal(recoveryRequests.length, 4);
+  assert.equal(recoveryRequests[2].tool_choice.function.name, 'update_plan');
+  assert.ok(
+    !recoveryRequests[3].tools.some((tool) => tool.function?.name === 'update_plan'),
+    JSON.stringify(recoveryRequests[3].tools.map((tool) => tool.function?.name))
+  );
+  assert.ok(recoveryRequests[3].messages.some((message) => (
+    message.role === 'tool' &&
+    message.content.includes('last valid server-published plan is preserved')
+  )));
 });
 
 test('SiliconFlow removes an unauthorized shell citation and fails closed after two ignored corrections', async () => {
@@ -3818,6 +3966,7 @@ test('parent cannot finish before every required report artifact is declared', a
     }
   ];
   const requests = [];
+  const publicMessages = [];
   const savedStates = [];
   let artifactCount = 0;
   const provider = new SiliconFlowAgentModelProvider({
@@ -3841,6 +3990,7 @@ test('parent cannot finish before every required report artifact is declared', a
     deliverables: ['report'],
     maxSteps: 20,
     callbacks: {
+      publicMessage: async (message) => publicMessages.push(message),
       updatePlan: async ({ steps }) => ({ accepted: true, steps }),
       shell: async () => ({ success: true, returnCode: 0, stdout: '', stderr: '' }),
       declareArtifact: async () => {
@@ -3855,6 +4005,8 @@ test('parent cannot finish before every required report artifact is declared', a
       recordUsage: async () => {}
     }
   });
+  assert.ok(publicMessages.some(message => message.text === 'The report is complete.'), 'persist a no-tool public turn before delivery nudge');
+  assert.equal(new Set(publicMessages.map(message => message.sourceKey)).size, publicMessages.length);
   assert.equal(requests.length, 7);
   assert.equal(artifactCount, 2);
   assert.equal(result.text, 'Both verified files are ready.');
@@ -3864,6 +4016,100 @@ test('parent cannot finish before every required report artifact is declared', a
   assert.ok(savedStates.some((state) => (
     state.artifactDeliveryNudges === 2 && state.declaredArtifacts.length === 2
   )));
+});
+
+test('parent recovers an explicit text-file request after a premature text answer', async () => {
+  const toolCall = (id, name, args) => ({
+    id: `chat-text-file-${id}`,
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{
+          id: `call-text-file-${id}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) }
+        }]
+      }
+    }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const responses = [
+    {
+      id: 'chat-text-file-premature',
+      choices: [{ message: { role: 'assistant', content: 'The requested text file is ready.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    },
+    toolCall('write', 'sandbox_shell', {
+      script: "printf 'verified note\\n' > /tmp/artigen-workspace/note.txt",
+      purpose: 'Create the requested text file'
+    }),
+    toolCall('declare', 'declare_artifact', {
+      path: '/tmp/artigen-workspace/note.txt',
+      role: 'editable',
+      filename: 'note.txt',
+      mimeType: 'text/plain',
+      sources: []
+    }),
+    {
+      id: 'chat-text-file-final',
+      choices: [{ message: { role: 'assistant', content: 'Created and verified note.txt.' } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 }
+    }
+  ];
+  const requests = [];
+  let shellCalls = 0;
+  let declarationCalls = 0;
+  const objective = '只创建文本文件，不生成图片；计算 SHA-256 并声明文件。';
+  const provider = new SiliconFlowAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'siliconflow',
+      AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key',
+      AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async (_url, init = {}) => {
+      requests.push(JSON.parse(init.body));
+      return new Response(JSON.stringify(responses.shift()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await provider.execute({
+    objective,
+    capabilities: { files: true, shell: true },
+    deliverables: inferRequiredDeliverables(objective),
+    maxSteps: 12,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => {
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: '', stderr: '' };
+      },
+      declareArtifact: async (args) => {
+        declarationCalls += 1;
+        return {
+          artifactId: 'artifact-note',
+          role: args.role,
+          filename: args.filename,
+          mimeType: args.mimeType,
+          verificationStatus: 'passed'
+        };
+      },
+      saveModelState: async () => {},
+      clearModelState: async () => {},
+      recordUsage: async () => {}
+    }
+  });
+  assert.equal(shellCalls, 1);
+  assert.equal(declarationCalls, 1);
+  assert.equal(requests.length, 4);
+  assert.ok(requests[1].messages.some((message) => (
+    message.role === 'user' &&
+    message.content.includes('Required deliverables are still incomplete: text_file')
+  )));
+  assert.equal(result.text, 'Created and verified note.txt.');
 });
 
 test('parent removes every tool after all required artifacts are verified', async () => {
@@ -5178,10 +5424,10 @@ test('artifact citations must come from pages actually observed by the agent', (
   ), true);
 });
 
-test('trajectory verifier blocks unapproved side effects and unconsumed model checkpoints', () => {
+test('trajectory verifier applies durable finalization checks only to Runtime V2 checkpoints', () => {
   const fingerprint = crypto.createHash('sha256').update('publish').digest();
   const base = {
-    run: { max_credits: 100, step_count: 2, replan_count: 0 },
+    run: { runtime_version: 1, max_credits: 100, step_count: 2, replan_count: 0 },
     steps: [
       {
         sequence: 1,
@@ -5215,16 +5461,29 @@ test('trajectory verifier blocks unapproved side effects and unconsumed model ch
     actualCredits: 25
   };
   assert.equal(evaluateAgentTrajectory(base).passed, true);
+  assert.equal(evaluateAgentTrajectory({
+    ...base,
+    modelCheckpointPresent: true
+  }).passed, true);
+
   const unsafe = evaluateAgentTrajectory({
     ...base,
     approvals: [],
-    modelCheckpointPresent: true
+    modelCheckpointPresent: true,
+    run: { ...base.run, runtime_version: 2 }
   });
   assert.equal(unsafe.passed, false);
   assert.deepEqual(
     unsafe.checks.filter((check) => !check.passed).map((check) => check.id),
     ['approved_risky_actions_only', 'durable_model_checkpoint_consumed']
   );
+
+  assert.equal(evaluateAgentTrajectory({
+    ...base,
+    run: { ...base.run, runtime_version: 2 },
+    modelCheckpointPresent: true,
+    modelCheckpointReadyToFinalize: true
+  }).passed, true);
 });
 
 test('Agent golden quality set contains ten cases for each deliverable', () => {
@@ -5248,7 +5507,7 @@ test('deliverable requirements are derived deterministically for independent com
   assert.deepEqual(inferRequiredDeliverables('整理我的想法并选择最佳交付形式'), []);
   assert.deepEqual(
     inferRequiredDeliverables('访问这个网站并把页面标题整理到 Markdown 文件'),
-    []
+    ['text_file']
   );
   assert.deepEqual(
     inferRequiredDeliverables('访问这个网站，把标题写入 Markdown；不要创建网站或网页源码。'),
@@ -5265,6 +5524,17 @@ test('deliverable requirements are derived deterministically for independent com
   assert.deepEqual(inferRequiredDeliverables('生成一张品牌主视觉设计稿'), ['image']);
   assert.deepEqual(inferRequiredDeliverables('Generate a campaign poster image'), ['image']);
   assert.deepEqual(inferRequiredDeliverables('分析参考图片，不要生成图片或视觉稿'), []);
+  assert.deepEqual(inferRequiredDeliverables('不但要生成图片，还要交付可编辑文件'), ['image']);
+  assert.deepEqual(
+    inferRequiredDeliverables('只创建文本文件，不生成图片、不安装软件或创建其他文件'),
+    ['text_file']
+  );
+  assert.deepEqual(inferRequiredDeliverables('不要创建文本文件，只计算并返回 SHA-256'), []);
+  assert.deepEqual(inferRequiredDeliverables('Do not create a Markdown file; summarize it in chat.'), []);
+  assert.deepEqual(
+    inferRequiredDeliverables("Don't create an image, but save the result to output.txt."),
+    ['text_file']
+  );
   const artifacts = [
     { role: 'editable', mime_type: 'text/plain', verification_status: 'passed' },
     { role: 'pdf', mime_type: 'application/pdf', verification_status: 'passed' },
@@ -5302,6 +5572,12 @@ test('deliverable requirements are derived deterministically for independent com
     { role: 'editable', mime_type: 'text/markdown', verification_status: 'passed' },
     { role: 'pdf', mime_type: 'application/pdf', verification_status: 'failed' }
   ], ['report']), false);
+  assert.equal(requiredDeliverablesSatisfied([
+    { role: 'image', mime_type: 'image/png', verification_status: 'passed' }
+  ], ['text_file']), false);
+  assert.equal(requiredDeliverablesSatisfied([
+    { role: 'editable', mime_type: 'text/plain', verification_status: 'passed' }
+  ], ['text_file']), true);
 });
 
 test('an image-only run can finish once and settles its budget only once', async () => {
@@ -7073,6 +7349,7 @@ test('Agent routes can register while disabled without constructing PostgreSQL o
   const app = {
     get: (path) => routes.push(['GET', path]),
     post: (path) => routes.push(['POST', path]),
+    put: (path) => routes.push(['PUT', path]),
     delete: (path) => routes.push(['DELETE', path])
   };
   assert.doesNotThrow(() => installAgentRoutes(app, {
@@ -7095,6 +7372,7 @@ test('Agent create route preserves the server-validated TaskSpec contract', asyn
   let received = null;
   const app = {
     get() {},
+    put() {},
     post(path, ...handlers) {
       if (path === '/api/agent-runs') createHandler = handlers.at(-1);
     },
@@ -7217,4 +7495,158 @@ test('connector routing allowlists provider paths and never exposes OAuth creden
   assert.equal(result.status, 200);
   assert.equal(JSON.stringify(result).includes('server-only-token'), false);
   assert.equal(requestInit.headers.Authorization, 'Bearer server-only-token');
+});
+
+test('Cloudflare direct first shell publishes a stable plan before dispatch', async () => {
+  const accountId = 'c'.repeat(32);
+  const responses = [{
+    id: 'cf-direct-shell',
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'cf-call-direct-shell', type: 'function', function: {
+        name: 'sandbox_shell',
+        arguments: JSON.stringify({ script: 'printf ready', purpose: 'Inspect offline utilities' })
+      } }]
+    } }], usage: { prompt_tokens: 50, completion_tokens: 10 }
+  }, {
+    id: 'cf-direct-final',
+    choices: [{ message: { role: 'assistant', content: 'Offline utilities checked.' } }],
+    usage: { prompt_tokens: 60, completion_tokens: 5 }
+  }];
+  const provider = new CloudflareAgentModelProvider({
+    env: {
+      AGENT_MODEL_PROVIDER: 'cloudflare', CLOUDFLARE_ACCOUNT_ID: accountId,
+      CLOUDFLARE_API_TOKEN: 'cloudflare-test-token',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ATTESTED: 'true',
+      AGENT_CLOUDFLARE_FREE_ACCOUNT_ID: accountId,
+      AGENT_CLOUDFLARE_MIN_INTERVAL_MS: '0'
+    },
+    fetchImpl: async () => new Response(JSON.stringify(responses.shift()), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  let plan;
+  let shellCalls = 0;
+  const result = await provider.execute({
+    objective: 'Inspect available offline utilities.',
+    capabilities: { files: true, shell: true }, maxSteps: 4,
+    callbacks: {
+      updatePlan: async ({ steps }) => {
+        // Match the real Worker's stable-ID contract, rather than accepting any array.
+        if (steps.length < 2 || steps.some(step => !step.id || !step.label)) {
+          throw new ApiError(400, 'AGENT_PLAN_INVALID');
+        }
+        assert.equal(new Set(steps.map(step => step.id)).size, steps.length);
+        plan = steps;
+        return { accepted: true, steps };
+      },
+      shell: async () => {
+        assert.ok(plan, 'plan must be persisted before the shell effect');
+        shellCalls += 1;
+        return { success: true, returnCode: 0, stdout: 'ready', stderr: '' };
+      },
+      saveModelState: async () => {}, clearModelState: async () => {}, recordUsage: async () => {}
+    }
+  });
+  assert.equal(result.text, 'Offline utilities checked.');
+  assert.equal(shellCalls, 1);
+  assert.equal(plan.length, 2);
+});
+
+test('parent keeps tools available until both explicitly named text outputs are verified', async () => {
+  const call = (name, args, id) => ({
+    id: `multi-file-${id}`,
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: `call-${id}`, type: 'function', function: { name, arguments: JSON.stringify(args) }
+    }] } }],
+    usage: { prompt_tokens: 10, completion_tokens: 5 }
+  });
+  const declare = (filename) => ({ path: `/tmp/artigen-workspace/${filename}`,
+    filename, role: 'editable', mimeType: 'text/plain', sources: [] });
+  const responses = [
+    call('sandbox_shell', { script: 'printf menu > /tmp/artigen-workspace/menu.csv', purpose: 'Create both files' }, 'write'),
+    call('declare_artifact', declare('menu.csv'), 'menu'),
+    call('declare_artifact', declare('launch-notes.md'), 'notes'),
+    { id: 'multi-file-final', choices: [{ message: { role: 'assistant', content: 'Both files are ready.' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+  ];
+  const declared = [];
+  const provider = new SiliconFlowAgentModelProvider({
+    env: { AGENT_MODEL_PROVIDER: 'siliconflow', AGENT_MODEL_NAME: 'Qwen/Qwen3-8B',
+      SILICONFLOW_API_KEY: 'test-key', AGENT_SILICONFLOW_MIN_INTERVAL_MS: '0' },
+    fetchImpl: async () => new Response(JSON.stringify(responses.shift()), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    })
+  });
+  const objective = '请读取附件 brand-brief.txt，在隔离工作区创建并交付 menu.csv 和 launch-notes.md。不要生成图片。';
+  const result = await provider.execute({
+    objective, capabilities: { files: true, shell: true },
+    deliverables: inferRequiredDeliverables(objective), maxSteps: 12,
+    callbacks: {
+      updatePlan: async ({ steps }) => ({ accepted: true, steps }),
+      shell: async () => ({ success: true, returnCode: 0, stdout: '', stderr: '' }),
+      declareArtifact: async (args) => {
+        declared.push(args.filename);
+        return { artifactId: 'artifact-' + args.filename, role: args.role,
+          filename: args.filename, mimeType: args.mimeType, verificationStatus: 'passed' };
+      },
+      saveModelState: async () => {}, clearModelState: async () => {}, recordUsage: async () => {}
+    }
+  });
+  assert.deepEqual(declared, ['menu.csv', 'launch-notes.md']);
+  assert.equal(result.text, 'Both files are ready.');
+});
+
+test('explicit text output filenames exclude input references and negated requests', () => {
+  const cases = [
+    ['请读取附件 brand-brief.txt，在隔离工作区创建并交付 menu.csv 和 launch-notes.md。不要生成图片。', ['menu.csv', 'launch-notes.md']],
+    ['Create menu.csv, launch-notes.md using input.txt.', ['menu.csv', 'launch-notes.md']],
+    ['Read brief.txt then create notes.md from input.csv.', ['notes.md']],
+    ['Do not create unused.txt; create notes.md.', ['notes.md']],
+    ['不要创建 a.txt；请交付 b.md。', ['b.md']],
+    ['读取 input.txt，不创建 output.csv。', []],
+    ['文件 old.md 已经存在，只解释内容。', []],
+    ['Create `品牌提案.md` and "menu.csv".', ['品牌提案.md', 'menu.csv']],
+    ['Create notes.md using https://example.invalid/input.csv.', ['notes.md']],
+    ['Create config.txt.backup.', []],
+    ['Create a.txt and b.md and do not create unused.csv.', ['a.txt', 'b.md']],
+    ['Create from.md.', ['from.md']],
+    ['Create a.txt, not b.md.', ['a.txt']],
+    ['Create instructions.md containing the example filename example.txt.', ['instructions.md']],
+    ['创建 菜单.csv 和 发布说明.md。', ['菜单.csv', '发布说明.md']],
+    ['创建并交付菜单.csv和发布说明.md。', ['菜单.csv', '发布说明.md']],
+    ['创建 说明.md，内容包含示例 example.txt。', ['说明.md']],
+    ['创建 a.txt，别生成 b.md。', ['a.txt']],
+    ['创建 a.txt，不必生成 b.md。', ['a.txt']]
+  ];
+  for (const [objective, expected] of cases) assert.deepEqual(inferRequiredTextFilenames(objective), expected, objective);
+  const verified = { filename: 'menu.csv', role: 'editable', mime_type: 'text/plain', verification_status: 'passed' };
+  assert.equal(requiredDeliverablesSatisfied([verified], ['text_file'], ['menu.csv', 'launch-notes.md']), false);
+  assert.equal(requiredDeliverablesSatisfied([verified, { ...verified, filename: 'launch-notes.md' }], ['text_file'], ['menu.csv', 'launch-notes.md']), true);
+  assert.equal(requiredDeliverablesSatisfied([verified, { ...verified, filename: 'launch-notes.md', verification_status: 'failed' }], ['text_file'], ['menu.csv', 'launch-notes.md']), false);
+});
+
+test('finalization rejects an omitted named text file before settlement', async () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const workerId = 'worker-named-file-test';
+  const query = async (sql) => {
+    if (/SELECT \* FROM agent_runs WHERE id=\$1 FOR UPDATE/.test(sql)) return { rows: [{
+      id: runId, status: 'verifying', worker_id: workerId, lease_epoch: 1,
+      lease_expires_at: new Date(Date.now() + 60000), max_credits: 10, step_count: 3, replan_count: 0
+    }], rowCount: 1 };
+    if (/FROM agent_artifacts WHERE run_id/.test(sql)) return { rows: [{
+      filename: 'menu.csv', role: 'editable', mime_type: 'text/plain', verification_status: 'passed', sources: []
+    }], rowCount: 1 };
+    if (/FROM agent_steps WHERE run_id/.test(sql)) return { rows: [
+      { sequence: 1, role: 'planner', status: 'succeeded', tool_name: 'update_plan' },
+      { sequence: 2, role: 'executor', status: 'succeeded', tool_name: 'sandbox_shell' },
+      { sequence: 3, role: 'verifier', status: 'succeeded', tool_name: 'declare_artifact' }
+    ], rowCount: 3 };
+    if (/agent_budget_holds|UPDATE agent_runs/.test(sql)) assert.fail('Missing files must be rejected before settlement or success');
+    return { rows: [], rowCount: 0 };
+  };
+  const service = createAgentRunService({ pool: { connect: async () => ({ query, release() {} }) },
+    env: { AGENT_FEATURE_ENABLED: '1', AGENT_PAYLOAD_ENCRYPTION_KEY: encryptionEnv.AGENT_PAYLOAD_ENCRYPTION_KEY } });
+  await assert.rejects(service.finishRun({ runId, workerId, leaseEpoch: 1, actualCredits: 2,
+    checklist: { requiredArtifactCount: 1, requiredDeliverables: ['text_file'], requiredArtifactFilenames: ['menu.csv', 'launch-notes.md'] }
+  }), { code: 'AGENT_VERIFICATION_INCOMPLETE' });
 });

@@ -161,10 +161,15 @@
       :inert="commandOpen || leftDrawerOpen || (overlayLayout && !rightDrawerOpen) ? true : undefined"
     >
       <nav class="resource-tabs" :aria-label="zh ? '资源面板' : 'Resources'">
-        <button v-for="item in resourceModes" :key="item.id" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id">{{ item.label }}</button>
-        <button type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" /></button>
+        <div ref="resourceTabsList" class="resource-tabs-list">
+          <button v-for="item in resourceModes" :key="item.id" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id">{{ item.label }}</button>
+        </div>
+        <button class="resource-tabs-close" type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" /></button>
       </nav>
-      <ResourceWorkspace v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" />
+      <ResourceWorkspace v-show="resourceMode !== 'task' && resourceMode !== 'website'" :mode="resourceMode === 'website' ? lastResourceMode : resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" :theme="resolvedTheme" @changes="resourceMode = 'changes'" />
+      <section v-if="websiteAvailable" v-show="resourceMode === 'website'" class="website-inspector" :aria-label="zh ? '网站预览' : 'Website preview'">
+        <slot name="website" />
+      </section>
       <div v-show="resourceMode === 'task'" class="task-inspector">
       <header class="inspector-head">
         <div>
@@ -293,6 +298,7 @@ const props = withDefaults(defineProps<{
   defaultInspectorTab?: InspectorTab;
   badges?: Partial<Record<InspectorTab, number>>;
   liveAnnouncement?: string;
+  websiteAvailable?: boolean;
 }>(), {
   artifacts: () => [],
   projectId: null,
@@ -320,8 +326,9 @@ const emit = defineEmits<{
 const router = useRouter();
 const route = useRoute();
 const viewportWidth = ref(window.innerWidth);
-const resourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
-const resourceModes = computed(() => [ { id: 'files' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, label: 'GitHub' }, { id: 'task' as const, label: props.zh ? '任务' : 'Task' } ]);
+const resourceMode = ref<'files' | 'changes' | 'github' | 'task' | 'website'>('files');
+const lastResourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
+const resourceModes = computed(() => [ { id: 'files' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, label: 'GitHub' }, { id: 'task' as const, label: props.zh ? '任务' : 'Task' }, ...(props.websiteAvailable ? [{ id: 'website' as const, label: props.zh ? '网页' : 'Website' }] : []) ]);
 const openResources = async (mode: typeof resourceMode.value) => {
   resourceMode.value = mode;
   if (isOverlayLayout()) {
@@ -333,10 +340,12 @@ const openResources = async (mode: typeof resourceMode.value) => {
   } else { rightPreferenceSet = true; rightCollapsed.value = false; persistPreferences(); }
 };
 const openFileEvent = () => { void openResources('files'); };
+defineExpose({ openResources });
 
 const root = ref<HTMLElement | null>(null);
 const leftPanel = ref<HTMLElement | null>(null);
 const rightPanel = ref<HTMLElement | null>(null);
+const resourceTabsList = ref<HTMLElement | null>(null);
 const leftDrawerButton = ref<HTMLButtonElement | null>(null);
 const rightDrawerButton = ref<HTMLButtonElement | null>(null);
 const commandPanel = ref<HTMLElement | null>(null);
@@ -627,7 +636,22 @@ onMounted(() => {
   window.addEventListener('workspace:open-file', openFileEvent);
 });
 
-watch(resourceMode, persistPreferences);
+watch(resourceMode, (mode) => {
+  if (mode !== 'website') lastResourceMode.value = mode;
+  persistPreferences();
+  void nextTick(() => {
+    const list = resourceTabsList.value;
+    const selected = list?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!list || !selected || !list.clientWidth) return;
+    const bounds = list.getBoundingClientRect();
+    const item = selected.getBoundingClientRect();
+    if (item.left < bounds.left) list.scrollLeft -= bounds.left - item.left;
+    else if (item.right > bounds.right) list.scrollLeft += item.right - bounds.right;
+  });
+});
+watch(() => props.websiteAvailable, (available) => {
+  if (!available && resourceMode.value === 'website') resourceMode.value = 'task';
+});
 watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; resourceMode.value = 'task'; });
 watch(() => props.defaultInspectorCollapsed, (value) => {
   if (!rightPreferenceSet) rightCollapsed.value = value;
@@ -890,11 +914,19 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 }
 
 .workspace-rail { min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:9px; padding:12px 5px; background:var(--surface); }
-.workspace-rail > a,.workspace-rail > button { display:grid; flex:none; place-items:center; width:44px; height:44px; border:0; border-radius:9px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; }
+.workspace-rail > a,.workspace-rail > button { box-sizing:border-box; display:grid; flex:none; place-items:center; width:44px; height:44px; padding:0; border:0; border-radius:9px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; }
 .workspace-rail > a:hover,.workspace-rail > button:hover { background:var(--surface-hover); color:var(--text); }.workspace-rail .rail-brand { color:var(--text); font-weight:750; background:var(--surface-raised); }.rail-spacer { flex:1; }
-.resource-tabs { display:flex; align-items:center; min-height:48px; gap:4px; padding:5px 8px; border-bottom:1px solid var(--border); }.resource-tabs > button { flex:1; min-height:36px; padding:5px 8px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; }.resource-tabs > button[aria-pressed="true"] { background:var(--surface-raised); color:var(--text); }.resource-tabs > button:last-child { display:grid; flex:none; place-items:center; width:36px; padding:0; }
+.resource-tabs { display:flex; align-items:center; min-width:0; min-height:46px; gap:6px; margin-inline:12px; padding:5px 0; border-bottom:1px solid var(--border); }
+.resource-tabs-list { display:flex; flex:1; min-width:0; align-items:center; gap:3px; overflow-x:auto; scrollbar-width:none; }
+.resource-tabs-list::-webkit-scrollbar { display:none; }
+.resource-tabs-list > button, .resource-tabs-close { flex:none; min-height:32px; padding:5px 10px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; white-space:nowrap; cursor:pointer; }
+.resource-tabs-list > button[aria-pressed="true"] { background:var(--surface-raised); color:var(--text); }
+.resource-tabs-close { display:grid; place-items:center; width:32px; padding:0; }
+.resource-tabs :is(button):focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+@media (hover:hover) and (pointer:fine) { .resource-tabs button:hover { background:var(--surface-hover); color:var(--text); } }
 .task-inspector { display:flex; flex:1; flex-direction:column; min-height:0; }.workspace-nav { display:none; }
-@media(max-width:799px) { .resource-tabs > button { min-height:44px; }.resource-tabs > button:last-child { width:44px; } }
+.website-inspector { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
+@media(max-width:799px), (pointer:coarse) { .resource-tabs-list > button, .resource-tabs-close { min-width:44px; min-height:44px; }.resource-tabs-close { width:44px; } }
 </style>
 
 <style>

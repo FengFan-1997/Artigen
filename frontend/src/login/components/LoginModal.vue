@@ -24,11 +24,6 @@
               ×
             </button>
           </div>
-          <div class="signup-credit-note">
-            <strong>{{ currentLang === 'zh' ? '注册赠送 100 点' : 'Get 100 credits on signup' }}</strong>
-            <span>{{ currentLang === 'zh' ? '约可完成 10 次标准生成' : 'Enough for about 10 standard generations' }}</span>
-          </div>
-
           <div class="body">
             <div v-if="entryStep === 'select'" class="step">
               <div class="sub">{{ subText }}</div>
@@ -157,7 +152,9 @@
               <TurnstileWidget
                 ref="turnstileRef"
                 v-model="turnstileToken"
+                v-model:fallback-selected="turnstileFallback"
                 :action="EMAIL_OTP_TURNSTILE_ACTION"
+                :allow-fallback="true"
               />
               <div class="hint" :class="{ error: !!error }">
                 {{ error || info }}
@@ -168,7 +165,7 @@
                   sending ||
                   !emailLocal ||
                   cooldownLeft > 0 ||
-                  (turnstileRequired && !turnstileToken)
+                  (turnstileRequired && !turnstileToken && !turnstileFallback)
                 "
                 type="button"
                 @click="sendCode"
@@ -314,7 +311,9 @@
               <TurnstileWidget
                 ref="turnstileRef"
                 v-model="turnstileToken"
+                v-model:fallback-selected="turnstileFallback"
                 :action="EMAIL_OTP_TURNSTILE_ACTION"
+                :allow-fallback="true"
               />
 
               <div class="grid">
@@ -337,7 +336,7 @@
                     sending ||
                     !emailLocal ||
                     cooldownLeft > 0 ||
-                    (turnstileRequired && !turnstileToken)
+                    (turnstileRequired && !turnstileToken && !turnstileFallback)
                   "
                   type="button"
                   @click="sendCode"
@@ -477,6 +476,7 @@ const googleSdkLoading = ref(false);
 const googleSdkFailed = ref(false);
 let returnFocusElement: HTMLElement | null = null;
 const turnstileToken = ref('');
+const turnstileFallback = ref(false);
 const turnstileRequired = isTurnstileConfigured();
 const turnstileRef = ref<{ reset: () => void } | null>(null);
 
@@ -559,6 +559,7 @@ watch(
     error.value = '';
     info.value = '';
     turnstileToken.value = '';
+    turnstileFallback.value = false;
     if (timer) {
       window.clearInterval(timer);
       timer = null;
@@ -632,6 +633,7 @@ const resetOtpUi = () => {
   error.value = '';
   info.value = '';
   turnstileToken.value = '';
+  turnstileFallback.value = false;
   void nextTick(() => turnstileRef.value?.reset());
 };
 
@@ -813,7 +815,7 @@ const sendCode = async () => {
     loggingIn.value ||
     registering.value ||
     cooldownLeft.value > 0 ||
-    (turnstileRequired && !turnstileToken.value)
+    (turnstileRequired && !turnstileToken.value && !turnstileFallback.value)
   ) {
     return;
   }
@@ -843,7 +845,8 @@ const sendCode = async () => {
   try {
     const res = await sendLoginCode(e, {
       idempotencyKey: attempt.idempotencyKey,
-      turnstileToken: turnstileToken.value
+      turnstileToken: turnstileFallback.value ? '' : turnstileToken.value,
+      turnstileFallback: turnstileFallback.value
     });
     if (!res.ok) {
       failOtpSend('login', attempt.idempotencyKey, { cooldownSec: res.cooldownSec });
@@ -860,6 +863,7 @@ const sendCode = async () => {
       cooldownSec: res.cooldownSec
     });
     turnstileRef.value?.reset();
+    turnstileFallback.value = false;
     info.value =
       res.deliveryStatus === 'unknown'
         ? currentLang.value === 'zh'
@@ -1174,23 +1178,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: #18181b;
-}
-
-.signup-credit-note {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 24px;
-  padding: 11px 12px;
-  border: 1px solid rgba(204, 255, 0, 0.24);
-  border-radius: 10px;
-  background: rgba(204, 255, 0, 0.07);
-  color: #cbd5cc;
-  font-size: 12px;
-}
-
-.signup-credit-note strong {
-  color: #ccff00;
 }
 
 .head {

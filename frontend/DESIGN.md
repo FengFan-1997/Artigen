@@ -272,7 +272,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 | Command palette | Not mounted | Dialog focuses search and traps Tab | Escape closes and returns focus | `role=dialog`, labelled search, no background focus |
 | Website preview | Not mounted | Native modal dialog focuses close affordance and contains focus, including over mobile drawers | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
 
-- 网站预览标题保持紧凑单行，长文件名省略并保留完整标题提示；关闭按钮不参与压缩，手机点击区至少 44px。预览入口也需要截断保护，不能让文件名撑出资源区。使用原生 modal dialog 承担顶层展示与焦点约束，避免移动抽屉的背景 `inert` 禁用预览操作。
+- 网站预览标题保持紧凑单行，长文件名省略并保留完整标题提示；关闭按钮不参与压缩，手机点击区至少 44px。预览入口也需要截断保护，不能让文件名撑出资源区。网页成果预览位于右侧工作区并保留沙箱隔离，移动端沿用资源抽屉的焦点约束。
 | Run controls | Pause, resume, retry, stop reflect the current status | Busy state disables duplicate submissions | Stop requires a second explicit activation | Status and failure text are announced through live regions |
 | Tool receipt rows | Timestamp, event summary and receipt ID stay in one aligned row | Long summaries wrap only in their own column | Receipt ID remains visible at mobile widths | IDs and timestamps use secondary tabular typography |
 | Terminal Run actions | Completed, failed, and cancelled runs replace the disabled composer with a compact status and a clear next task link | Project context carries into the next task; active Run input and unread-update controls remain available only in their applicable states | The saved run stays readable and its status is not inferred from color alone |
@@ -318,3 +318,27 @@ Don't:
 - 命令面板、网站预览与现有工具弹窗复用CloseButton和WorkspaceIcon关闭图标；共享44px入口、主题文字/悬停与完整焦点。保留各容器原有位置、焦点陷阱、Escape及返回入口；网站预览仍用原生dialog、受限iframe，不替换未保存/离开页面的原生数据保护确认。
 - 工具弹窗配置区宽度必须包含内距，弹性文字列允许收缩及换行；窄屏不能靠祖先overflow隐藏被撑出的内容。
 - 只读差异两栏均可用Tab聚焦并打开CodeMirror原生查找，明确aria-readonly；不可编辑、不出现替换操作、不隐式写回。项目行新建入口沿用原有组内聚焦显现及自然Tab顺序。
+
+
+### 图标与原生选择控件
+
+- Agent 工作区的通用图标使用 `@lucide/vue` 按需导入，统一 24 单位视口与 1.75 描边；图标语义由 `WorkspaceIcon` 集中映射，保留按钮本身的可访问名称。品牌标识和业务插画不强行替换为通用图标。
+- 下拉框使用 `NativeSelectFrame` 保留原生 `select` 的键盘和系统选择行为，箭头距控件内侧边缘 12px、文本留出 40px；系统强制颜色模式恢复原生箭头。实现后在浅色、深色和窄屏检查实际图形与边缘的距离，禁止仅依赖浏览器默认箭头。
+- 资源面板标签区的结构分隔线与两侧留白对齐，选中态使用柔和圆角。弹窗标题的装饰图标不额外加边框，并与标题垂直居中。
+
+### FAQ 与相似展开内容
+
+- 展开的 FAQ 采用共享的中性完整四边框和圆角，边框须在背景上清晰可辨；不可使用彩色单侧边线，也不可仅靠过浅的背景区分。收起项可以使用中性结构分隔线。首页、工具页、图片工作坊、工具介绍和价格页复用同一套 FAQ 样式，不为每个页面单独复制。
+- 保留原生 `details` / `summary` 和键盘操作，焦点轮廓完整；文字换行时图标不贴边、不被遮挡。受影响页面在桌面与手机实际检查展开、收起、悬停和键盘焦点；未提供的主题不得声称已验证。
+
+
+### Agent 源码与差异编辑器主题
+
+- 编辑器和两侧只读差异使用 `@uiw/codemirror-theme-vscode` 的完整浅色、深色主题，随工作区实际外观切换；代码背景、行号和语法颜色由上游主题统一管理，不覆盖为产品绿。工作区导航与操作保留 Artigen 品牌。
+- 切换主题不得重建普通编辑器或丢失内容、选区、撤销历史及滚动位置；差异比较继续只读，写回须使用明确的应用入口。移动端与窄面板必须检查搜索、水平滚动和差异可读性。
+
+- Agent 网站成果预览作为右侧工作区内的网页标签呈现；切换文件或任务后可返回预览，关闭时返回任务中的原入口。只展示已加载的网站成果，iframe 保留原有沙箱及 referrer 限制；不把产物预览描述为任意网址浏览器。手机沿用工作区抽屉，长标题可省略但保留完整 title 与关闭入口。
+
+- 右侧资源标签靠左按内容定宽，桌面操作按钮采用紧凑尺寸，触屏及平板仍保留至少44px命中区。标签过多时仅标签组横向滚动，关闭入口固定，切换后选中项自动滚入可见区域；焦点轮廓与长文案保持可见。
+- 编辑器有足够宽度时将文件目录放在代码画布左侧，两者之间使用中性结构分隔线；目录在 DOM 和键盘顺序中也位于代码之前。紧凑面板仍在目录与文件间切换，不为了保持双栏挤压代码；代码行高保持适当阅读间距，沿用上游主题。
+- 文件状态栏与工作区内距对齐，顶部结构分隔线不贯穿至列边缘；保存状态与操作保留独立可换行区域，长语言文案不得裁切，触屏继续保留44px目标。
