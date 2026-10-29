@@ -240,6 +240,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { isNavigationFailure, NavigationFailureType, useRouter, useRoute } from 'vue-router';
+import { isRouteChunkLoadError } from '@/utils/navigationError';
 import ProjectNavigation from './ProjectNavigation.vue';
 import ResourceWorkspace from './ResourceWorkspace.vue';
 import type { AgentArtifact } from '../../services/agentRuns';
@@ -313,7 +314,7 @@ const navigationError = ref<{ path: string; chunk: boolean; blocked: boolean } |
 const removeNavigationErrorHandler = router.onError((error, to) => {
   navigationError.value = {
     path: to.fullPath,
-    chunk: /loading chunk|chunkloaderror|failed to fetch dynamically imported module|importing a module script failed/i.test(String(error?.message || error)),
+    chunk: isRouteChunkLoadError(error),
     blocked: false
   };
 });

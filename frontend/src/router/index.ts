@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { loginRoutes } from '../login/routes';
 import { trackPageView } from '@/utils/analytics';
+import { isRouteChunkLoadError } from '@/utils/navigationError';
 import { getToolDefinition } from '../agentImg/domain/toolCatalog';
 
 type RouteSeoMeta = {
@@ -613,12 +614,7 @@ const router = createRouter({
 });
 
 router.onError((err, to) => {
-  const msg = String((err as any)?.message || err || '').trim();
-  const isChunkLoadError =
-    /loading chunk|chunkloaderror|failed to fetch dynamically imported module|importing a module script failed/i.test(
-      msg
-    );
-  if (!isChunkLoadError) return;
+  if (!isRouteChunkLoadError(err)) return;
   try {
     const sp = new URLSearchParams(window.location.search);
     if (sp.has('__reload')) return;

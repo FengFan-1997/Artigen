@@ -103,14 +103,15 @@ test('retrying the same failed Run input reuses its idempotency identity', async
   expect(fixture.state.inputs[2]?.inputId).not.toBe(fixture.state.inputs[0]?.inputId);
 });
 
-test('the terminal shared Run composer stays disabled and has no unsupported attachment action', async ({
+test('the terminal shared Run composer disables text, attachments and sending', async ({
   page
 }) => {
   const fixture = await installAgentInputFixture(page);
   fixture.state.run.status = 'succeeded';
   await page.goto(`/artigen/agent/runs/${inputRunId}`);
   await expect(page.getByRole('textbox', { name: '补充要求' })).toBeDisabled();
-  await expect(page.locator('.run-composer .attach')).toHaveCount(0);
+  await expect(page.locator('.run-composer .attach')).toBeDisabled();
+  await expect(page.locator('.run-composer .send')).toBeDisabled();
   await page.locator('.composer-box').dispatchEvent('submit');
   expect(fixture.state.inputs).toHaveLength(0);
 });
