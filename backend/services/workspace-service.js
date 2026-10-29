@@ -187,6 +187,9 @@ const createWorkspaceService = ({ pool, env = process.env }) => {
             role: record.kind === "user_input" ? "user" : "assistant",
             kind: value.kind || "text",
             text: value.text || value.message || "",
+            ...(Array.isArray(value.assetIds)
+              ? { assetIds: value.assetIds, attachments: value.attachments || [] }
+              : {}),
             createdAt: record.created_at,
           };
         }),
