@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { PanelLeft, PanelRight, X, Plus, Minus, Search, Folder, Wrench, Image, Sparkles, Moon, Sun, Monitor, Settings, SquareTerminal, List, Network, Bot, GitBranch, FileText, Paperclip, ArrowUp, RefreshCw, ArrowRight, ArrowDown, ChevronRight, ChevronDown, Trash2, Download, Play, Square, Pause, Send, Copy, Check } from '@lucide/vue';
+import { PanelLeft, PanelRight, X, Plus, Minus, Search, Folder, Wrench, Image, Sparkles, Moon, Sun, Monitor, Settings, SquareTerminal, List, Network, Bot, GitBranch, FileText, Paperclip, ArrowUp, RefreshCw, ArrowRight, ArrowDown, ChevronRight, ChevronDown, Trash2, Download, Play, Square, Pause, Send, Copy, Check, MessageCircle, MoreHorizontal, TriangleAlert, Clock, GitCompare } from '@lucide/vue';
 
 const icons = {
   'panel-left': PanelLeft,
@@ -41,6 +41,11 @@ const icons = {
   'paper-plane': Send,
   'copy': Copy,
   'check': Check,
+  'chat': MessageCircle,
+  'more': MoreHorizontal,
+  'warning': TriangleAlert,
+  'clock': Clock,
+  'changes': GitCompare,
 } as const;
 
 withDefaults(defineProps<{

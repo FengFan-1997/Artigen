@@ -173,7 +173,7 @@ export const installAgentInputFixture = async (
       route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
     if (p === '/api/workspace/navigation') return json({ok:true,projects:[],sessions:[],nextCursor:null});
     if (/\/api\/agent-runs\/[^/]+\/messages$/.test(p)) return json({ok:true,messages:[],nextCursor:null});
-    if (/\/api\/agent-runs\/[^/]+\/activity$/.test(p)) return json({ok:true,events:[]});
+    if (/\/api\/agent-runs\/[^/]+\/(activity|history)$/.test(p)) return json({ok:true,events:[]});
     if (p === '/api/auth/session')
       return json({
         ok: true,

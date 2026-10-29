@@ -4,12 +4,10 @@
     class="resource-workspace"
     :class="{ 'tree-hidden': !treeVisible, 'compact-tree': compact }"
   >
-    <WorkspaceGithub
-      :key="scope()"
-      v-if="mode === 'github'"
-      :project-id="projectId || ''"
-      :zh="zh"
-    />
+    <div v-if="mode === 'github'" class="github-project-workspace">
+      <WorkspaceProjectPicker :key="`${owner}:${runId}`" :project-id="projectId" :viewed-project-id="viewedProjectId" :run-id="runId" :run-status="runStatus" :zh="zh" @view-project="viewedProjectId = $event" @project-associated="$emit('project-associated', $event)" />
+      <WorkspaceGithub :key="`${owner}:${viewedProjectId}`" :project-id="viewedProjectId" :zh="zh" />
+    </div>
     <template v-else>
       <div class="file-tabs-bar">
         <div
@@ -523,6 +521,7 @@ import {
   type WorkspaceAttachment
 } from '../../services/workspaceAttachmentTransfer';
 import { cloudTree, readLocalDirectory, type TreeNode } from '../../services/workspaceTree';
+import WorkspaceProjectPicker from './WorkspaceProjectPicker.vue';
 const WorkspaceEditor = defineAsyncComponent(() => import('./WorkspaceEditor.vue'));
 const WorkspacePdf = defineAsyncComponent(() => import('./WorkspacePdf.vue'));
 const props = withDefaults(
@@ -532,10 +531,14 @@ const props = withDefaults(
     artifacts: AgentArtifact[];
     zh: boolean;
     theme: 'light' | 'dark';
+    runId?: string;
+    runStatus?: string;
   }>(),
-  { projectId: '' }
+  { projectId: '', runId: '', runStatus: '' }
 );
-const emit = defineEmits<{ changes: [] }>();
+const emit = defineEmits<{ changes: []; 'focus-directory': []; 'project-associated': [value: { projectId: string; scope: 'run' | 'conversation'; affectedRunCount: number }] }>();
+const viewedProjectId = ref(props.projectId || '');
+watch(() => [props.projectId, props.runId], () => { viewedProjectId.value = props.projectId || ''; });
 type Document = {
   key: string;
   generation: number;
@@ -1335,6 +1338,8 @@ function toggleTree() {
     localStorage.setItem('artigen-resource-tree-visible', String(treeVisible.value));
   } catch {}
 }
+
+defineExpose({ treeVisible, toggleTree });
 const onOpenFile = (event: Event) => {
   const detail = (event as CustomEvent<WorkspaceFile>).detail;
   const found =

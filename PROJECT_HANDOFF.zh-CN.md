@@ -1,5 +1,15 @@
 # Artigen 项目正式 Handoff
 
+## 2026-10-30 Agent 运行页交互契约修复（PR #261，待 required checks）
+
+- 本轮修复 Agent 运行页中影响可用性的交互契约：离线或断开状态不再渲染误导性的执行进度；上传不完整时保留草稿和附件并给出可重试提示；账户点数读取失败提供可操作的刷新入口；右侧检查器按钮暴露真实展开状态；发送成功后刷新消息附件回执；移动端更多操作菜单使用固定层与动态无障碍名称，避免被顶栏裁切；状态图标不再无意义旋转。
+- 输入框沿用 AttachmentStrip 会话样式，附件入口保留加号图标和附件独发能力，发送按钮保持右下角固定操作位；本轮未替换该上传视觉契约。
+- 同步更新输入工具的 `/history` 测试夹具，匹配运行时真实读取路径。修改范围仅限 Agent 运行页、工作台资源/账户交互、Composer 输入和相关回归夹具；未修改后端 API、计费、Provider 或数据库迁移。
+- 本地真实浏览器回归：`agent-input-tools` 25/25、`agent-ux-repair` 15/15（3 项按设计跳过），两套合计 40/40；前端 type-check、lint、`pnpm check:docs`、`pnpm check:handoff-policy`、`pnpm check:release-config` 通过。workspace 组合回归另有 123 passed / 32 failed / 3 skipped，失败集中在项目树、资源区、编辑器和历史 workspace 契约，未纳入本轮修复；必须独立处理，不能据此宣称全产品回归通过。
+- PR #261 之前的 CI 分片修复已提交；本轮源代码与本节 Handoff 待一起提交并重新运行 required checks。当前未合入 `dev`、未部署 DEV、未更新 `main` 或生产；后续以 PR、DEV smoke、Release gate 与平台 deployment 的 exact SHA 为准。
+
+更新时间：2026-10-30（Asia/Shanghai）
+
 ## 2026-10-30 浏览器回归矩阵分片（PR #261 候选，待合入 DEV）
 
 - PR #261 引入工作台与附件回归后，Chromium/Firefox 每个项目的 Playwright 列表由约 265 项增至 487 项；原有 `1/1` 作业均在 25 分钟 CI 上限处取消，未形成失败断言证据。

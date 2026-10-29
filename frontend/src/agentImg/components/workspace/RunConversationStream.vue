@@ -11,7 +11,7 @@
     <template v-for="row in rows" :key="row.key"
       ><article v-if="row.kind === 'message'" class="timeline-message" :class="[row.message.role, { 'workspace-user-bubble': row.message.role === 'user' }]">
         <header>
-          <span>{{ row.message.role === 'user' ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span
+          <span :title="row.message.role === 'user' ? userId : undefined">{{ row.message.role === 'user' ? userLabel : 'Artigen Agent' }}</span
           ><MessageTimestamp :value="row.message.createdAt" :zh="zh" />
           <button
             class="copy-message"
@@ -24,7 +24,8 @@
             <WorkspaceIcon :name="copyState?.id === row.message.id && copyState.status === 'copied' ? 'check' : 'copy'" />
           </button>
         </header>
-        <WorkspaceMarkdown :text="row.message.text" :files="files" />
+        <WorkspaceMarkdown v-if="row.message.text" :text="row.message.text" :files="files" />
+        <MessageAttachments :attachments="row.message.attachments || []" :zh="zh" />
       </article>
       <AgentActivity
         v-else
@@ -42,8 +43,10 @@ import { computed, defineAsyncComponent, onMounted, onBeforeUnmount, ref, watch 
 import { getCurrentUserId } from '@/login/session';
 const WorkspaceMarkdown = defineAsyncComponent(() => import('./WorkspaceMarkdown.vue'));
 import AgentActivity from './AgentActivity.vue';
+import MessageAttachments from './MessageAttachments.vue';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import MessageTimestamp from './MessageTimestamp.vue';
+import { useUserIdentity } from '../../composables/useUserIdentity';
 import { buildAgentActivity } from '../../utils/agentActivity';
 import {
   getRunMessages,
@@ -53,6 +56,7 @@ import {
 import type { AgentEvent } from '../../services/agentRuns';
 const props = defineProps<{
   runId: string;
+  refreshToken?: number;
   events: AgentEvent[];
   files: WorkspaceFile[];
   zh: boolean;
@@ -62,6 +66,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'layout-change': [] }>();
 const messages = ref<PublicMessage[]>([]);
 const error = ref(false);
+const { userId, userLabel } = useUserIdentity(computed(() => props.zh));
 const copyState = ref<{ id: string; status: 'copying' | 'copied' | 'failed' } | null>(null);
 const copyAnnouncement = ref('');
 let copyRevision = 0;
@@ -175,6 +180,7 @@ watch(
   },
   { immediate: true }
 );
+watch(() => props.refreshToken, () => void load());
 watch(
   () =>
     props.events
