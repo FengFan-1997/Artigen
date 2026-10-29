@@ -295,6 +295,13 @@ export const expectWorkspaceGeometry = async (page: Page, options: GeometryOptio
         const visibleRect = visibleRegion(control);
         const visibleWidth = visibleRect.width;
         const visibleHeight = visibleRect.height;
+        // A subpixel strip at a scroll boundary has no reliable hit-test point.
+        // Treat it like an offscreen control only when scrolling can reveal it;
+        // hidden/viewport clipping and overlays must still fail the audit.
+        if (visibleRect.xClipCause !== 'blocked' && visibleRect.yClipCause !== 'blocked' && (
+          (visibleWidth < 1 && visibleRect.recoverablyScrollableX) ||
+          (visibleHeight < 1 && visibleRect.recoverablyScrollableY)
+        )) return [];
         const widthCoverage = rect.width > 0 ? visibleWidth / rect.width : 0;
         const heightCoverage = rect.height > 0 ? visibleHeight / rect.height : 0;
         const viewportCoverage = widthCoverage * heightCoverage;
