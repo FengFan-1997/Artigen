@@ -1049,6 +1049,8 @@ test('switching history isolates task activity and clears the prior stop confirm
   const next = page.locator(`a[href="/artigen/agent/runs/${secondId}"]`);
   if (!await next.isVisible()) await page.getByRole('button', { name: '打开历史' }).click();
   await next.click();
+  if ((page.viewportSize()?.width || 1440) < 1440)
+    await expect(page.locator('#workspace-history-panel')).toHaveAttribute('aria-hidden', 'true');
   await expect(activity).toContainText('第二个任务的记录');
   await expect(activity).not.toContainText('第一个任务的记录');
   await page.getByLabel('更多任务操作', { exact: true }).click();

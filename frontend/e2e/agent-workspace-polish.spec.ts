@@ -327,12 +327,16 @@ for (const status of ['failed', 'cancelled', 'succeeded', 'paused', 'waiting_use
   test(`${status} shows real recorded steps and truthful results`, async ({ page }) => {
     await setup(page, { currentRun: run(status) });
     await page.goto(`/artigen/agent/runs/${runId}`);
+    if ((page.viewportSize()?.width || 1440) < 1440)
+      await page.getByRole('button', { name: '打开检查器', exact: true }).click();
     await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
     await page.getByRole('tab', { name: '计划', exact: true }).click();
     await expect(page.locator('#workspace-panel-plan')).toContainText('记录网站证据');
     await expect(page.locator('#workspace-panel-plan')).toContainText('制作与验证提案');
     await expect(page.locator('#workspace-panel-plan .execution-spine article.complete')).toHaveCount(status === 'succeeded' ? 2 : 1);
     await expect(page.getByText('计划已建立，正在按步骤推进。', { exact: true })).toHaveCount(0);
+    if ((page.viewportSize()?.width || 1440) < 1440)
+      await page.getByRole('button', { name: '关闭资源区', exact: true }).click();
     if (['failed', 'cancelled'].includes(status)) {
       await expect(page.locator('.delivery-summary')).toContainText('已保留的成果');
       await expect(page.locator('.delivery-summary')).not.toContainText('交付完成');

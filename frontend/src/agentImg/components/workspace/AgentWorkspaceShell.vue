@@ -504,7 +504,7 @@ const toggleRight = async () => {
 };
 // Legacy navigation remains available while the projection endpoint is loading/unavailable.
 const onHistoryClick = (event: MouseEvent) => {
-  if ((event.target as Element).closest('.history-item')) closeLeftDrawer();
+  if ((event.target as Element).closest('.history-item,.history-run')) closeLeftDrawer(true);
 };
 const closeDrawers = () => { if (leftDrawerOpen.value) closeLeftDrawer(true); else closeRight(true); };
 const cycleTheme = () => {
