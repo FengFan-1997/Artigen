@@ -145,6 +145,26 @@ const baseRun = {
   updatedAt: now
 };
 
+const installRunReadModels = async (page: Page) => {
+  await page.route('**/api/workspace/navigation*', route => route.fulfill({
+    json: { ok: true, projects: [], sessions: [], nextCursor: null }
+  }));
+  await page.route('**/api/credits/balance?*', route => route.fulfill({
+    json: { userId: 'agent-e2e', available: 87.5, frozen: 30 }
+  }));
+  await page.route('**/api/credits/holds?*', route => route.fulfill({ json: { ok: true, holds: [] } }));
+  await page.route(`**/api/agent-runs/${runId}`, route => route.fulfill({ json: { ok: true, run: baseRun } }));
+  await page.route('**/api/agent-runs/*/events', route => route.abort());
+  await page.route('**/api/agent-runs/*/history?*', route => route.fulfill({ json: { ok: true, events: [] } }));
+  await page.route('**/api/agent-runs/*/messages*', route => route.fulfill({
+    json: { ok: true, messages: [], nextCursor: null }
+  }));
+  await page.route('**/api/agent/status', route => route.fulfill({
+    json: { ok: true, status: { enabled: true, workerOnline: true, workerModelReady: true,
+      queueDepth: 0, concurrency: 2, modelFamily: '@cf/openai/gpt-oss-120b' } }
+  }));
+};
+
 const installSharedApi = async (
   page: Page,
   options: {
@@ -157,6 +177,7 @@ const installSharedApi = async (
     quoteRequirements?: Record<string, boolean>;
   } = {}
 ) => {
+  await installRunReadModels(page);
   await page.route('**/api/workspace/navigation', route => route.fulfill({contentType:'application/json',body:'{\"ok\":true,\"projects\":[],\"sessions\":[],\"nextCursor\":null}'}));
   let quoteRequestCount = 0;
   // Advanced-control cases exercise an explicitly expanded Inspector. The
@@ -279,6 +300,7 @@ const installRunApi = async (
     onCancelRun?: () => void;
   } = {}
 ) => {
+  await installRunReadModels(page);
   let currentRun = structuredClone(options.run || baseRun);
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: 200,
@@ -660,10 +682,11 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await page.locator('.subagent-card').nth(0).getByRole('button', { name: '取消这个子 Agent' }).click();
   await expect.poll(() => cancelled).toEqual([childIds[0]]);
   await expect(page.locator('.subagent-card').nth(0)).toContainText('已取消');
-  await expect(page.locator('.runtime-pill')).toContainText('执行中');
+  await expect(page.locator('.run-state')).toContainText('执行中');
 });
 
 test('switching run history replaces the run, event stream and audit timeline', async ({ page }) => {
+  await installRunReadModels(page);
   const secondRunId = '51111111-1111-4111-8111-111111111112';
   const secondRun = {
     ...structuredClone(baseRun),
@@ -752,15 +775,18 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await expect(page.locator('#workspace-panel-files')).toContainText('passed');
   await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: '环境' }).click();
-  await expect(page.locator('.workspace-topbar .task-cost')).toHaveText('已用 12.5 / 50 点');
-  await expect(page.getByRole('link', { name: '点数与用量', exact: true })).toBeVisible();
+  await expect(page.locator('.workspace-account .account-task-cost')).toContainText('本次已用 12.5 点');
+  await expect(page.locator('.workspace-account .account-value')).toHaveText('可用 87.5 点');
+  await expect(page.locator('#workspace-panel-environment')).toContainText('任务预算50 点');
+  await expect(page.getByRole('link', { name: /^点数与用量:/ })).toBeVisible();
 
-  const stop = page.getByRole('button', { name: '停止' });
+  await page.getByLabel('更多任务操作', { exact: true }).click();
+  const stop = page.getByRole('button', { name: '结束任务并结算', exact: true });
   await stop.click();
   expect(cancelRequests).toBe(0);
-  await expect(page.getByRole('button', { name: '确认停止' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认结束并结算', exact: true })).toBeVisible();
   await expect(page.locator('.run-notice')).toContainText('未使用冻结点数会释放');
-  await page.getByRole('button', { name: '确认停止' }).click();
+  await page.getByRole('button', { name: '确认结束并结算', exact: true }).click();
   await expect.poll(() => cancelRequests).toBe(1);
 });
 
@@ -1017,12 +1043,17 @@ test('switching history isolates task activity and clears the prior stop confirm
   await page.goto(`/artigen/agent/runs/${runId}`);
   const activity = page.getByRole('region', { name: '协作记录' });
   await expect(activity).toContainText('第一个任务的记录');
-  await page.getByRole('button', { name: '停止', exact: true }).click();
-  await expect(page.getByRole('button', { name: '确认停止', exact: true })).toBeVisible();
+  await page.getByLabel('更多任务操作', { exact: true }).click();
+  await page.getByRole('button', { name: '结束任务并结算', exact: true }).click();
+  await expect(page.getByRole('button', { name: '确认结束并结算', exact: true })).toBeVisible();
   const next = page.locator(`a[href="/artigen/agent/runs/${secondId}"]`);
   if (!await next.isVisible()) await page.getByRole('button', { name: '打开历史' }).click();
   await next.click();
+  if ((page.viewportSize()?.width || 1440) < 1440)
+    await expect(page.locator('#workspace-history-panel')).toHaveAttribute('aria-hidden', 'true');
   await expect(activity).toContainText('第二个任务的记录');
   await expect(activity).not.toContainText('第一个任务的记录');
-  await expect(page.getByRole('button', { name: '停止', exact: true })).toBeVisible();
+  await page.getByLabel('更多任务操作', { exact: true }).click();
+  await expect(page.getByRole('button', { name: '结束任务并结算', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认结束并结算', exact: true })).toHaveCount(0);
 });

@@ -164,6 +164,7 @@ const setup = async (
         status: {
           enabled: true,
           workerOnline: true,
+          workerModelReady: true,
           queueDepth: 0,
           concurrency: 2,
           modelFamily: '@cf/openai/gpt-oss-120b',
@@ -185,6 +186,9 @@ const setup = async (
       });
     if (path === '/api/agent-runs') return json(route, { ok: true, runs: [currentRun] });
     if (path === `/api/agent-runs/${runId}`) return json(route, { ok: true, run: currentRun });
+    if (path === '/api/workspace/navigation') return json(route, { ok: true, projects: [], sessions: [], nextCursor: null });
+    if (path === `/api/agent-runs/${runId}/messages`) return json(route, { ok: true, messages: [], nextCursor: null });
+    if (path === `/api/agent-runs/${runId}/history`) return json(route, { ok: true, events: [] });
     if (path.endsWith('/events')) return route.abort();
     if (path.endsWith('/authorizations')) return json(route, { ok: true, authorizations: [] });
     if (path === '/api/design-conversations')
@@ -193,7 +197,7 @@ const setup = async (
       (item) => path === `/api/design-conversations/${item.conversationId}`
     );
     if (found) return json(route, { ok: true, conversation: found });
-    if (path === '/api/credits/balance') return json(route, { ok: true, balance: 120 });
+    if (path === '/api/credits/balance') return json(route, { userId: 'polish-fixture', available: 120, frozen: currentRun.budget.frozen });
     return json(route, { ok: false, error: { code: 'FIXTURE_UNEXPECTED_API' } }, 404);
   });
 };
@@ -323,9 +327,16 @@ for (const status of ['failed', 'cancelled', 'succeeded', 'paused', 'waiting_use
   test(`${status} shows real recorded steps and truthful results`, async ({ page }) => {
     await setup(page, { currentRun: run(status) });
     await page.goto(`/artigen/agent/runs/${runId}`);
-    await page.locator('.run-progress-header').click();
-    await expect(page.locator('.phase-track .done')).toHaveCount(status === 'succeeded' ? 2 : 1);
+    if ((page.viewportSize()?.width || 1440) < 1440)
+      await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+    await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+    await page.getByRole('tab', { name: '计划', exact: true }).click();
+    await expect(page.locator('#workspace-panel-plan')).toContainText('记录网站证据');
+    await expect(page.locator('#workspace-panel-plan')).toContainText('制作与验证提案');
+    await expect(page.locator('#workspace-panel-plan .execution-spine article.complete')).toHaveCount(status === 'succeeded' ? 2 : 1);
     await expect(page.getByText('计划已建立，正在按步骤推进。', { exact: true })).toHaveCount(0);
+    if ((page.viewportSize()?.width || 1440) < 1440)
+      await page.getByRole('button', { name: '关闭资源区', exact: true }).click();
     if (['failed', 'cancelled'].includes(status)) {
       await expect(page.locator('.delivery-summary')).toContainText('已保留的成果');
       await expect(page.locator('.delivery-summary')).not.toContainText('交付完成');
@@ -553,9 +564,13 @@ test('task identity state and cost remain visible at main viewport widths', asyn
     await page.goto(`/artigen/agent/runs/${runId}`);
     await expect(page.locator('.task-heading strong')).toContainText('品牌网站审计');
     await expect(page.locator('.task-heading strong')).toBeVisible();
-    await expect(page.locator('.workspace-topbar .runtime-pill')).toContainText('等待你确认');
-    await expect(page.locator('.workspace-topbar .task-cost')).toContainText('已用 12.5 / 50 点');
-    await expect(page.locator('.task-cost')).toBeVisible();
+    await expect(page.locator('.run-state')).toContainText('需要确认');
+    const account = page.locator('.workspace-account');
+    if (!(await account.isVisible())) await page.getByRole('button', { name: '打开历史', exact: true }).click();
+    await expect(account.locator('.account-task-cost')).toContainText('本次已用 12.5 点');
+    await expect(account.locator('.account-value')).toHaveText('可用 120 点');
+    await expect(account.getByRole('link', { name: /^点数与用量:/ })).toBeVisible();
+    if (width < 1200) await page.getByRole('button', { name: '关闭历史', exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
       false
     );
@@ -744,9 +759,9 @@ test('a newer successful run reply cannot be overwritten by an older running rep
     data: {},
     createdAt: stamp
   });
-  await expect(page.locator('.workspace-topbar .runtime-pill')).toContainText('已完成');
+  await expect(page.locator('.execution-card').getByRole('status')).toHaveText('已完成');
   await page.waitForTimeout(800);
-  await expect(page.locator('.workspace-topbar .runtime-pill')).toContainText('已完成');
+  await expect(page.locator('.execution-card').getByRole('status')).toHaveText('已完成');
 });
 test('an execution-ready event survives an overlapping refresh and starts exactly once', async ({
   page
@@ -829,7 +844,7 @@ test('the header follows the latest tool execution rather than a completed histo
   });
   await page.goto(`/artigen/create?c=${a}`);
   await expect(page.locator('.workspace-topbar .runtime-pill')).toHaveText('运行中');
-  await expect(page.locator('.workspace-topbar .task-cost')).toContainText('报价 10 / 50');
+  await expect(page.locator('.workspace-account .account-task-cost')).toContainText('报价 10 / 50');
 });
 test('typing during Agent creation survives in the new-task draft after navigation', async ({
   page

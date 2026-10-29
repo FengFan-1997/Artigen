@@ -5,9 +5,16 @@
     :zh="zh"
     :title="run?.objectivePreview || (zh ? 'Agent 运行' : 'Agent run')"
     subtitle=""
-    :status-label="run ? statusLabel(run.status) : loadError ? (zh ? '读取失败' : 'Could not load') : (zh ? '读取中' : 'Loading')"
+    :status-label="run ? '' : loadError ? (zh ? '读取失败' : 'Could not load') : (zh ? '读取中' : 'Loading')"
     :status-tone="workspaceTone"
-    :task-cost-label="run ? `${zh ? '已用' : 'Used'} ${run.budget.used.toFixed(1)} / ${run.budget.maximum} ${zh ? '点' : 'credits'}` : ''"
+    :task-cost-label="taskCostLabel"
+    :credit-label="creditLabel"
+    :credit-loading="creditsLoading"
+    :credit-error="creditsError ? (zh ? '余额暂时无法读取' : 'Balance could not load') : ''"
+    :run-id="runId"
+    :run-status="run?.status"
+    @refresh-credits="refreshCredits"
+    @project-associated="refreshAfterMutation(currentSelection())"
     :badges="{ subagents: activeSubagents, computer: takeoverRequired ? 1 : 0, files: artifacts.length, plan: pendingApprovals.length }"
     :live-announcement="loadError || notice || failureText"
     @new-task="$router.push('/artigen/agent')"
@@ -30,18 +37,22 @@
 
     <template #topbar-actions>
       <div v-if="run" class="run-controls">
-        <button v-if="canPause" type="button" :disabled="controlBusy" :aria-label="zh ? '暂停' : 'Pause'" @click="control('pause')">
-          <WorkspaceIcon name="pause" />
-          <span>{{ zh ? '暂停' : 'Pause' }}</span>
+        <button v-if="canPause" class="run-icon-control" type="button" :disabled="controlBusy || run.progress.pauseRequested" :aria-label="run.progress.pauseRequested ? (zh ? '正在暂停' : 'Pausing') : (zh ? '暂停' : 'Pause')" :data-tooltip="zh ? '暂停任务' : 'Pause task'" @click="control('pause')">
+          <WorkspaceIcon name="pause" :size="18" />
         </button>
-        <button v-if="canResume" class="primary-control" type="button" :disabled="controlBusy" :aria-label="retryRequired ? (zh ? '重试' : 'Retry') : (zh ? '恢复' : 'Resume')" @click="control('resume')">
-          <WorkspaceIcon name="play" />
-          <span>{{ retryRequired ? (zh ? '重试' : 'Retry') : (zh ? '恢复' : 'Resume') }}</span>
+        <button v-if="canResume" class="run-icon-control primary-control" type="button" :disabled="controlBusy" :aria-label="retryRequired ? (zh ? '重试' : 'Retry') : (zh ? '继续' : 'Resume')" :data-tooltip="retryRequired ? (zh ? '确认重试' : 'Confirm retry') : (zh ? '继续任务' : 'Resume task')" @click="control('resume')">
+          <WorkspaceIcon name="play" :size="18" />
         </button>
-        <button v-if="!terminal" class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" :aria-label="stopArmed ? (zh ? '确认停止' : 'Confirm stop') : (zh ? '停止' : 'Stop')" @click="requestCancel">
-          <WorkspaceIcon name="stop" />
-          <span>{{ stopArmed ? (zh ? '确认停止' : 'Confirm stop') : (zh ? '停止' : 'Stop') }}</span>
-        </button>
+        <details v-if="!terminal" ref="runMenu" class="run-menu" @keydown.esc.prevent.stop="closeRunMenu(true)">
+          <summary class="run-icon-control" :aria-label="zh ? '更多任务操作' : 'More task actions'" :title="zh ? '更多任务操作' : 'More task actions'"><WorkspaceIcon name="more" :size="18" /></summary>
+          <div class="run-menu-content">
+            <button class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" @click="requestCancel">
+              <WorkspaceIcon name="stop" :size="18" />
+              <span>{{ stopArmed ? (zh ? '确认结束并结算' : 'Confirm end and settle') : (zh ? '结束任务并结算' : 'End task and settle') }}</span>
+            </button>
+            <p>{{ zh ? '保留已有成果，释放未使用的冻结点数。' : 'Keep saved results and release unused held credits.' }}</p>
+          </div>
+        </details>
       </div>
     </template>
 
@@ -60,16 +71,6 @@
     </section>
     <section v-else class="conversation-workspace">
       <div ref="scrollArea" class="conversation-scroll" @scroll="onConversationScroll">
-        <details class="run-progress-panel">
-          <summary class="run-progress-header">
-            <strong>{{ currentAction }}</strong>
-            <span>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }} {{ zh ? '步' : 'steps' }}</span>
-            <WorkspaceIcon name="list" :size="16" />
-          </summary>
-          <div v-if="phaseStages.length" class="phase-track">
-            <span v-for="stage in phaseStages" :key="stage.id" :class="{ active: stage.active, done: stage.done }"><i></i>{{ stage.label }}</span>
-          </div>
-        </details>
         <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive">
           <span class="progress-kicker">{{ zh ? '需要你的输入' : 'Needs your input' }}</span>
           <h2>{{ run.progress.clarification.question }}</h2>
@@ -78,14 +79,20 @@
           </div>
         </section>
         <article class="message user-message">
-          <header><span>{{ zh ? '你' : 'You' }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
+          <header><span :title="userId">{{ userLabel }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
           <p>{{ run.objective }}</p>
         </article>
 
         <article class="message agent-message">
           <span class="agent-avatar" aria-hidden="true">A</span>
           <div>
-            <header><span>Artigen Agent</span><small>{{ statusLabel(run.status) }}</small></header>
+            <header><span>Artigen Agent</span></header>
+            <div class="run-state" :class="displayState" role="status" aria-live="polite">
+              <WorkspaceIcon :name="displayStateIcon" :size="16" :class="{ spinning: stateAnimating }" />
+              <span>{{ displayStateLabel }}</span>
+              <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" type="button" :disabled="refreshingStatus" @click="refreshStatus">{{ zh ? '刷新状态' : 'Refresh status' }}</button>
+            </div>
+            <small v-if="streamDisconnected && !terminal && !['disconnected', 'unavailable'].includes(displayState)" class="connection-note" role="status">{{ zh ? '实时连接中断，正在定期同步。' : 'Live connection interrupted; syncing periodically.' }}</small>
             <p>{{ runSummary }}</p>
             <dl v-if="terminal" class="settlement-summary">
               <div><dt>{{ zh ? '已结算' : 'Charged' }}</dt><dd>{{ run.budget.charged }} {{ zh ? '点' : 'credits' }}</dd></div>
@@ -134,7 +141,7 @@
           <span class="agent-avatar" aria-hidden="true">{{ event.subagentId ? 'S' : 'A' }}</span>
           <div>
             <header>
-              <span>{{ event.subagentId ? (zh ? '子 Agent' : 'Subagent') : event.type.startsWith('run.input') ? (zh ? '你' : 'You') : 'Artigen Agent' }}</span>
+              <span :title="event.type.startsWith('run.input') ? userId : undefined">{{ event.subagentId ? (zh ? '子 Agent' : 'Subagent') : event.type.startsWith('run.input') ? userLabel : 'Artigen Agent' }}</span>
               <time>{{ formatTime(event.createdAt) }}</time>
             </header>
             <p>{{ eventSummary(event) }}</p>
@@ -154,22 +161,28 @@
       <p v-if="loadError || notice" class="run-notice" :role="loadError ? 'alert' : 'status'" aria-live="polite">{{ loadError || notice }}</p>
       <p v-if="draftRestored && !terminal" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿。' : 'Your local draft was restored.' }}</p>
       <div class="run-composer">
+        <input ref="fileInput" class="run-file-input" type="file" multiple tabindex="-1" :aria-label="zh ? '添加任务附件' : 'Add task attachments'" @change="selectFiles" />
         <button v-if="hasUnreadUpdates" class="run-new-updates" type="button" @click="scrollToLatest(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
         <ComposerBox
           :draft="message"
-          :attachments="[]"
-          :allow-attachments="false"
+          :attachments="composerAttachments"
+          :zh="zh"
+          :allow-attachment-only="true"
+          :attach-label="zh ? '添加文件' : 'Add files'"
+          :attachment-hint="zh ? '发送后交给当前任务处理' : 'Files are shared with this task when sent'"
+          :remove-attachment-label="zh ? '移除' : 'Remove'"
           :busy="sending"
           :disabled="terminal"
           :placeholder="terminal ? (zh ? '运行已结束' : 'Run completed') : (zh ? '补充要求或回答 Agent 的问题…' : 'Add requirements or answer the Agent…')"
           :request-label="zh ? '补充要求' : 'Additional instructions'"
           :send-label="run.progress.clarificationRequired ? (zh ? '回复并继续' : 'Reply and continue') : (zh ? '发送' : 'Send')"
-          :busy-label="zh ? '正在发送…你可以继续编辑下一条。' : 'Sending… You can draft the next message.'"
-          :help-text="terminal ? '' : (zh ? '可补充文字；新文件需在新任务中添加。' : 'Add text here; attach new files when starting a new task.')"
+          :busy-label="uploading ? (zh ? '正在上传附件…' : 'Uploading files…') : (zh ? '正在发送…' : 'Sending…')"
           :keyboard-hint="terminal ? '' : (zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line')"
           input-name="agent-run-input"
           compact
           @update:draft="message = $event"
+          @attach="fileInput?.click()"
+          @remove-attachment="removeFile"
           @submit="sendInput"
         />
       </div>
@@ -181,7 +194,9 @@
           <header><span>{{ zh ? '运行概览' : 'Run overview' }}</span><i :class="{ healthy: workspaceTone === 'ready' }"></i></header>
           <dl>
             <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ statusLabel(run.status) }}</dd></div>
-            <div><dt>{{ zh ? '执行进度' : 'Progress' }}</dt><dd>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }}</dd></div>
+            <div><dt>{{ zh ? '步骤用量' : 'Steps used' }}</dt><dd>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }}</dd></div>
+            <div><dt>{{ zh ? '任务预算' : 'Task budget' }}</dt><dd>{{ formatRunCredits(run.budget.maximum) }} {{ zh ? '点' : 'credits' }}</dd></div>
+            <div><dt>{{ zh ? '任务冻结' : 'Task hold' }}</dt><dd>{{ formatRunCredits(run.budget.frozen) }} {{ zh ? '点' : 'credits' }}</dd></div>
             <div><dt>{{ zh ? '已验证交付' : 'Verified files' }}</dt><dd>{{ artifacts.filter((item) => item.verificationStatus === 'passed').length }}</dd></div>
           </dl>
         </section>
@@ -193,6 +208,7 @@
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
+            <div><dt>{{ zh ? '环境' : 'Environment' }}</dt><dd>{{ environmentLabel }}</dd></div>
             <div v-if="run.runtime"><dt>{{ zh ? '运行时' : 'Runtime' }}</dt><dd>V{{ run.runtime.version }} · {{ run.runtime.promptProfile || 'legacy' }}</dd></div>
             <div v-if="run.runtime?.skills?.length"><dt>{{ zh ? '已加载规范' : 'Loaded skills' }}</dt><dd>{{ run.runtime.skills.map((skill) => `${skill.id}@${skill.version}`).join(' · ') }}</dd></div>
             <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>{{ run.model.name }}</dd></div>
@@ -292,6 +308,10 @@ import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { getCurrentUserId } from '@/login/session';
+import { getCreditsBalance, type CreditsBalance } from '@/points';
+import { useUserIdentity } from '../composables/useUserIdentity';
+import { formatRunCredits, runDisplayState } from '../utils/runPresentation';
+import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import { useWorkspaceDraft } from '../composables/useWorkspaceDraft';
 import { approvalIsAvailable, useAgentApprovals } from '../composables/useAgentApprovals';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
@@ -308,6 +328,9 @@ import {
   controlAgentRun,
   createAgentDesktopTicket,
   getAgentRun,
+  getAgentServiceStatus,
+  uploadAgentAssets,
+  type AgentServiceStatus,
   listAgentRuns,
   loadAgentWebsitePreview,
   openAgentEventStream,
@@ -323,6 +346,7 @@ const route = useRoute();
 const languageStore = useLanguageStore();
 const { currentLang } = storeToRefs(languageStore);
 const zh = computed(() => currentLang.value === 'zh');
+const { userId, userLabel } = useUserIdentity(zh);
 const runId = computed(() => String(route.params.runId || ''));
 const run = ref<AgentRun | null>(null);
 const loadingRun = ref(true);
@@ -346,7 +370,25 @@ const nearBottom = ref(true);
 const hasUnreadUpdates = ref(false);
 const message = ref('');
 const { restored: draftRestored, discardSaved } = useWorkspaceDraft({ owner: getCurrentUserId, task: () => `run:${runId.value}`, draft: message });
-let pendingInput: { runId: string; owner: string; message: string; inputId: string } | null = null;
+let pendingInput: { runId: string; owner: string; message: string; inputId: string; fileKey: string; assetIds: string[] | null } | null = null;
+const selectedFiles = ref<File[]>([]);
+const fileInput = ref<HTMLInputElement | null>(null);
+const uploading = ref(false);
+const composerAttachments = computed(() => selectedFiles.value.map(file => ({ clientId: referenceFileKey(file), name: file.name, mimeType: file.type || 'application/octet-stream', byteSize: file.size, file })));
+const runMenu = ref<HTMLDetailsElement | null>(null);
+const credits = ref<CreditsBalance | null>(null);
+const creditsLoading = ref(false);
+const creditsError = ref(false);
+const serviceStatus = ref<AgentServiceStatus | null>(null);
+const serviceError = ref(false);
+const streamDisconnected = ref(false);
+const refreshingStatus = ref(false);
+let auxiliaryRevision = 0;
+let lastCreditsRead = 0;
+let creditsRequest: Promise<void> | null = null;
+let creditsRefreshNeeded = false;
+let statusRequest: Promise<void> | null = null;
+const environmentLabel = import.meta.env.VITE_APP_ENV || import.meta.env.MODE;
 const notice = ref('');
 const controlBusy = ref(false);
 const sending = ref(false);
@@ -362,17 +404,129 @@ const previewName = ref('');
 const previewModal = ref<HTMLElement | null>(null);
 const previewCloseButton = ref<HTMLButtonElement | null>(null);
 let previewReturnFocus: HTMLElement | null = null;
+let previewRevision = 0;
 let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
 let eventRefreshTimer: number | null = null;
 let stopArmTimer: number | null = null;
-let loadInFlight: { runId: string; promise: Promise<void> } | null = null;
+type RunSelection = { runId: string; owner: string; revision: number };
+let loadInFlight: { selection: RunSelection; promise: Promise<void> } | null = null;
 let loadRevision = 0;
 let disposed = false;
 let desktopClient: RFB | null = null;
 
+const currentSelection = (targetRunId = runId.value): RunSelection => ({
+  runId: targetRunId,
+  owner: getCurrentUserId(),
+  revision: auxiliaryRevision
+});
+const selectionIsCurrent = (selection: RunSelection) => !disposed &&
+  selection.runId === runId.value && selection.owner === getCurrentUserId() &&
+  selection.revision === auxiliaryRevision;
 
 const terminal = computed(() => ['succeeded', 'failed', 'cancelled'].includes(run.value?.status || ''));
+const displayState = computed(() => run.value ? runDisplayState(run.value, serviceStatus.value, Boolean(loadError.value) || serviceError.value) : 'draft');
+const displayStateLabel = computed(() => {
+  const special: Record<string, [string, string]> = {
+    unavailable: ['执行服务暂不可用', 'Execution service unavailable'],
+    disconnected: ['连接中断', 'Connection interrupted'],
+    pausing: ['正在暂停', 'Pausing'],
+    provisioning: ['准备中', 'Preparing'],
+    waiting_user: ['需要确认', 'Needs attention']
+  };
+  return special[displayState.value]?.[zh.value ? 0 : 1] || (run.value ? statusLabel(run.value.status) : '');
+});
+const displayStateIcon = computed(() => {
+  switch (displayState.value) {
+    case 'queued': return 'clock';
+    case 'paused': case 'pausing': return 'pause';
+    case 'succeeded': return 'check';
+    case 'failed': case 'unavailable': case 'disconnected': case 'waiting_user': return 'warning';
+    case 'cancelled': return 'stop';
+    default: return 'refresh';
+  }
+});
+const stateAnimating = computed(() => ['running', 'provisioning', 'verifying'].includes(displayState.value));
+const creditLabel = computed(() => credits.value ? `${zh.value ? '可用' : 'Available'} ${formatRunCredits(credits.value.available)} ${zh.value ? '点' : 'credits'}` : '');
+const taskCostLabel = computed(() => run.value ? `${terminal.value ? (zh.value ? '本次结算' : 'Charged') : (zh.value ? '本次已用' : 'Task usage')} ${formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used)} ${zh.value ? '点' : 'credits'}` : '');
+
+const refreshCredits = (requireLatest = false) => {
+  if (creditsRequest) {
+    if (requireLatest) creditsRefreshNeeded = true;
+    return creditsRequest;
+  }
+  const owner = getCurrentUserId();
+  const revision = auxiliaryRevision;
+  creditsLoading.value = true;
+  const request = (async () => {
+    try {
+      do {
+        creditsRefreshNeeded = false;
+        const result = await getCreditsBalance();
+        if (disposed || revision !== auxiliaryRevision || owner !== getCurrentUserId()) return;
+        credits.value = result;
+        creditsError.value = !result;
+        lastCreditsRead = Date.now();
+        // Settlement may happen while a pre-settlement balance is in flight.
+        // Drain that invalidation even when terminal runs stop their polling.
+      } while (creditsRefreshNeeded);
+    } finally {
+      if (!disposed && revision === auxiliaryRevision) creditsLoading.value = false;
+    }
+  })();
+  creditsRequest = request;
+  void request.finally(() => { if (creditsRequest === request) creditsRequest = null; });
+  return request;
+};
+const loadServiceStatus = () => {
+  if (statusRequest) return statusRequest;
+  const revision = auxiliaryRevision;
+  const request = (async () => {
+    try {
+      const result = await getAgentServiceStatus();
+      if (disposed || revision !== auxiliaryRevision) return;
+      serviceStatus.value = result;
+      serviceError.value = false;
+    } catch {
+      if (!disposed && revision === auxiliaryRevision) serviceError.value = true;
+    }
+  })();
+  statusRequest = request;
+  void request.finally(() => { if (statusRequest === request) statusRequest = null; });
+  return request;
+};
+const refreshStatus = async () => {
+  const selection = currentSelection();
+  refreshingStatus.value = true;
+  try { await Promise.all([load(), loadServiceStatus()]); }
+  finally { if (selectionIsCurrent(selection)) refreshingStatus.value = false; }
+};
+const closeRunMenu = (restore = false) => {
+  if (!runMenu.value) return;
+  runMenu.value.open = false;
+  if (restore) runMenu.value.querySelector('summary')?.focus();
+};
+const onOutsideRunMenu = (event: PointerEvent) => {
+  if (event.target instanceof Node && !runMenu.value?.contains(event.target)) closeRunMenu();
+};
+const selectFiles = (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = '';
+  if (sending.value || terminal.value) return;
+  const selection = mergeReferenceFiles(selectedFiles.value, files, { maxFileBytes: 40 * 1024 * 1024 });
+  if (selection.error) {
+    notice.value = selection.error === 'too-large'
+      ? (zh.value ? '单个文件不能超过 40 MiB，原有选择已保留。' : 'Each file must be 40 MiB or smaller. Your selection is kept.')
+      : (zh.value ? '最多添加 10 个文件，请先移除部分文件。' : 'Add up to 10 files. Remove a file before adding more.');
+    return;
+  }
+  selectedFiles.value = selection.files;
+  notice.value = '';
+};
+const removeFile = (key: string) => {
+  if (!sending.value) selectedFiles.value = selectedFiles.value.filter(file => referenceFileKey(file) !== key);
+};
 const workspaceTone = computed<'ready' | 'busy' | 'warning' | 'offline'>(() => {
   if (!run.value) return 'offline';
   if (['waiting_user', 'paused'].includes(run.value.status) || pendingApprovals.value.length) return 'warning';
@@ -407,7 +561,7 @@ const conversationEvents = computed(() =>
 );
 const currentAction = computed(() => {
   if (run.value?.progress.clarificationRequired) return zh.value ? '等待你的补充' : 'Waiting for your input';
-  if (run.value?.status === 'queued') return zh.value ? '等待执行容量' : 'Waiting for capacity';
+  if (run.value?.status === 'queued') return zh.value ? '任务已排队，开始后会在这里更新。' : 'Your task is queued. Updates will appear here when it starts.';
   if (run.value?.status === 'provisioning') return zh.value ? '正在准备隔离环境' : 'Preparing isolated environment';
   if (run.value?.status === 'verifying') return zh.value ? '正在验证交付结果' : 'Verifying deliverables';
   if (run.value?.status === 'succeeded') return zh.value ? '交付已完成' : 'Delivery complete';
@@ -418,14 +572,10 @@ const currentAction = computed(() => {
   const latest = events.value.at(-1);
   return latest ? agentEventSummary(latest, zh.value) : (zh.value ? 'Agent 正在执行' : 'Agent is working');
 });
-const phaseStages = computed(() => {
-  return (run.value?.progress.plan || []).map((step, index) => ({
-    id: `step-${index}`, label: step.label,
-    active: step.status === 'in_progress' && !terminal.value,
-    done: step.status === 'completed'
-  }));
-});
 const runSummary = computed(() => {
+  if (displayState.value === 'unavailable') return zh.value ? '任务已保存。执行服务恢复后可继续，也可以暂停或结束任务。' : 'Your task is saved. Continue when the service recovers, or pause or end it.';
+  if (displayState.value === 'disconnected') return zh.value ? '暂时无法同步最新状态，已显示的内容会保留。' : 'The latest status could not sync. Saved content remains available.';
+  if (displayState.value === 'pausing') return zh.value ? '正在等待当前操作安全结束。' : 'Waiting for the current operation to reach a safe stopping point.';
   if (run.value?.status === 'failed') return failureText.value || (zh.value ? '任务未完成，已有成果和记录保留在这里。' : 'The task did not complete. Saved results and records remain available.');
   if (run.value?.status === 'cancelled') return zh.value ? '任务已停止，已有成果和记录保留在这里。' : 'The task stopped. Saved results and records remain available.';
   if (run.value?.status === 'succeeded') return zh.value ? '任务已完成，可以查看下方成果与本次结算。' : 'The task completed. Review the results and settlement below.';
@@ -433,7 +583,8 @@ const runSummary = computed(() => {
   if (run.value?.status === 'waiting_user') return run.value.progress.clarificationRequired
     ? (zh.value ? '需要你补充信息后才能继续。' : 'Your answer is needed before continuing.')
     : (zh.value ? '正在等待你的确认；请查看需要处理的事项。' : 'Your decision is needed. Review the pending action.');
-  return run.value?.progress.plan?.length ? (zh.value ? '正在执行已保存的计划。展开当前动作或检查器可查看记录。' : 'Working through the saved plan. Expand the current action or inspector to review the record.') : currentAction.value;
+  if (run.value?.status === 'queued' || run.value?.status === 'provisioning') return currentAction.value;
+  return run.value?.progress.plan?.length ? (zh.value ? '正在执行已保存的计划，详细步骤可在右侧查看。' : 'Working through the saved plan. View detailed steps in the right panel.') : currentAction.value;
 });
 const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
 const filteredRuns = (search: string) => {
@@ -443,7 +594,7 @@ const filteredRuns = (search: string) => {
 };
 const desktopMessage = computed(() => {
   if (!run.value) return '';
-  if (run.value.status === 'queued') return zh.value ? '等待可用容量' : 'Waiting for capacity';
+  if (run.value.status === 'queued') return displayStateLabel.value;
   if (run.value.status === 'provisioning') return zh.value ? '正在创建隔离云电脑' : 'Provisioning isolated desktop';
   if (run.value.status === 'paused') return zh.value ? '云电脑已暂停并保存状态' : 'Desktop suspended with state saved';
   if (terminal.value) return zh.value ? '运行已结束，云电脑已销毁' : 'Run ended; desktop destroyed';
@@ -494,6 +645,19 @@ const errorText = (error: unknown) => {
     AGENT_RUN_LOAD_FAILED: ['暂时无法读取任务，请稍后重试。', 'Unable to load this run. Try again shortly.'],
     AGENT_CONTROL_FAILED: ['控制请求没有成功，请刷新后重试。', 'The control request failed. Refresh and try again.'],
     AGENT_INPUT_FINALIZING: ['本轮已进入最终验证，请等交付后在设计对话中继续修改。', 'Final verification has started. Continue in the design conversation after delivery.'],
+    UNSUPPORTED_FILE_TYPE: ['不支持这种文件类型，请添加图片、PDF、Office 文档、ZIP 或文本文件。', 'Use an image, PDF, Office document, ZIP or text file.'],
+    FILE_TOO_LARGE: ['单个附件不能超过 40 MB，请缩小后重试。', 'Each attachment must be 40 MB or smaller.'],
+    TOO_MANY_FILES: ['每条消息最多添加 10 个附件。', 'Add up to 10 attachments per message.'],
+    AGENT_ASSET_UPLOAD_INCOMPLETE: ['附件未全部上传成功，请重试。', 'Some files could not upload. Try again.'],
+    AGENT_ASSET_NOT_FOUND: ['附件已过期或无法访问，请移除后重新添加。', 'An attachment expired or is inaccessible. Remove it and add it again.'],
+    AGENT_INPUT_ASSET_NOT_FOUND: ['附件已过期或无法访问，请移除后重新添加。', 'An attachment expired or is inaccessible. Remove it and add it again.'],
+    AGENT_INPUT_ATTACHMENTS_UNSUPPORTED: ['当前任务的执行器不支持追加附件。草稿已保留；可移除附件后发送文字，或在新任务中添加文件。', 'This task cannot receive more files. Your draft is kept; send text without the attachments or add them to a new task.'],
+    AGENT_INPUT_ASSET_TYPE_INVALID: ['当前文件类型不受支持，请移除该附件后重试。', 'This file type is unsupported. Remove the attachment and retry.'],
+    AGENT_INPUT_ASSET_TOO_LARGE: ['单个附件不能超过 40 MiB，请移除过大的文件后重试。', 'Each attachment must be 40 MiB or smaller. Remove the oversized file and retry.'],
+    AGENT_RUN_INPUT_ASSET_LIMIT: ['当前任务累计最多接收 40 个附件。请减少附件，或在新任务中继续。', 'This task can receive up to 40 attachments in total. Remove files or continue in a new task.'],
+    AGENT_INPUT_ASSET_INTEGRITY_FAILED: ['附件完整性校验未通过，请检查文件后重新上传。', 'An attachment failed its integrity check. Check the file and upload it again.'],
+    AGENT_INPUT_ASSET_SCAN_FAILED: ['附件未通过安全检查，无法交给任务处理。请检查文件后重新上传。', 'An attachment failed its safety check and cannot be processed. Check the file before uploading it again.'],
+    IDEMPOTENCY_CONFLICT: ['这次提交与之前的请求不一致。请刷新核对任务记录，再决定是否重新发送；草稿已保留。', 'This submission differs from an earlier request. Refresh and check the task history before sending again. Your draft is kept.'],
     AGENT_INPUT_FAILED: ['补充信息没有发送成功，请重试。', 'Your update was not sent. Try again.'],
     AGENT_APPROVAL_FAILED: ['这项审批已经失效或被处理，请刷新任务。', 'This approval expired or was already handled. Refresh the run.'],
     AGENT_APPROVAL_NOT_AVAILABLE: ['这项审批已经失效或被处理，请刷新任务。', 'This approval expired or was already handled. Refresh the run.'],
@@ -525,11 +689,15 @@ const errorText = (error: unknown) => {
 };
 
 const load = (targetRunId = runId.value) => {
-  if (loadInFlight?.runId === targetRunId) return loadInFlight.promise;
+  const selection = currentSelection(targetRunId);
+  if (!selectionIsCurrent(selection)) return Promise.resolve();
+  if (loadInFlight?.selection.runId === targetRunId &&
+    loadInFlight.selection.owner === selection.owner &&
+    loadInFlight.selection.revision === selection.revision) return loadInFlight.promise;
   const revision = ++loadRevision;
   loadingRun.value = true;
-  const request: { runId: string; promise: Promise<void> } = {
-    runId: targetRunId,
+  const request: { selection: RunSelection; promise: Promise<void> } = {
+    selection,
     promise: Promise.resolve()
   };
   loadInFlight = request;
@@ -539,7 +707,7 @@ const load = (targetRunId = runId.value) => {
         getAgentRun(targetRunId),
         listAgentRuns()
       ]);
-      if (disposed || revision !== loadRevision || targetRunId !== runId.value) return;
+      if (!selectionIsCurrent(selection) || revision !== loadRevision) return;
       if (loadedRun.status === 'rejected') throw loadedRun.reason;
       run.value = loadedRun.value;
       loadError.value = '';
@@ -547,7 +715,7 @@ const load = (targetRunId = runId.value) => {
       if (loadedRuns.status === 'fulfilled') runs.value = loadedRuns.value;
       await activity.refresh(targetRunId);
     } catch (error) {
-      if (!disposed && revision === loadRevision && targetRunId === runId.value) {
+      if (selectionIsCurrent(selection) && revision === loadRevision) {
         const failed = error as { status?: number; code?: string };
         loadErrorKind.value = failed.status === 401 || failed.code === 'LOGIN_REQUIRED' ? 'auth'
           : failed.status === 404 || failed.code === 'AGENT_RUN_NOT_FOUND' ? 'not-found' : 'unavailable';
@@ -558,45 +726,60 @@ const load = (targetRunId = runId.value) => {
             : (zh.value ? '暂时无法读取任务，请重试。已有任务不会因此重新创建。' : 'The task could not load. Retry without creating another task.');
       }
     } finally {
-      if (!disposed && revision === loadRevision && targetRunId === runId.value) loadingRun.value = false;
+      if (selectionIsCurrent(selection) && revision === loadRevision) loadingRun.value = false;
       if (loadInFlight === request) loadInFlight = null;
     }
   })();
   return request.promise;
 };
 
+const refreshAfterMutation = (selection: RunSelection) => {
+  if (!selectionIsCurrent(selection)) return Promise.resolve();
+  // A read started before the mutation must not restore its older run state.
+  loadInFlight = null;
+  return load(selection.runId);
+};
+
+watch(() => run.value ? [run.value.budget.used, run.value.budget.charged, run.value.budget.frozen, run.value.status].join(':') : '', () => { if (run.value) void refreshCredits(true); });
+
 const cancelChild = async (subagentId: string) => {
-  const targetRunId = runId.value;
+  if (subagentBusyId.value) return;
+  const selection = currentSelection();
+  const targetRunId = selection.runId;
   subagentBusyId.value = subagentId;
   try {
     await cancelAgentSubagent(targetRunId, subagentId);
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection)) return;
     notice.value = '';
-    await load(targetRunId);
+    await refreshAfterMutation(selection);
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (selectionIsCurrent(selection)) {
       notice.value = errorText(error || 'AGENT_SUBAGENT_CANCEL_FAILED');
     }
   } finally {
-    if (targetRunId === runId.value) subagentBusyId.value = '';
+    if (selectionIsCurrent(selection)) subagentBusyId.value = '';
   }
 };
 
 const control = async (action: 'pause' | 'resume' | 'cancel') => {
-  const targetRunId = runId.value;
+  if (controlBusy.value) return;
+  const selection = currentSelection();
+  const targetRunId = selection.runId;
   controlBusy.value = true;
   try {
     const updatedRun = await controlAgentRun(targetRunId, action);
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection)) return;
     run.value = updatedRun;
+    if (action === 'cancel') closeRunMenu();
+    void refreshCredits(true);
     notice.value = '';
-    await load(targetRunId);
+    await refreshAfterMutation(selection);
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (selectionIsCurrent(selection)) {
       notice.value = errorText(error || 'AGENT_CONTROL_FAILED');
     }
   } finally {
-    if (targetRunId === runId.value) controlBusy.value = false;
+    if (selectionIsCurrent(selection)) controlBusy.value = false;
   }
 };
 
@@ -604,7 +787,7 @@ const requestCancel = async () => {
   if (!stopArmed.value) {
     stopArmed.value = true;
     notice.value = zh.value
-      ? '停止后不会继续产生费用；已实际使用的费用保留，未使用冻结点数会释放。再次点击确认停止。'
+      ? '停止后不会继续产生费用；已实际使用的费用保留，未使用冻结点数会释放。再次点击确认结束并结算。'
       : 'Stopping prevents new charges. Used costs remain and unused held credits are released. Click again to confirm.';
     if (stopArmTimer !== null) window.clearTimeout(stopArmTimer);
     stopArmTimer = window.setTimeout(() => {
@@ -620,30 +803,48 @@ const requestCancel = async () => {
 };
 
 const sendInput = async () => {
-  if (!message.value.trim() || sending.value || terminal.value || !run.value) return;
-  const targetRunId = runId.value;
-  const owner = getCurrentUserId();
+  if ((!message.value.trim() && !selectedFiles.value.length) || sending.value || terminal.value || !run.value) return;
+  const selection = currentSelection();
+  const { runId: targetRunId, owner } = selection;
   const submittedDraft = message.value;
   const submittedMessage = submittedDraft.trim();
-  const request = pendingInput?.runId === targetRunId && pendingInput.owner === owner && pendingInput.message === submittedMessage
-    ? pendingInput : { runId: targetRunId, owner, message: submittedMessage, inputId: crypto.randomUUID() };
+  const submittedFiles = [...selectedFiles.value];
+  const fileKey = JSON.stringify(submittedFiles.map(referenceFileKey));
+  const request = pendingInput?.runId === targetRunId && pendingInput.owner === owner && pendingInput.message === submittedMessage && pendingInput.fileKey === fileKey
+    ? pendingInput : { runId: targetRunId, owner, message: submittedMessage, inputId: crypto.randomUUID(), fileKey, assetIds: null };
   pendingInput = request;
   sending.value = true;
   notice.value = '';
   try {
-    await submitAgentInput(targetRunId, { message: submittedMessage, inputId: request.inputId });
+    if (request.assetIds === null) {
+      uploading.value = submittedFiles.length > 0;
+      request.assetIds = await uploadAgentAssets(submittedFiles);
+    }
+    if (!selectionIsCurrent(selection)) return;
+    uploading.value = false;
+    await submitAgentInput(targetRunId, {
+      message: submittedMessage,
+      inputId: request.inputId,
+      assetIds: request.assetIds,
+      assetNames: Object.fromEntries(request.assetIds.map((id, index) => [id, submittedFiles[index].name]))
+    });
     discardSaved(owner, `run:${targetRunId}`, submittedDraft);
-    if (targetRunId !== runId.value || owner !== getCurrentUserId()) return;
+    if (!selectionIsCurrent(selection)) return;
     if (pendingInput === request) pendingInput = null;
     if (message.value === submittedDraft) message.value = '';
-    await load(targetRunId);
-    await scrollToLatest();
+    const sentKeys = new Set(submittedFiles.map(referenceFileKey));
+    selectedFiles.value = selectedFiles.value.filter(file => !sentKeys.has(referenceFileKey(file)));
+    await refreshAfterMutation(selection);
+    if (selectionIsCurrent(selection)) await scrollToLatest();
   } catch (error) {
-    if (targetRunId === runId.value && owner === getCurrentUserId()) {
+    if (selectionIsCurrent(selection)) {
       notice.value = errorText(error || 'AGENT_INPUT_FAILED');
     }
   } finally {
-    if (targetRunId === runId.value) sending.value = false;
+    if (selectionIsCurrent(selection)) {
+      sending.value = false;
+      uploading.value = false;
+    }
   }
 };
 
@@ -658,7 +859,8 @@ const decide = async (approvalId: string, decision: 'approved' | 'denied') => {
     notice.value = errorText('AGENT_APPROVAL_NOT_AVAILABLE');
     return;
   }
-  const targetRunId = runId.value;
+  const selection = currentSelection();
+  const targetRunId = selection.runId;
   const decisionReason = approvalReasons.value[approvalId]?.trim();
   approvalBusyId.value = approvalId;
   try {
@@ -667,16 +869,16 @@ const decide = async (approvalId: string, decision: 'approved' | 'denied') => {
       decision,
       decisionReason: decision === 'denied' ? decisionReason : undefined
     });
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection)) return;
     delete approvalReasons.value[approvalId];
     notice.value = '';
-    await load(targetRunId);
+    await refreshAfterMutation(selection);
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (selectionIsCurrent(selection)) {
       notice.value = errorText(error || 'AGENT_APPROVAL_FAILED');
     }
   } finally {
-    if (targetRunId === runId.value) approvalBusyId.value = '';
+    if (selectionIsCurrent(selection)) approvalBusyId.value = '';
   }
 };
 
@@ -691,7 +893,8 @@ const disconnectDesktop = () => {
 const beginTakeover = async (approvalId?: string) => {
   if (approvalBusyId.value) return;
   if (!run.value?.sandbox.takeoverAvailable) return;
-  const targetRunId = runId.value;
+  const selection = currentSelection();
+  const targetRunId = selection.runId;
   const target = approvalId || pendingApprovals.value.find(
     (approval) => approval.riskLevel === 'blocked'
   )?.approvalId;
@@ -704,11 +907,11 @@ const beginTakeover = async (approvalId?: string) => {
   try {
     disconnectDesktop();
     const ticket = await createAgentDesktopTicket(targetRunId, target);
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection)) return;
     activeTakeoverApprovalId.value = target;
     takingOver.value = true;
     await nextTick();
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection)) return;
     if (!desktopScreen.value) throw new Error('AGENT_DESKTOP_CONNECTION_FAILED');
     const client = new RFB(desktopScreen.value, ticket.websocketUrl, {
       shared: true,
@@ -718,15 +921,17 @@ const beginTakeover = async (approvalId?: string) => {
     client.scaleViewport = true;
     client.resizeSession = false;
     client.viewOnly = false;
-    client.addEventListener('connect', () => client.focus(), { once: true });
+    client.addEventListener('connect', () => {
+      if (desktopClient === client && selectionIsCurrent(selection)) client.focus();
+    }, { once: true });
     client.addEventListener('securityfailure', () => {
-      if (desktopClient === client && targetRunId === runId.value) {
+      if (desktopClient === client && selectionIsCurrent(selection)) {
         disconnectDesktop();
         notice.value = errorText('AGENT_DESKTOP_CONNECTION_FAILED');
       }
     }, { once: true });
     client.addEventListener('disconnect', () => {
-      if (desktopClient === client && targetRunId === runId.value) {
+      if (desktopClient === client && selectionIsCurrent(selection)) {
         desktopClient = null;
         takingOver.value = false;
         notice.value = errorText('AGENT_DESKTOP_CONNECTION_FAILED');
@@ -734,43 +939,47 @@ const beginTakeover = async (approvalId?: string) => {
     }, { once: true });
     notice.value = '';
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (selectionIsCurrent(selection)) {
       disconnectDesktop();
       activeTakeoverApprovalId.value = '';
       notice.value = errorText(error || 'AGENT_DESKTOP_CONNECTION_FAILED');
     }
   } finally {
-    if (targetRunId === runId.value) approvalBusyId.value = '';
+    if (selectionIsCurrent(selection)) approvalBusyId.value = '';
   }
 };
 
 const finishTakeover = async () => {
-  const targetRunId = runId.value;
+  if (sending.value) return;
+  const selection = currentSelection();
+  const targetRunId = selection.runId;
   const takeoverApprovalId = activeTakeoverApprovalId.value;
   sending.value = true;
   try {
     if (!takeoverApprovalId) {
       throw new Error('AGENT_TAKEOVER_APPROVAL_REQUIRED');
     }
+    uploading.value = false;
     await submitAgentInput(targetRunId, {
       takeoverEnded: true,
       takeoverApprovalId
     });
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection)) return;
     disconnectDesktop();
     activeTakeoverApprovalId.value = '';
-    await load(targetRunId);
+    await refreshAfterMutation(selection);
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (selectionIsCurrent(selection)) {
       notice.value = errorText(error || 'AGENT_TAKEOVER_END_FAILED');
     }
   } finally {
-    if (targetRunId === runId.value) sending.value = false;
+    if (selectionIsCurrent(selection)) sending.value = false;
   }
 };
 
 const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
-  const targetRunId = runId.value;
+  const selection = currentSelection();
+  const revision = ++previewRevision;
   previewReturnFocus = event?.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : document.activeElement instanceof HTMLElement
@@ -778,23 +987,29 @@ const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
       : null;
   try {
     const html = await loadAgentWebsitePreview(artifact);
-    if (targetRunId !== runId.value) return;
+    if (!selectionIsCurrent(selection) || revision !== previewRevision) return;
     previewHtml.value = html;
     previewName.value = artifact.filename;
     await nextTick();
-    previewCloseButton.value?.focus({ preventScroll: true });
+    if (selectionIsCurrent(selection) && revision === previewRevision) {
+      previewCloseButton.value?.focus({ preventScroll: true });
+    }
   } catch (error) {
-    if (targetRunId === runId.value) {
+    if (selectionIsCurrent(selection) && revision === previewRevision) {
       notice.value = errorText(error || 'AGENT_WEBSITE_PREVIEW_FAILED');
     }
   }
 };
 const closePreview = () => {
+  const selection = currentSelection();
+  const revision = ++previewRevision;
   previewHtml.value = '';
   previewName.value = '';
   const target = previewReturnFocus;
   previewReturnFocus = null;
-  if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
+  if (target?.isConnected) void nextTick(() => {
+    if (selectionIsCurrent(selection) && revision === previewRevision) target.focus({ preventScroll: true });
+  });
 };
 const previewFocusable = () => Array.from(
   previewModal.value?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],iframe,[tabindex]:not([tabindex="-1"])') || []
@@ -842,10 +1057,9 @@ const onConversationScroll = () => {
 };
 const scrollToLatest = async (force = false) => {
   if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
-  const id = runId.value;
-  const owner = getCurrentUserId();
+  const selection = currentSelection();
   await nextTick();
-  if (disposed || id !== runId.value || owner !== getCurrentUserId()) return;
+  if (!selectionIsCurrent(selection)) return;
   if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'auto' });
   nearBottom.value = true;
@@ -856,15 +1070,22 @@ watch(() => events.value.length, (next, previous) => {
 });
 
 const connectRunStream = (id: string) => {
-  const owner = getCurrentUserId();
+  const selection = currentSelection(id);
   return openAgentEventStream(id, { onEvent: event => {
-    if (owner === getCurrentUserId() && id === runId.value) onEvent(event);
+    if (selectionIsCurrent(selection)) onEvent(event);
+  }, onOpen: () => {
+    if (selectionIsCurrent(selection)) streamDisconnected.value = false;
+  }, onError: () => {
+    if (selectionIsCurrent(selection)) streamDisconnected.value = true;
   } });
 };
 
 const resetSelectedRun = () => {
   const nextRunId = runId.value;
+  auxiliaryRevision++;
   loadRevision++;
+  loadInFlight = null;
+  previewRevision++;
   closeStream?.();
   closeStream = null;
   disconnectDesktop();
@@ -876,6 +1097,7 @@ const resetSelectedRun = () => {
   nearBottom.value = true;
   hasUnreadUpdates.value = false;
   run.value = null;
+  runs.value = [];
   loadError.value = '';
   loadErrorKind.value = null;
   notice.value = '';
@@ -886,6 +1108,19 @@ const resetSelectedRun = () => {
   sending.value = false;
   pendingInput = null;
   stopArmed.value = false;
+  selectedFiles.value = [];
+  uploading.value = false;
+  creditsRequest = null;
+  creditsRefreshNeeded = false;
+  statusRequest = null;
+  credits.value = null;
+  creditsError.value = false;
+  serviceStatus.value = null;
+  serviceError.value = false;
+  streamDisconnected.value = false;
+  refreshingStatus.value = false;
+  void refreshCredits();
+  void loadServiceStatus();
   if (eventRefreshTimer !== null) {
     window.clearTimeout(eventRefreshTimer);
     eventRefreshTimer = null;
@@ -894,8 +1129,10 @@ const resetSelectedRun = () => {
     window.clearTimeout(stopArmTimer);
     stopArmTimer = null;
   }
+  const selection = currentSelection(nextRunId);
   void load(nextRunId).then(() => {
-    if (!disposed && nextRunId === runId.value) {
+    if (selectionIsCurrent(selection)) {
+      closeStream?.();
       closeStream = connectRunStream(nextRunId);
     }
   });
@@ -1014,35 +1251,31 @@ const fileCode = (mime: string) => {
   if (mime.startsWith('image/')) return 'IMG';
   return 'FILE';
 };
-watch(runId, () => {
-  closeStream?.();
-  disconnectDesktop();
-  run.value = null;
-  stopArmed.value = false;
-  if (stopArmTimer !== null) window.clearTimeout(stopArmTimer);
-  stopArmTimer = null;
-  previewHtml.value = '';
-  previewName.value = '';
-  message.value = '';
-  notice.value = '';
-  closeStream = connectRunStream(runId.value);
-  void load();
-});
 onMounted(async () => {
   window.addEventListener('keydown', onPreviewWindowKeydown);
+  document.addEventListener('pointerdown', onOutsideRunMenu);
+  void refreshCredits();
+  void loadServiceStatus();
   window.addEventListener('app-auth-changed', resetSelectedRun);
-  const initialRunId = runId.value;
-  await load(initialRunId);
-  if (!disposed && initialRunId === runId.value) {
-    closeStream = connectRunStream(initialRunId);
+  const selection = currentSelection();
+  await load(selection.runId);
+  if (selectionIsCurrent(selection)) {
+    closeStream?.();
+    closeStream = connectRunStream(selection.runId);
   }
   if (disposed) return;
   pollTimer = window.setInterval(() => {
-    if (!terminal.value && !['auth', 'not-found'].includes(loadErrorKind.value || '')) void load();
+    if (!terminal.value && !['auth', 'not-found'].includes(loadErrorKind.value || '')) {
+      void load();
+      void loadServiceStatus();
+      if (Date.now() - lastCreditsRead > 15000) void refreshCredits();
+    }
   }, 5000);
 });
 onBeforeUnmount(() => {
   disposed = true;
+  auxiliaryRevision++;
+  document.removeEventListener('pointerdown', onOutsideRunMenu);
   loadRevision += 1;
   window.removeEventListener('keydown', onPreviewWindowKeydown);
   window.removeEventListener('app-auth-changed', resetSelectedRun);
@@ -1057,18 +1290,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .conversation-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .conversation-scroll { flex: 1; min-height: 0; width: min(calc(var(--conversation-max) + 24px), calc(100% - var(--conversation-gutter) * 2 + 24px)); margin: 0 auto; padding: 28px 12px 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb) transparent; }
-.run-progress-panel { margin-bottom: 26px; padding: 0; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
-.run-progress-header { display: flex; min-height: 48px; align-items: center; padding: 12px 14px; list-style: none; cursor: pointer; justify-content: space-between; gap: 12px; }
-.run-progress-header div { display: grid; gap: 4px; }
-.progress-kicker { color: var(--acid-text); font-size: 12px; font-weight: 760; letter-spacing: .06em; text-transform: uppercase; }
-.run-progress-header strong { color: var(--text); font-size: 14px; }
-.run-progress-header > span { color: var(--muted); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.phase-track { display: grid; gap: 12px; padding: 6px 14px 14px; }
-.phase-track span { display: grid; grid-template-columns: 6px 1fr; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
-.phase-track i { display: block; width: 6px; height: 6px; border-radius: 99px; background: var(--border); }
-.phase-track span.active { color: var(--text); }
-.phase-track span.active i { background: var(--acid); box-shadow: 0 0 12px color-mix(in srgb, var(--acid) 44%, transparent); animation: progress-flow 1.6s ease-in-out infinite; }
-.phase-track span.done i { background: var(--success); }
 .clarification-card { display: grid; gap: 10px; margin: 0 0 26px; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
 .clarification-card h2 { margin: 0; color: var(--text); font-size: 15px; line-height: 1.45; }
 .quick-answers { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -1087,7 +1308,7 @@ onBeforeUnmount(() => {
 .agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--text); border: 0; border-radius: 9px; background: var(--surface-raised); font-size: 12px; font-weight: 720; }
 .event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }
 .event-message p { color: var(--muted); font-size: 12px; }
-.approval-card { margin: 26px 0; padding: 16px 16px 16px 19px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); box-shadow: inset 3px 0 var(--warning); }
+.approval-card { margin: 26px 0; padding: 16px 16px 16px 19px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface));  }
 .approval-card > header { display: flex; align-items: center; justify-content: space-between; color: var(--warning); font-size: 12px; font-weight: 720; }
 .approval-card code { color: var(--muted); font-size: 12px; }
 .approval-card h2 { margin: 12px 0 6px; font-size: 14px; }
@@ -1101,12 +1322,12 @@ onBeforeUnmount(() => {
 .approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface); font-size: 12px; }
 .approval-card .approval-primary { color: var(--acid-ink); background: var(--acid); font-weight: 720; }
-.retry-required { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 26px 0; padding: 15px 16px 15px 19px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); box-shadow: inset 3px 0 var(--warning); }
+.retry-required { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 26px 0; padding: 15px 16px 15px 19px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface));  }
 .retry-required div { display: grid; gap: 5px; }
 .retry-required b { color: var(--text); font-size: 13px; }
 .retry-required p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .retry-required button { min-height: 36px; flex: 0 0 auto; padding: 0 12px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 12px; font-weight: 720; }
-.delivery-summary { padding: 14px 14px 14px 17px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface)); box-shadow: inset 3px 0 var(--success); }
+.delivery-summary { padding: 14px 14px 14px 17px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface));  }
 .delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--success); font-size: 12px; font-weight: 720; }
 .delivery-summary > header b { font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .delivery-summary a { display: grid; grid-template-columns: 36px 1fr 18px; gap: 10px; align-items: center; padding: 9px; color: inherit; border-radius: 8px; text-decoration: none; }
@@ -1226,8 +1447,6 @@ onBeforeUnmount(() => {
 .run-load-state p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .load-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .load-actions :is(button,a) { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }
-.run-progress-header::-webkit-details-marker { display: none; }
-.run-progress-header > span { margin-left: auto; white-space: nowrap; }
 .settlement-summary { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0 0; }
 .settlement-summary div { display: grid; gap: 4px; }
 .settlement-summary dt { color: var(--muted); font-size: 12px; }
@@ -1242,18 +1461,16 @@ onBeforeUnmount(() => {
   .approval-card > input { min-height: 44px; font-size: 16px; }
   .retry-required { align-items: stretch; flex-direction: column; }
   .retry-required button { min-height: 44px; }
-  .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .run-controls .run-icon-control { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 18px; }
-  .run-controls button span { display: none; }
   .preview-modal { inset: 0; border: 0; border-radius: 0; }
 }
 @media (max-width: 960px) {
-  .run-controls button { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .run-controls .run-icon-control { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
-  .phase-track span.active i { animation: none; }
 }
 
 .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
@@ -1263,4 +1480,28 @@ onBeforeUnmount(() => {
   .run-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
   .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
 }
+.run-file-input { display: none; }
+.run-controls .run-icon-control { position: relative; display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; color: var(--text); background: transparent; cursor: pointer; list-style: none; }
+.run-controls .run-icon-control:hover { background: var(--surface-hover); }
+.run-icon-control::-webkit-details-marker { display: none; }
+.run-icon-control:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.run-icon-control[data-tooltip]::after { content: attr(data-tooltip); position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; width: max-content; padding: 7px 10px; border-radius: 6px; color: var(--text); background: var(--surface-raised); font-size: 12px; opacity: 0; pointer-events: none; }
+.run-icon-control[data-tooltip]:hover::after,.run-icon-control[data-tooltip]:focus-visible::after { opacity: 1; }
+.run-menu { position: relative; }
+.run-menu-content { position: absolute; z-index: 40; right: 0; top: calc(100% + 8px); width: min(260px, calc(100vw - 32px)); padding: 8px; background: var(--surface-raised); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 24%); }
+.run-menu-content button { width: 100%; justify-content: flex-start; min-height: 40px; }
+.run-menu-content p { padding: 4px 8px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.run-state { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.run-state.running,.run-state.provisioning,.run-state.verifying { color: var(--acid-text); }
+.run-state.unavailable,.run-state.disconnected,.run-state.waiting_user { color: var(--warning); }
+.run-state.failed { color: var(--danger); }
+.run-state.succeeded { color: var(--success); }
+.run-state button { margin-left: 4px; padding: 5px 8px; color: var(--text); border: 0; border-radius: 6px; background: var(--surface); cursor: pointer; font-size: 12px; }
+.run-state button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.connection-note { display: block; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+.spinning { animation: run-state-spin 1.3s linear infinite; }
+@keyframes run-state-spin { to { transform: rotate(360deg); } }
+@media (pointer: coarse), (max-width: 799px) { .run-controls .run-icon-control,.run-menu-content button,.run-state button { min-width: 44px; min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .spinning { animation: none; } }
+
 </style>

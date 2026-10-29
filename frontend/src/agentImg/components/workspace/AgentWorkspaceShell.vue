@@ -21,7 +21,7 @@
     -->
     <a class="skip-link" href="#artigen-workspace-main">{{ zh ? '跳到主要内容' : 'Skip to main content' }}</a>
 
-    <nav class="workspace-rail" :inert="commandOpen || leftDrawerOpen || rightDrawerOpen ? true : undefined" :aria-label="zh ? '功能切换' : 'App navigation'">
+    <nav class="workspace-rail" @mouseover="showRailTooltip" @focusin="showRailTooltip" @mouseleave="hideRailTooltip" @focusout="hideRailTooltip" @keydown.esc="hideRailTooltip" :inert="commandOpen || leftDrawerOpen || rightDrawerOpen ? true : undefined" :aria-label="zh ? '功能切换' : 'App navigation'">
       <router-link class="rail-brand" to="/artigen/create" aria-label="Artigen" title="Artigen">A</router-link>
       <button type="button" :title="zh ? '项目与会话' : 'Projects and chats'" :aria-label="leftCollapsed && !overlayLayout ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '项目与会话' : 'Projects and chats')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="openLeftDrawer"><WorkspaceIcon name="panel-left" :size="20" /></button>
       <router-link class="rail-chat" :class="{ 'rail-active': route.path.startsWith('/artigen/agent') }" to="/artigen/create" :aria-current="route.path.startsWith('/artigen/agent') ? 'location' : undefined" :title="zh ? '会话' : 'Chat'" :aria-label="zh ? '会话' : 'Chat'"><WorkspaceIcon name="chat" :size="20" /></router-link>
@@ -33,6 +33,8 @@
       <button type="button" :title="themeLabel" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
       <router-link to="/login/account" :title="zh ? '账户设置' : 'Account settings'" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
     </nav>
+
+    <span v-if="railTooltip" :id="railTooltipId" class="rail-tooltip" role="tooltip" :style="{ left: `${railTooltip.x}px`, top: `${railTooltip.y}px` }">{{ railTooltip.text }}</span>
 
     <aside
       id="workspace-history-panel"
@@ -77,8 +79,10 @@
             <WorkspaceIcon name="spark" :size="16" />
           </span>
           <span class="account-label">{{ creditCaption }}</span>
-          <b v-if="creditLabel" class="account-value">{{ creditLabel }}</b>
+          <b class="account-value" :aria-busy="creditLoading">{{ creditLoading ? (zh ? '读取中…' : 'Loading…') : creditError ? '—' : creditLabel || '—' }}</b>
         </router-link>
+        <p v-if="taskCostLabel" class="account-task-cost"><span>{{ zh ? '本次任务' : 'This task' }}</span><b>{{ taskCostLabel }}</b></p>
+        <div v-if="creditError" class="account-credit-error" role="status"><span>{{ creditError }}</span><button type="button" @click="$emit('refresh-credits')">{{ zh ? '重试' : 'Retry' }}</button></div>
         <button class="mobile-only" type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="16"/><span>{{ zh ? '外观' : 'Appearance' }}</span><small>{{ themeLabel }}</small></button>
         <router-link class="mobile-only account-action" to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="16"/><span>{{ zh ? '设置' : 'Settings' }}</span></router-link>
       </footer>
@@ -121,12 +125,10 @@
               </span>
             </div>
           </slot>
-          <div v-if="statusTone !== 'ready' || taskCostLabel" class="task-meta">
+          <div v-if="statusLabel && statusTone !== 'ready'" class="task-meta">
             <span class="runtime-pill" :class="statusTone"><i aria-hidden="true"></i>{{ statusLabel }}</span>
-            <span v-if="taskCostLabel" class="task-cost">{{ taskCostLabel }}</span>
           </div>
         </div>
-        <span v-if="isDevEnvironment" class="workspace-environment" :aria-label="zh ? 'DEV 测试环境' : 'DEV test environment'">DEV</span>
         <div class="topbar-actions">
           <slot name="topbar-actions" />
           <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" :aria-expanded="overlayLayout ? rightDrawerOpen : !rightCollapsed" aria-controls="workspace-inspector-panel" @click="toggleRight">
@@ -164,7 +166,7 @@
         <button v-if="resourceMode === 'files' || resourceMode === 'changes'" ref="directoryToggle" class="resource-icon-control tree-toggle" type="button" :aria-label="resourceWorkspace?.treeVisible ? (zh ? '隐藏目录树' : 'Hide file tree') : (zh ? '显示目录树' : 'Show file tree')" :aria-pressed="resourceWorkspace?.treeVisible" @click="resourceWorkspace?.toggleTree()"><WorkspaceIcon name="panel-right" :size="18" /></button>
         <button class="resource-icon-control" type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" :size="18" /></button>
       </nav>
-      <ResourceWorkspace :theme="resolvedTheme" ref="resourceWorkspace" v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" @focus-directory="directoryToggle?.focus({ preventScroll: true })" />
+      <ResourceWorkspace :theme="resolvedTheme" ref="resourceWorkspace" v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :run-id="runId" :run-status="runStatus" @project-associated="$emit('project-associated', $event)" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" @focus-directory="directoryToggle?.focus({ preventScroll: true })" />
       <div v-show="resourceMode === 'task'" class="task-inspector">
       <header class="inspector-head">
         <div>
@@ -209,6 +211,11 @@
       </div>
     </aside>
 
+    <div v-if="navigationError" class="workspace-navigation-error" role="alert">
+      <span>{{ navigationError.blocked ? (zh ? '页面未能打开，请重试。' : 'The page could not open. Try again.') : (zh ? '页面加载失败，请检查网络后重试。' : 'The page could not load. Check your connection and retry.') }}</span>
+      <button type="button" @click="retryNavigation">{{ zh ? '重试' : 'Retry' }}</button>
+      <button type="button" :aria-label="zh ? '关闭导航提示' : 'Dismiss navigation message'" @click="navigationError = null"><WorkspaceIcon name="close" :size="16" /></button>
+    </div>
     <div class="aria-updates sr-only" aria-live="polite">{{ liveAnnouncement }}</div>
 
     <div v-if="commandOpen" class="command-layer" @mousedown.self="closeCommandPalette">
@@ -231,8 +238,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
+import { isNavigationFailure, NavigationFailureType, useRouter, useRoute } from 'vue-router';
+import { isRouteChunkLoadError } from '@/utils/navigationError';
 import ProjectNavigation from './ProjectNavigation.vue';
 import ResourceWorkspace from './ResourceWorkspace.vue';
 import type { AgentArtifact } from '../../services/agentRuns';
@@ -259,6 +267,10 @@ const props = withDefaults(defineProps<{
   statusLabel?: string;
   statusTone?: 'ready' | 'busy' | 'warning' | 'offline';
   creditLabel?: string;
+  creditLoading?: boolean;
+  creditError?: string;
+  runId?: string;
+  runStatus?: string;
   taskCostLabel?: string;
   creditCaption?: string;
   defaultInspectorCollapsed?: boolean;
@@ -275,6 +287,10 @@ const props = withDefaults(defineProps<{
   statusLabel: 'Ready',
   statusTone: 'ready',
   creditLabel: '',
+  creditLoading: false,
+  creditError: '',
+  runId: '',
+  runStatus: '',
   taskCostLabel: '',
   defaultInspectorCollapsed: false,
   inspectorSubtitle: '',
@@ -288,11 +304,54 @@ const emit = defineEmits<{
   search: [value: string];
   'open-credits': [];
   'open-settings': [];
+  'refresh-credits': [];
+  'project-associated': [value: { projectId: string; scope: 'run' | 'conversation'; affectedRunCount: number }];
 }>();
 
 const router = useRouter();
 const route = useRoute();
-const isDevEnvironment = ['dev', 'development'].includes(String(import.meta.env.VITE_APP_ENV || '').toLowerCase());
+const navigationError = ref<{ path: string; chunk: boolean; blocked: boolean } | null>(null);
+const removeNavigationErrorHandler = router.onError((error, to) => {
+  navigationError.value = {
+    path: to.fullPath,
+    chunk: isRouteChunkLoadError(error),
+    blocked: false
+  };
+});
+const removeNavigationCompletionHandler = router.afterEach((to, _from, failure) => {
+  if (!failure) navigationError.value = null;
+  else if (isNavigationFailure(failure, NavigationFailureType.aborted)) navigationError.value = { path: to.fullPath, chunk: false, blocked: true };
+});
+const retryNavigation = () => {
+  const failure = navigationError.value;
+  if (!failure) return;
+  // A failed module import can stay cached until a document reload.
+  if (failure.chunk) window.location.assign(router.resolve(failure.path).href);
+  else void router.push(failure.path).catch(() => {});
+};
+onBeforeUnmount(() => { removeNavigationErrorHandler(); removeNavigationCompletionHandler(); });
+const railTooltipId = useId();
+const railTooltip = ref<{ text: string; x: number; y: number } | null>(null);
+let tooltipTarget: HTMLElement | null = null;
+const hideRailTooltip = () => {
+  tooltipTarget?.removeAttribute('aria-describedby');
+  tooltipTarget = null;
+  railTooltip.value = null;
+};
+const showRailTooltip = (event: Event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>('a,button');
+  if (!target || target === tooltipTarget) return;
+  hideRailTooltip();
+  const text = target.getAttribute('aria-label') || target.getAttribute('title');
+  if (!text) return;
+  target.removeAttribute('title');
+  const rect = target.getBoundingClientRect();
+  tooltipTarget = target;
+  target.setAttribute('aria-describedby', railTooltipId);
+  railTooltip.value = { text, x: rect.right + 8, y: rect.top + rect.height / 2 };
+};
+watch(() => route.fullPath, hideRailTooltip);
+onBeforeUnmount(hideRailTooltip);
 const resourceWorkspace = ref<InstanceType<typeof ResourceWorkspace> | null>(null);
 const directoryToggle = ref<HTMLButtonElement | null>(null);
 const viewportWidth = ref(window.innerWidth);
@@ -445,7 +504,7 @@ const toggleRight = async () => {
 };
 // Legacy navigation remains available while the projection endpoint is loading/unavailable.
 const onHistoryClick = (event: MouseEvent) => {
-  if ((event.target as Element).closest('.history-item')) closeLeftDrawer();
+  if ((event.target as Element).closest('.history-item,.history-run')) closeLeftDrawer(true);
 };
 const closeDrawers = () => { if (leftDrawerOpen.value) closeLeftDrawer(true); else closeRight(true); };
 const cycleTheme = () => {
@@ -602,6 +661,12 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.workspace-navigation-error { position: fixed; z-index: 500; top: 68px; left: 72px; right: 16px; display: flex; align-items: center; gap: 10px; width: fit-content; max-width: calc(100vw - 88px); padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); font-size: 13px; }
+.workspace-navigation-error span { flex: 1; }
+.workspace-navigation-error button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-height: 36px; min-width: 36px; padding: 6px 8px; border: 0; border-radius: 6px; color: var(--text); background: var(--surface-hover); cursor: pointer; }
+.workspace-navigation-error button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 799px) { .workspace-navigation-error { left: 12px; right: 12px; max-width: calc(100vw - 24px); }.workspace-navigation-error button { min-width: 44px; min-height: 44px; } }
+
 .agent-workspace-shell {
   --bg: #111311;
   --sidebar: #1b1e1b;
@@ -722,6 +787,11 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .workspace-account { display: grid; flex: 0 0 auto; gap: 3px; padding: 8px 10px 12px; }
 .workspace-account :is(button,.account-action) { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 11px; min-height: 42px; padding: 0 10px; border: 0; border-radius: 9px; color: inherit; text-align: left; text-decoration: none; background: transparent; cursor: pointer; }
 .workspace-account :is(button,.account-action):hover { background: var(--surface-hover); }
+.rail-tooltip { position:fixed; z-index:1000; transform:translateY(-50%); max-width:240px; padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--surface-raised); color:var(--text); font-size:13px; line-height:1.4; pointer-events:none; box-shadow:0 4px 12px rgb(0 0 0 / 18%); }
+.account-task-cost { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 10px; margin:0; padding:2px 10px 6px 41px; color:var(--muted); font-size:12px; }
+.account-task-cost b { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
+.account-credit-error { padding:0 10px; color:var(--muted); font-size:12px; }
+.workspace-account .account-credit-error button { display:inline-flex; min-height:32px; padding:4px 8px; text-decoration:underline; }
 .account-label { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--font-control); font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
 .account-value { max-width: 112px; overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); font-weight: 560; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .account-icon { display: grid; width: 20px; height: 20px; place-items: center; color: var(--muted); }
@@ -733,16 +803,15 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px; }
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; touch-action:none; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
-.panel-resizer::before { position:absolute; top:calc(50% - 14px); left:3px; width:2px; height:28px; border-radius:2px; background:var(--control-border); content:""; }
 .panel-resizer:hover::after,.panel-resizer:active::after { background: var(--focus); }
 .panel-resizer:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
 .panel-resizer:focus-visible::after { width: 2px; background: var(--focus); }
 .left-resizer { left: calc(56px + var(--left-live) - 4px); }
 .right-resizer { right: calc(var(--right-live) - 4px); }
-.right-resizer::after,.right-resizer::before { left: 4px; }
+.right-resizer::after { left: 4px; }
 .left-collapsed .left-resizer,.right-collapsed .right-resizer { display: none; }
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
-.workspace-topbar { border-bottom: 0; display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: var(--workspace-header-height); padding: 6px 12px 6px 20px; overflow: hidden; background: var(--bg); }
+.workspace-topbar { border-bottom: 0; display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: var(--workspace-header-height); padding: 6px 12px 6px 20px; position: relative; z-index: 20; overflow: visible; background: var(--bg); }
 .topbar-heading-slot { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin-top: 0; }
 .task-cost { color: var(--muted); font-size: var(--font-meta); line-height: 1.5; font-variant-numeric: tabular-nums; }

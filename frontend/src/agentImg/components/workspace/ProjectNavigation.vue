@@ -19,6 +19,7 @@
           </option>
         </select></label
       >
+      <p v-if="saveError" role="alert">{{ saveError }}</p>
       <div>
         <button type="button" :disabled="saving" @click="editing = null">
           {{ zh ? '取消' : 'Cancel' }}</button
@@ -119,11 +120,13 @@ const projects = ref<{ projectId: string; title: string }[]>([]);
 const sessions = ref<WorkspaceSession[]>([]);
 const cursor = ref<string | null>(null);
 const error = ref('');
+const saveError = ref('');
 const loading = ref(false);
 const collapsed = ref(new Set<string>());
 const editing = ref<WorkspaceSession | null>(null);
 const sessionEditor = ref<HTMLFormElement | null>(null);
 watch(editing, async (value) => {
+  saveError.value = '';
   if (!value) return;
   await nextTick();
   const input = sessionEditor.value?.querySelector('input');
@@ -195,6 +198,7 @@ async function load(append: boolean) {
 async function save() {
   if (!editing.value || saving.value) return;
   saving.value = true;
+  saveError.value = '';
   const ticket = revision;
   try {
     await updateWorkspaceConversation(editing.value.id, {
@@ -205,7 +209,9 @@ async function save() {
     editing.value = null;
     await load(false);
   } catch (e) {
-    if (ticket === revision) error.value = String(e);
+    if (ticket === revision) saveError.value = (e instanceof Error ? e.message : String(e)) === 'WORKSPACE_CONVERSATION_PROJECT_LOCKED'
+      ? (props.zh ? '包含执行记录的会话，请从任务的 GitHub 面板关联项目；已有项目不能迁移。名称仍可修改。' : 'For a chat with execution history, link a project from the task’s GitHub panel. An existing project cannot be changed. You can still edit the title.')
+      : (props.zh ? '会话未保存，请重试。修改内容已保留。' : 'Could not save the chat. Your changes are kept; try again.');
   } finally {
     saving.value = false;
   }

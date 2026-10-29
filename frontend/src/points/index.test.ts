@@ -9,7 +9,7 @@ vi.mock('@/login/session', () => ({
 }));
 vi.mock('@/utils/analytics', () => ({ trackEvent: vi.fn() }));
 
-import { createPayOrder, getPayOrder, getPayPackages, verifyPayOrder } from './index';
+import { createPayOrder, getPayOrder, getPayPackages, verifyPayOrder, getCreditsBalance } from './index';
 
 describe('secure payment order client', () => {
   beforeEach(() => authFetch.mockReset());
@@ -147,5 +147,18 @@ describe('secure payment order client', () => {
     expect(JSON.parse(String(authFetch.mock.calls[0][1]?.body))).toEqual({
       providerOrderId: '202607171234567890123456789'
     });
+  });
+});
+
+
+describe('wallet balance integrity', () => {
+  beforeEach(() => authFetch.mockReset());
+  it.each([{}, { userId: 'user_cookie', available: 0 }, { userId: 'other', available: 100, frozen: 0 }, { userId: 'user_cookie', available: 'bad', frozen: 0 }])('does not display a missing or mismatched balance as zero: %o', async (body) => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify(body)));
+    await expect(getCreditsBalance()).resolves.toBeNull();
+  });
+  it('preserves a real zero and fractional balance', async () => {
+    authFetch.mockResolvedValueOnce(new Response(JSON.stringify({ userId: 'user_cookie', available: 0.003, frozen: 0 })));
+    await expect(getCreditsBalance()).resolves.toEqual({ userId: 'user_cookie', available: 0.003, frozen: 0 });
   });
 });

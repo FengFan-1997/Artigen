@@ -100,6 +100,12 @@ jobs:
       - name: Apply PostgreSQL 16 migrations
         run: pnpm --filter backend db:migrate
 
+      - name: Verify live input and project association transactions
+        run: node --test --test-concurrency=1 backend/tests/agent-input-attachments-pg.integration.test.js backend/tests/agent-project-association.test.js
+        env:
+          RUN_POSTGRES_INTEGRATION: "1"
+          AGENT_ASSOCIATION_TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
+
       - name: Run the core release quality gate
         run: pnpm check:core
 

@@ -5,6 +5,7 @@ const enabled = (value) => /^(1|true|yes|on)$/i.test(String(value || '').trim())
 
 const { normalizeEnvironment, selectedPolicy, publicSignupEnabled } = require('./signup-policy');
 const { paymentsEnabled } = require('./payment-config');
+const { initialCredits } = require('./signup-credits');
 
 const resolveGitSha = (env = process.env) => {
   const value = env.RENDER_GIT_COMMIT ||
@@ -41,6 +42,7 @@ const buildReleaseMetadata = ({ env = process.env, appEnv, nodeEnv } = {}) => {
   };
   const violations = Object.keys(capabilities).filter((name) =>
     capabilities[name] && selected.capabilities[name] === false);
+  const signupCredits = initialCredits(env);
 
   return Object.freeze({
     version: String(env.ARTIGEN_RELEASE_VERSION || env.RELEASE_VERSION || packageVersion).trim(),
@@ -53,7 +55,11 @@ const buildReleaseMetadata = ({ env = process.env, appEnv, nodeEnv } = {}) => {
       violations
     },
     capabilitySemantics: 'configured-not-readiness',
-    capabilities: Object.freeze(capabilities)
+    capabilities: Object.freeze(capabilities),
+    signupOffer: Object.freeze({
+      available: capabilities.publicSignup && signupCredits > 0,
+      credits: signupCredits
+    })
   });
 };
 

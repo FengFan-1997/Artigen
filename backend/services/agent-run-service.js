@@ -34,6 +34,7 @@ const {
 } = require('./agent-policy-service');
 const { PHASES, compileAgentPrompt, normalizeTaskSpec } = require('./agent-runtime-v2');
 const { verifyAgentPlanToken } = require('./agent-plan-token');
+const { normalizeInputAttachments, attachmentMetadata, MAX_RUN_INPUT_ASSETS } = require('./agent-input-attachments');
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
 const SUBAGENT_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'cancelled']);
@@ -1956,13 +1957,14 @@ const createAgentRunService = ({
           `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind='user_input'
             AND id=ANY($2::uuid[]) AND expires_at>now()`, [runId, payloadIds]
         );
-        const text = new Map(payloads.rows.map((record) => [record.id, decryptAgentPayload({
+        const contents = new Map(payloads.rows.map((record) => [record.id, decryptAgentPayload({
           runId, payloadId: record.id, kind: 'user_input', record, env
-        }).message]));
+        })]));
         for (const event of events) {
-          const message = text.get(event.data.messagePayloadId);
-          if (event.type === 'run.input_received' && typeof message === 'string') {
-            event.data = { ...event.data, messageText: message };
+          const value = contents.get(event.data.messagePayloadId);
+          if (event.type === 'run.input_received' && typeof value?.message === 'string') {
+            event.data = { ...event.data, messageText: value.message,
+              ...(Array.isArray(value.attachments) ? { attachments: value.attachments } : {}) };
           }
         }
       }
@@ -2406,6 +2408,8 @@ const createAgentRunService = ({
     userId,
     runId,
     message,
+    assetIds,
+    assetNames,
     approvalId,
     decision,
     decisionReason,
@@ -2413,20 +2417,40 @@ const createAgentRunService = ({
     takeoverApprovalId = null,
     inputId = null
   }) => {
+    const normalizedMessage = String(message || '').trim();
+    const inputAssets = normalizeInputAttachments(assetIds, assetNames);
+    if (inputAssets.assetIds.length && (approvalId || takeoverEnded)) {
+      throw new ApiError(400, 'AGENT_INPUT_ATTACHMENTS_NOT_ALLOWED');
+    }
+    const inputRequestHash = hashRequest({
+      message: normalizedMessage, ...inputAssets,
+      approvalId: approvalId || null, decision: decision || null,
+      decisionReason: decisionReason || null, takeoverEnded, takeoverApprovalId
+    }).toString('hex');
     let shouldEnqueue = false;
     const result = await withTransaction(pool, async (client) => {
       const { dbUserId, row } = await resolveOwnedRun(client, { userId, runId, lock: true });
-      if (TERMINAL_STATUSES.has(row.status)) throw new ApiError(409, 'AGENT_RUN_TERMINAL');
       const normalizedInputId = String(inputId || '').trim().slice(0, 120);
       if (normalizedInputId) {
         const duplicate = await client.query(
-          `SELECT 1 FROM agent_events
+          `SELECT data FROM agent_events
             WHERE run_id=$1 AND data->>'inputId'=$2
             LIMIT 1`,
           [runId, normalizedInputId]
         );
-        if (duplicate.rowCount) return false;
+        if (duplicate.rowCount) {
+          const previousHash = duplicate.rows[0].data?.inputRequestHash;
+          if ((previousHash && previousHash !== inputRequestHash) ||
+              (!previousHash && inputAssets.assetIds.length)) {
+            throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
+          }
+          // A retry can follow a lost queue-publish response after the input
+          // transaction committed. Publishing the same queued Run is idempotent.
+          shouldEnqueue = row.status === 'queued';
+          return false;
+        }
       }
+      if (TERMINAL_STATUSES.has(row.status)) throw new ApiError(409, 'AGENT_RUN_TERMINAL');
       let messagePayloadId = null;
       let eventType = 'run.input_received';
       let summary = '已收到补充信息';
@@ -2478,26 +2502,50 @@ const createAgentRunService = ({
         eventType = `approval.${decision}`;
         summary = decision === 'approved' ? '用户已批准关键动作' : '用户已拒绝关键动作';
       } else {
-        const normalizedMessage = String(message || '').trim();
-        if (!normalizedMessage && !takeoverEnded) {
+        if (!normalizedMessage && !inputAssets.assetIds.length && !takeoverEnded) {
           throw new ApiError(400, 'AGENT_INPUT_REQUIRED', { field: 'message' });
         }
         if (normalizedMessage.length > 20_000) {
           throw new ApiError(413, 'AGENT_INPUT_TOO_LARGE', { field: 'message' });
         }
-        if (normalizedMessage) {
+        if (normalizedMessage || inputAssets.assetIds.length) {
           if (row.status === 'verifying') throw new ApiError(409, 'AGENT_INPUT_FINALIZING');
           const finalizing = await client.query(
             `SELECT 1 FROM agent_events WHERE run_id=$1 AND event_type='run.ready_to_finalize' LIMIT 1`, [runId]
           );
           if (finalizing.rowCount) throw new ApiError(409, 'AGENT_INPUT_FINALIZING');
+          let attachments = [];
+          if (inputAssets.assetIds.length) {
+            // The legacy Responses executor does not consume the live-input callback.
+            if (row.model_provider === 'openai') throw new ApiError(409, 'AGENT_INPUT_ATTACHMENTS_UNSUPPORTED');
+            const owned = await client.query(
+              `SELECT id,mime_type,byte_size FROM assets
+                WHERE owner_user_id=$1 AND id=ANY($2::uuid[]) AND gc_state='active'
+                  AND delete_requested_at IS NULL AND (expires_at IS NULL OR expires_at>now())
+                FOR SHARE`, [dbUserId, inputAssets.assetIds]
+            );
+            if (owned.rowCount !== inputAssets.assetIds.length) throw new ApiError(404, 'AGENT_INPUT_ASSET_NOT_FOUND');
+            attachments = inputAssets.assetIds.map((id, index) =>
+              attachmentMetadata(owned.rows.find((asset) => asset.id === id), inputAssets.assetNames[id], index));
+            const previous = await client.query(
+              `SELECT * FROM agent_run_payloads WHERE run_id=$1 AND kind IN ('objective','user_input') AND expires_at>now()`,
+              [runId]
+            );
+            const allIds = new Set(inputAssets.assetIds);
+            for (const record of previous.rows) {
+              const value = decryptAgentPayload({ runId, payloadId: record.id, kind: record.kind, record, env });
+              for (const id of value.assetIds || []) allIds.add(id);
+            }
+            if (allIds.size > MAX_RUN_INPUT_ASSETS) throw new ApiError(413, 'AGENT_RUN_INPUT_ASSET_LIMIT');
+          }
           const payloadId = crypto.randomUUID();
           messagePayloadId = payloadId;
           const encrypted = encryptAgentPayload({
             runId,
             payloadId,
             kind: 'user_input',
-            value: { message: normalizedMessage },
+            value: { message: normalizedMessage,
+              ...(attachments.length ? { assetIds: inputAssets.assetIds, attachments } : {}) },
             env
           });
           await client.query(
@@ -2601,7 +2649,8 @@ const createAgentRunService = ({
               takeoverEnded: Boolean(takeoverEnded),
               takeoverApprovalId: takeoverEnded ? takeoverApprovalId : undefined,
               messagePayloadId: messagePayloadId || undefined,
-              inputId: normalizedInputId || undefined
+              inputId: normalizedInputId || undefined,
+              inputRequestHash: normalizedInputId ? inputRequestHash : undefined
             }
       });
       return true;
@@ -2688,7 +2737,8 @@ const createAgentRunService = ({
     );
     return result.rows.flatMap((record) => {
       const value = decryptAgentPayload({ runId, payloadId: record.id, kind: 'user_input', record, env });
-      return typeof value.message === 'string' && !value.type ? [{ id: record.id, message: value.message }] : [];
+      return typeof value.message === 'string' && !value.type ? [{ id: record.id, message: value.message,
+        ...(Array.isArray(value.assetIds) ? { assetIds: value.assetIds, attachments: value.attachments || [] } : {}) }] : [];
     });
   });
 

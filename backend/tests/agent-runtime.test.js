@@ -7349,6 +7349,7 @@ test('Agent routes can register while disabled without constructing PostgreSQL o
   const app = {
     get: (path) => routes.push(['GET', path]),
     post: (path) => routes.push(['POST', path]),
+    put: (path) => routes.push(['PUT', path]),
     delete: (path) => routes.push(['DELETE', path])
   };
   assert.doesNotThrow(() => installAgentRoutes(app, {
@@ -7371,6 +7372,7 @@ test('Agent create route preserves the server-validated TaskSpec contract', asyn
   let received = null;
   const app = {
     get() {},
+    put() {},
     post(path, ...handlers) {
       if (path === '/api/agent-runs') createHandler = handlers.at(-1);
     },

@@ -24,11 +24,6 @@
               ×
             </button>
           </div>
-          <div class="signup-credit-note">
-            <strong>{{ currentLang === 'zh' ? '注册赠送 100 点' : 'Get 100 credits on signup' }}</strong>
-            <span>{{ currentLang === 'zh' ? '约可完成 10 次标准生成' : 'Enough for about 10 standard generations' }}</span>
-          </div>
-
           <div class="body">
             <div v-if="entryStep === 'select'" class="step">
               <div class="sub">{{ subText }}</div>
@@ -1183,23 +1178,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   background: #18181b;
-}
-
-.signup-credit-note {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 24px;
-  padding: 11px 12px;
-  border: 1px solid rgba(204, 255, 0, 0.24);
-  border-radius: 10px;
-  background: rgba(204, 255, 0, 0.07);
-  color: #cbd5cc;
-  font-size: 12px;
-}
-
-.signup-credit-note strong {
-  color: #ccff00;
 }
 
 .head {

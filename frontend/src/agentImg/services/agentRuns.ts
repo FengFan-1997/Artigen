@@ -485,6 +485,8 @@ export const submitAgentInput = async (
   input: {
     inputId?: string;
     message?: string;
+    assetIds?: string[];
+    assetNames?: Record<string, string>;
     approvalId?: string;
     decision?: 'approved' | 'denied';
     decisionReason?: string;
@@ -530,6 +532,7 @@ export const openAgentEventStream = (
   handlers: {
     onEvent: (event: AgentEvent) => void;
     onError?: () => void;
+    onOpen?: () => void;
   }
 ) => {
   const source = new EventSource(
@@ -575,6 +578,7 @@ export const openAgentEventStream = (
     'run.failed',
     'run.cancelled',
     'run.input_received',
+    'run.project_associated',
     'takeover.ended',
     'subagent.created',
     'subagent.started',
@@ -589,6 +593,7 @@ export const openAgentEventStream = (
     } catch {}
   };
   known.forEach((type) => source.addEventListener(type, listener as EventListener));
+  source.onopen = () => handlers.onOpen?.();
   source.onerror = () => handlers.onError?.();
   return () => source.close();
 };

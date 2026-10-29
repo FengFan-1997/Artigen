@@ -110,13 +110,17 @@ test('assistant commentary replay is idempotent and still checks the lease', asy
 });
 
 test('finalization cannot pass over a user update that arrived after the last model request', async () => {
-  const service = makeService(async (sql) => {
-    if (sql.includes('SELECT 1 FROM agent_runs')) return { rows: [{}], rowCount: 1 };
-    if (sql.includes('FROM agent_run_payloads')) return { rows: [record], rowCount: 1 };
-    assert.fail('Finalization written before all accepted input was applied');
-  });
-  await assert.rejects(service.appendRuntimeEvent({ runId, workerId: 'test-worker', leaseEpoch: 1,
-    type: 'run.ready_to_finalize', data: { appliedInputIds: [] } }), { code: 'AGENT_INPUT_PENDING' });
+  const fileOnly = encryptAgentPayload({ runId, payloadId, kind: 'user_input', value: { message: '', assetIds: [userId] }, env });
+  for (const pending of [record, { id: payloadId, kind: 'user_input', algorithm: fileOnly.algorithm,
+    iv: fileOnly.iv, auth_tag: fileOnly.authTag, ciphertext: fileOnly.ciphertext }]) {
+    const service = makeService(async (sql) => {
+      if (sql.includes('SELECT 1 FROM agent_runs')) return { rows: [{}], rowCount: 1 };
+      if (sql.includes('FROM agent_run_payloads')) return { rows: [pending], rowCount: 1 };
+      assert.fail('Finalization written before all accepted input was applied');
+    });
+    await assert.rejects(service.appendRuntimeEvent({ runId, workerId: 'test-worker', leaseEpoch: 1,
+      type: 'run.ready_to_finalize', data: { appliedInputIds: [] } }), { code: 'AGENT_INPUT_PENDING' });
+  }
 });
 
 
@@ -163,7 +167,7 @@ test('history route resolves its service, enforces login and forwards the durabl
   const { installAgentRoutes } = require('../routes/agent-runs');
   let handler;
   const calls = [];
-  installAgentRoutes({ get(path, ...handlers) { if (path === '/api/agent-runs/:runId/history') handler = handlers.at(-1); }, post() {}, delete() {} }, {
+  installAgentRoutes({ get(path, ...handlers) { if (path === '/api/agent-runs/:runId/history') handler = handlers.at(-1); }, post() {}, put() {}, delete() {} }, {
     env, pool: {}, queuePublisher: {}, agentIntegrationService: {},
     agentRunService: { listEvents: async (input) => { calls.push(input); return [{ eventId: '8', summary: '真实记录' }]; } }
   });

@@ -95,6 +95,7 @@
             ref="objectiveComposer"
             :draft="form.objective"
             :attachments="composerAttachments"
+            :zh="zh"
             :busy="busy"
             :busy-label="uploadingAssets ? (zh ? `正在上传 ${selectedFiles.length} 个参考文件…` : `Uploading ${selectedFiles.length} references…`) : creating ? (zh ? '正在启动任务…' : 'Starting task…') : (zh ? '正在获取报价…' : 'Getting quote…')"
             :keyboard-hint="zh ? 'Enter 发送 · Shift+Enter 换行' : 'Enter to send · Shift+Enter for a new line'"
@@ -344,7 +345,8 @@ const composerAttachments = computed(() => selectedFiles.value.map((file) => ({
   clientId: referenceFileKey(file),
   name: file.name,
   mimeType: file.type || 'application/octet-stream',
-  byteSize: file.size
+  byteSize: file.size,
+  file
 })));
 
 const capabilityOptions = computed(() => [

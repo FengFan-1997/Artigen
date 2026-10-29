@@ -905,7 +905,7 @@ test('Harness V3 drives a zero-file text run through the real PostgreSQL runtime
   }
 });
 
-test('Harness V3 reaches the Runtime V1 text baseline without touching V2 reservations', {
+test('Harness V3 rejects Runtime V1 text-only work before creating a Run or freezing credits', {
   skip: !enabled,
   timeout: 30_000
 }, async () => {
@@ -918,24 +918,23 @@ test('Harness V3 reaches the Runtime V1 text baseline without touching V2 reserv
         AGENT_RUNTIME_V2_ENABLED: 'false',
         AGENT_RUNTIME_V2_ROLLOUT_PERCENT: '0'
       },
-      providerScript: [{ content: '已完成 Runtime V1 的纯文字答复。' }]
+      providerScript: []
     });
-    const created = await harness.createRun({
+    await assert.rejects(harness.createRun({
       objective: '只返回一段文字，不创建文件。',
       deliverables: [],
       capabilities: { files: true, shell: true }
-    });
-    const terminal = await harness.runToTerminal(created.runId);
-    assert.equal(Number(terminal.snapshot.persistent.run.runtime_version), 1);
-    assert.equal(terminal.snapshot.persistent.run.status, 'failed');
-    assert.equal(terminal.snapshot.persistent.run.error_code, 'AGENT_VERIFICATION_INCOMPLETE');
-    assert.equal(terminal.snapshot.persistent.reservations.length, 0);
-    assert.equal(terminal.snapshot.persistent.holds.length, 1);
-    assert.equal(terminal.snapshot.persistent.holds[0].status, 'released');
-    assert.equal(
-      terminal.snapshot.persistent.events.filter((event) => event.event_type === 'run.failed').length,
-      1
-    );
+    }), { code: 'AGENT_TEXT_ONLY_USE_DESIGN_CHAT' });
+    const state = (await pool.query(`SELECT available_credits,frozen_credits,
+      (SELECT count(*)::int FROM agent_runs WHERE user_id=$1) AS runs,
+      (SELECT count(*)::int FROM agent_budget_holds WHERE user_id=$1) AS holds,
+      (SELECT count(*)::int FROM agent_budget_reservations r JOIN agent_runs a ON a.id=r.run_id WHERE a.user_id=$1) AS reservations
+      FROM wallets WHERE user_id=$1`, [harness.userId])).rows[0];
+    assert.equal(Number(state.available_credits), 500);
+    assert.equal(Number(state.frozen_credits), 0);
+    assert.equal(state.runs, 0);
+    assert.equal(state.holds, 0);
+    assert.equal(state.reservations, 0);
   } finally {
     await harness?.cleanup();
     await pool.end();

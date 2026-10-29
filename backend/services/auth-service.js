@@ -1,4 +1,5 @@
 const { mayCreateAccount } = require('./signup-policy');
+const { initialCredits } = require('./signup-credits');
 const crypto = require('crypto');
 const { promisify } = require('util');
 
@@ -61,11 +62,6 @@ const sessionTtlMs = (env = process.env) => {
     return Math.min(days, 365) * 24 * 60 * 60 * 1000;
   }
   return DEFAULT_SESSION_TTL_MS;
-};
-
-const initialCredits = (env = process.env) => {
-  const parsed = Number.parseInt(String(env.CREDITS_INIT ?? '100'), 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 100;
 };
 
 const encodePassword = async (password) => {

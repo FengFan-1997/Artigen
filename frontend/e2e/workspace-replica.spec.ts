@@ -46,7 +46,7 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await expect(editor).toBeVisible();
   await editor.fill('# 修改后的标题\n\n保存这份报告。');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('文件已保存');
+  await expect(page.locator('.resource-workspace').getByRole('status')).toContainText('文件已保存');
   expect(workspace.saves).toHaveLength(1);
   await expect(
     page
@@ -56,7 +56,7 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   workspace.conflict = true;
   await editor.fill('# 保留冲突草稿');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('文件已在其他位置修改');
+  await expect(page.locator('.resource-workspace').getByRole('status')).toContainText('文件已在其他位置修改');
   await expect(editor).toContainText('保留冲突草稿');
   workspace.conflict = false;
   await page.getByRole('button', { name: '保存', exact: true }).click();
@@ -291,7 +291,7 @@ test('editing during a file save preserves and restores the newer draft', async 
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect.poll(() => workspace.saves.length).toBe(1);
   await editor.fill('newer unsaved text');
-  await expect(page.getByRole('status')).toContainText('文件已保存');
+  await expect(page.locator('.resource-workspace').getByRole('status')).toContainText('文件已保存');
   await expect(editor).toContainText('newer unsaved text');
   await page.waitForTimeout(500);
   page.once('dialog', (dialog) => dialog.accept());

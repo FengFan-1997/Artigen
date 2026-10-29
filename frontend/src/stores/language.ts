@@ -20,6 +20,7 @@ const translations = {
     login: {
       login: 'Login',
       register: 'Register',
+      signup_offer: 'New users get {credits} credits',
       title: 'Login',
       choose_method_title: 'Choose a login method',
       choose_method_sub: 'Select an option to continue',
@@ -104,6 +105,7 @@ const translations = {
     login: {
       login: '登录',
       register: '注册',
+      signup_offer: '新用户赠 {credits} 点',
       title: '登录',
       choose_method_title: '请选择登录方式',
       choose_method_sub: '选择以下方式继续',
