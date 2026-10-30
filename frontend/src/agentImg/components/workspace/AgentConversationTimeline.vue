@@ -45,7 +45,9 @@ const { userId, userLabel } = useUserIdentity(computed(() => props.zh));
 const eventAttachments = (event: AgentEvent): MessageAttachment[] => Array.isArray(event.data.attachments)
   ? event.data.attachments.filter((item): item is MessageAttachment => item && typeof item.assetId === 'string' && typeof item.filename === 'string') : [];
 const timeline = computed(() => conversationTimeline(props.events));
-const formatTime = (value: string) => new Date(value).toLocaleTimeString(props.zh ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+const formatTime = (value: string) => new Date(value).toLocaleTimeString(props.zh ? 'zh-CN' : 'en-US', {
+  hour: '2-digit', minute: '2-digit', ...(props.zh ? { timeZone: 'Asia/Shanghai' } : {})
+});
 const resultLabel = (status: unknown) => ({
   succeeded: props.zh ? '已完成' : 'Completed', failed: props.zh ? '失败' : 'Failed',
   skipped: props.zh ? '已跳过' : 'Skipped', running: props.zh ? '执行中' : 'Running',

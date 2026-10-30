@@ -3,7 +3,7 @@
     :visible="visible"
     :title="ui.title"
     :subtitle="ui.subtitle"
-    icon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><line x1="15" y1="8" x2="17" y2="8"></line><line x1="15" y1="12" x2="17" y2="12"></line><line x1="7" y1="16" x2="17" y2="16"></line></svg>'
+    :icon="IdCard"
     :upload-text="ui.uploadText"
     :upload-hint="ui.uploadHint"
     :reupload-text="ui.reupload"
@@ -17,14 +17,10 @@
         <div class="section-title">{{ ui.sectionTitle }}</div>
 
         <div class="form-item">
-          <label>{{ ui.typeLabel }}</label>
-          <div class="select-wrapper">
-            <CyberDropdown
-              v-model="selectedType"
-              :options="photoTypes"
-              @change="(val) => trackEvent('ID_Photo', 'select_type', val)"
-            />
-          </div>
+          <label :for="styleId">{{ ui.typeLabel }}</label>
+          <NativeSelectFrame><select :id="styleId" v-model="selectedType" class="portrait-style" @change="trackEvent('ID_Photo', 'select_type', selectedType)">
+            <option v-for="option in photoTypes" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select></NativeSelectFrame>
         </div>
 
         <div class="type-desc">
@@ -85,13 +81,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import CyberDropdown from './CyberDropdown.vue';
+import NativeSelectFrame from './NativeSelectFrame.vue';
+import { IdCard } from '@lucide/vue';
+import { computed, ref, watch, useId } from 'vue';
 import BaseTaskPopup from './BaseTaskPopup.vue';
 import { trackEvent } from '../../utils/analytics';
 import { useLanguageStore } from '@/stores/language';
 import { storeToRefs } from 'pinia';
 
+const styleId = useId();
 const props = defineProps<{
   visible: boolean;
   creditsCost?: number;
@@ -237,8 +235,22 @@ const handleGenerate = () => {
   margin-bottom: 8px;
 }
 
-.select-wrapper {
-  position: relative;
+.form-item :deep(.native-select-frame) { width: 100%; }
+
+.portrait-style {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: #fff;
+  color-scheme: dark;
+  background: #202020;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
 }
 
 .type-desc {

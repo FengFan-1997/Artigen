@@ -164,7 +164,6 @@ const setup = async (
         status: {
           enabled: true,
           workerOnline: true,
-          workerModelReady: true,
           queueDepth: 0,
           concurrency: 2,
           modelFamily: '@cf/openai/gpt-oss-120b',
@@ -186,9 +185,6 @@ const setup = async (
       });
     if (path === '/api/agent-runs') return json(route, { ok: true, runs: [currentRun] });
     if (path === `/api/agent-runs/${runId}`) return json(route, { ok: true, run: currentRun });
-    if (path === '/api/workspace/navigation') return json(route, { ok: true, projects: [], sessions: [], nextCursor: null });
-    if (path === `/api/agent-runs/${runId}/messages`) return json(route, { ok: true, messages: [], nextCursor: null });
-    if (path === `/api/agent-runs/${runId}/history`) return json(route, { ok: true, events: [] });
     if (path.endsWith('/events')) return route.abort();
     if (path.endsWith('/authorizations')) return json(route, { ok: true, authorizations: [] });
     if (path === '/api/design-conversations')
@@ -197,21 +193,18 @@ const setup = async (
       (item) => path === `/api/design-conversations/${item.conversationId}`
     );
     if (found) return json(route, { ok: true, conversation: found });
-    if (path === '/api/credits/balance') return json(route, { userId: 'polish-fixture', available: 120, frozen: currentRun.budget.frozen });
+    if (path === '/api/credits/balance') return json(route, { ok: true, balance: 120 });
     return json(route, { ok: false, error: { code: 'FIXTURE_UNEXPECTED_API' } }, 404);
   });
 };
 const select = async (page: Page, id: string) => {
-  const panel = page.locator('#workspace-history-panel');
-  if ((page.viewportSize()?.width || 1440) < 1440 && !(await panel.isVisible())) {
-    await page.getByRole('button', { name: '打开历史', exact: true }).click();
-  }
-  await page
+  const box = await page
     .locator('.history-item')
     .filter({ hasText: id === a ? '任务 A' : '任务 B' })
-    .click();
+    .boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box!.x + 40, box!.y + 15);
 };
-
 const installEventSources = async (page: Page) =>
   page.addInitScript(() => {
     const sources: Array<EventTarget & { url: string; closed: boolean }> = [];
@@ -327,16 +320,9 @@ for (const status of ['failed', 'cancelled', 'succeeded', 'paused', 'waiting_use
   test(`${status} shows real recorded steps and truthful results`, async ({ page }) => {
     await setup(page, { currentRun: run(status) });
     await page.goto(`/artigen/agent/runs/${runId}`);
-    if ((page.viewportSize()?.width || 1440) < 1440)
-      await page.getByRole('button', { name: '打开检查器', exact: true }).click();
-    await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
-    await page.getByRole('tab', { name: '计划', exact: true }).click();
-    await expect(page.locator('#workspace-panel-plan')).toContainText('记录网站证据');
-    await expect(page.locator('#workspace-panel-plan')).toContainText('制作与验证提案');
-    await expect(page.locator('#workspace-panel-plan .execution-spine article.complete')).toHaveCount(status === 'succeeded' ? 2 : 1);
+    await page.locator('.run-progress-header').click();
+    await expect(page.locator('.phase-track .done')).toHaveCount(status === 'succeeded' ? 2 : 1);
     await expect(page.getByText('计划已建立，正在按步骤推进。', { exact: true })).toHaveCount(0);
-    if ((page.viewportSize()?.width || 1440) < 1440)
-      await page.getByRole('button', { name: '关闭资源区', exact: true }).click();
     if (['failed', 'cancelled'].includes(status)) {
       await expect(page.locator('.delivery-summary')).toContainText('已保留的成果');
       await expect(page.locator('.delivery-summary')).not.toContainText('交付完成');
@@ -506,10 +492,7 @@ test('mobile inspector reaches summary and correctly labels scope and profile', 
   await page.goto('/artigen/agent');
   const opener = page.getByRole('button', { name: '打开检查器', exact: true });
   await opener.click();
-  await page
-    .getByRole('navigation', { name: '资源面板' })
-    .getByRole('button', { name: '任务', exact: true })
-    .click();
+  await page.getByRole('navigation',{name:'资源面板'}).getByRole('button',{name:'任务',exact:true}).click();
   await page.getByText('运行设置', { exact: true }).click();
   await page.getByLabel('网页操作 Beta', { exact: true }).check();
   await expect(page.getByRole('textbox', { name: '允许访问的站点', exact: true })).toBeVisible();
@@ -518,11 +501,7 @@ test('mobile inspector reaches summary and correctly labels scope and profile', 
   await page.keyboard.press('Tab');
   await expect(page.locator('summary').filter({ hasText: '技术详情' })).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(
-    page
-      .getByRole('navigation', { name: '资源面板' })
-      .getByRole('button', { name: '文件', exact: true })
-  ).toBeFocused();
+  await expect(page.getByRole('navigation',{name:'资源面板'}).getByRole('button',{name:'文件',exact:true})).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(opener).toBeFocused();
 });
@@ -564,13 +543,9 @@ test('task identity state and cost remain visible at main viewport widths', asyn
     await page.goto(`/artigen/agent/runs/${runId}`);
     await expect(page.locator('.task-heading strong')).toContainText('品牌网站审计');
     await expect(page.locator('.task-heading strong')).toBeVisible();
-    await expect(page.locator('.run-state')).toContainText('需要确认');
-    const account = page.locator('.workspace-account');
-    if (!(await account.isVisible())) await page.getByRole('button', { name: '打开历史', exact: true }).click();
-    await expect(account.locator('.account-task-cost')).toContainText('本次已用 12.5 点');
-    await expect(account.locator('.account-value')).toHaveText('可用 120 点');
-    await expect(account.getByRole('link', { name: /^点数与用量:/ })).toBeVisible();
-    if (width < 1200) await page.getByRole('button', { name: '关闭历史', exact: true }).click();
+    await expect(page.locator('.workspace-topbar .runtime-pill')).toContainText('等待你确认');
+    await expect(page.locator('.workspace-topbar .task-cost')).toContainText('已用 12.5 / 50 点');
+    await expect(page.locator('.task-cost')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
       false
     );
@@ -605,6 +580,9 @@ test('expiry removes approvals without requiring another server response', async
   await expect(page.locator('.approval-evidence')).toContainText('可以恢复上一版');
   await page.clock.runFor(61000);
   await expect(page.getByRole('button', { name: '仅批准这一次', exact: true })).toHaveCount(0);
+  const expired = page.getByRole('region', { name: '过期审批', exact: true });
+  await expect(expired).toContainText('1 项审批已过期');
+  await expect(expired.getByRole('link', { name: '查看任务', exact: true })).toHaveAttribute('href', `/artigen/agent/runs/${runId}`);
 });
 test('an in-flight decision disables conflicting approval buttons', async ({ page }) => {
   const currentRun = run('waiting_user');
@@ -759,9 +737,9 @@ test('a newer successful run reply cannot be overwritten by an older running rep
     data: {},
     createdAt: stamp
   });
-  await expect(page.locator('.execution-card').getByRole('status')).toHaveText('已完成');
+  await expect(page.locator('.workspace-topbar .runtime-pill')).toContainText('已完成');
   await page.waitForTimeout(800);
-  await expect(page.locator('.execution-card').getByRole('status')).toHaveText('已完成');
+  await expect(page.locator('.workspace-topbar .runtime-pill')).toContainText('已完成');
 });
 test('an execution-ready event survives an overlapping refresh and starts exactly once', async ({
   page
@@ -844,7 +822,7 @@ test('the header follows the latest tool execution rather than a completed histo
   });
   await page.goto(`/artigen/create?c=${a}`);
   await expect(page.locator('.workspace-topbar .runtime-pill')).toHaveText('运行中');
-  await expect(page.locator('.workspace-account .account-task-cost')).toContainText('报价 10 / 50');
+  await expect(page.locator('.workspace-topbar .task-cost')).toContainText('报价 10 / 50');
 });
 test('typing during Agent creation survives in the new-task draft after navigation', async ({
   page
@@ -921,7 +899,7 @@ test('failure copy does not infer refunds or released credits from an error code
   ).toHaveText('0 点');
   await expect(page.locator('.run-notice')).toHaveCount(0);
 });
-test('light-theme input focus remains visible on Create and Run', async ({ page }) => {
+test('light-theme input focus uses a visible inset ring on Create and Run', async ({ page }) => {
   await setup(page);
   await page.addInitScript(() =>
     localStorage.setItem(
@@ -935,9 +913,7 @@ test('light-theme input focus remains visible on Create and Run', async ({ page 
   ]) {
     await page.goto(url!);
     await page.getByRole('textbox', { name: name! }).focus();
-    await expect(page.locator(selector!)).toHaveCSS('outline-color', 'rgb(66, 100, 0)');
-    await expect(page.locator(selector!)).toHaveCSS('outline-width', '2px');
-    await expect(page.locator(selector!)).toHaveCSS('outline-style', 'solid');
+    await expect(page.locator(selector!)).toHaveCSS('box-shadow', /rgb\(66, 100, 0\).*inset/);
   }
 });
 test('rapid run approval sends once and locks conflicting actions until acknowledgement', async ({

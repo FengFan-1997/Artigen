@@ -31,6 +31,16 @@
         </div>
       </header>
 
+      <p v-if="packagesLoading" class="package-status" role="status" aria-live="polite">
+        {{ ui.loadingPackages }}
+      </p>
+      <div v-else-if="packagesError" class="package-status" role="status" aria-live="polite">
+        <span>{{ ui.packageLoadFailed }}</span>
+        <button class="package-retry" type="button" @click="loadPackageCatalogue">
+          {{ ui.retryPackages }}
+        </button>
+      </div>
+
       <div class="pricing-grid">
         <!-- Starter Pack -->
         <div class="pricing-card" v-if="!proOnly">
@@ -1285,15 +1295,18 @@ const PACKAGE_UUIDS = reactive<Record<PayPackageId, string>>({
   ultimate: ''
 });
 const packagesLoading = ref(true);
+const packagesError = ref(false);
 
 const loadPackageCatalogue = async () => {
   packagesLoading.value = true;
+  packagesError.value = false;
   for (const key of Object.keys(PACKAGE_AVAILABLE) as PayPackageId[]) {
     PACKAGE_AVAILABLE[key] = false;
     PACKAGE_UUIDS[key] = '';
   }
   const packages = await getPayPackages();
   if (!packages) {
+    packagesError.value = true;
     packagesLoading.value = false;
     return;
   }
@@ -1654,6 +1667,8 @@ const ui = computed(() => {
       computeUnit: '点数',
       buyNow: '立即购买',
       loadingPackages: '正在读取服务端套餐…',
+      packageLoadFailed: '套餐目录暂时加载失败，请重试。',
+      retryPackages: '重试加载',
       paidUnavailable: '付费功能当前不可用',
       creatingOrder: '创建订单中...',
       activateNow: '立即激活',
@@ -1789,6 +1804,8 @@ const ui = computed(() => {
     computeUnit: 'Credits',
     buyNow: 'Buy Now',
     loadingPackages: 'Loading server catalogue…',
+    packageLoadFailed: 'Could not load the package catalogue. Please retry.',
+    retryPackages: 'Retry loading',
     paidUnavailable: 'Paid features unavailable',
     creatingOrder: 'Creating...',
     activateNow: 'Activate Now',
@@ -2100,6 +2117,37 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   max-width: 860px;
 }
 
+.package-status {
+  min-height: 44px;
+  margin: 0 auto 16px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 10px;
+  color: #fbbf24;
+  background: rgba(120, 53, 15, 0.18);
+  text-align: center;
+  line-height: 24px;
+}
+
+.package-retry {
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.package-retry:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
 .generation-yield {
   margin: 10px 0 2px;
   color: #aab4ac;
@@ -2122,21 +2170,6 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   background: rgba(10, 10, 10, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.1);
   padding: 24px 20px;
-  transition:
-    transform 0.3s ease,
-    box-shadow 0.3s ease,
-    border-color 0.3s;
-  cursor: pointer;
-}
-
-.pricing-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
-  border-color: rgba(204, 255, 0, 0.3);
-}
-
-.pricing-card:active {
-  transform: translateY(-2px) scale(0.99);
 }
 
 /* Card Corners */
@@ -2145,11 +2178,6 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   width: 8px;
   height: 8px;
   border: 1px solid transparent;
-  transition: all 0.3s ease;
-}
-
-.pricing-card:hover .card-corner {
-  border-color: #666;
 }
 
 .top-left {
@@ -2425,11 +2453,6 @@ const packageButtonLabel = (packageId: PayPackageId) => {
   box-shadow: 0 0 15px rgba(16, 185, 129, 0.1);
 }
 
-.pro-theme:hover {
-  border-color: #10b981;
-  box-shadow: 0 20px 40px rgba(16, 185, 129, 0.2);
-}
-
 .pro-theme .icon {
   color: #10b981;
 }
@@ -2449,11 +2472,6 @@ const packageButtonLabel = (packageId: PayPackageId) => {
 .ultimate-theme {
   border-color: rgba(255, 215, 0, 0.6);
   box-shadow: 0 0 15px rgba(255, 215, 0, 0.1);
-}
-
-.ultimate-theme:hover {
-  border-color: #ffd700;
-  box-shadow: 0 20px 40px rgba(255, 215, 0, 0.2);
 }
 
 .ultimate-theme .icon {

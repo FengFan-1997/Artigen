@@ -1,4 +1,3 @@
-import { editorTokenContrast, unreadableEditorTokens } from './helpers/editorContrast';
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -417,7 +416,39 @@ test('editor syntax contrasts in both themes and wide tables retain readable cel
       file
     );
     await expect(page.getByRole('textbox', { name: '文件编辑器' })).toBeVisible();
-    const colors = await page.locator('.cm-content').evaluate(editorTokenContrast);
+    const colors = await page.locator('.cm-content').evaluate((e) => {
+      const lum = (rgb: string) => {
+        const [r, g, b] = rgb
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((v) => {
+            v /= 255;
+            return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+          });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      return Array.from(e.querySelectorAll('span'))
+        .filter((s) => s.textContent?.trim())
+        .map((s) => {
+          let p: Element | null = s;
+          let bg = '';
+          while (p) {
+            bg = getComputedStyle(p).backgroundColor;
+            if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') break;
+            p = p.parentElement;
+          }
+          const fg = getComputedStyle(s).color;
+          const a = lum(fg),
+            b = lum(bg);
+          return {
+            text: s.textContent,
+            color: fg,
+            background: bg,
+            ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+          };
+        });
+    });
     findings.push({ theme, colors });
     if (output)
       await page.screenshot({
@@ -427,10 +458,7 @@ test('editor syntax contrasts in both themes and wide tables retain readable cel
       });
     if (phase !== 'before') {
       expect(colors.length).toBeGreaterThan(2);
-      expect(
-        unreadableEditorTokens(colors),
-        `${theme} upstream syntax tokens below their contrast threshold: ${JSON.stringify(unreadableEditorTokens(colors))}`
-      ).toEqual([]);
+      expect(colors.every((c) => c.ratio >= 4.5)).toBe(true);
     }
     const table = page.locator('.timeline-message table').last();
     if (phase !== 'before')
@@ -530,9 +558,11 @@ test('a short viewport keeps command actions and keyboard focus inside the dialo
   await expect(page.getByRole('dialog', { name: '命令面板' })).toBeVisible();
   const last = page.locator('.command-palette button').last();
   await last.focus();
-  expect(await hit(page, '.command-palette button:last-child')).toBe(true);
+  expect(await hit(page, '#workspace-command-options > .command-option:last-child')).toBe(true);
+  // Options use roving aria-activedescendant; the close button is the final Tab stop.
+  await page.locator('.command-close').focus();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('searchbox', { name: '搜索页面或动作' })).toBeFocused();
+  await expect(page.getByRole('combobox', { name: '搜索页面或动作' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });

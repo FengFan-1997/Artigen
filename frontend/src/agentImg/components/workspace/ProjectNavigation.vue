@@ -6,33 +6,38 @@
         ><WorkspaceIcon name="plus"
       /></router-link>
     </div>
-    <form v-if="editing" ref="sessionEditor" class="session-editor" @submit.prevent="save">
+    <form v-if="editing" ref="sessionEditor" class="session-editor" :aria-label="zh ? '编辑会话' : 'Edit chat'" :aria-busy="saving" @submit.prevent="save">
+      <h2><WorkspaceIcon name="settings" :size="16" />{{ zh ? '编辑会话' : 'Edit chat' }}</h2>
       <label
         >{{ zh ? '会话名称' : 'Chat title' }}<input v-model="title" required maxlength="160"
       /></label>
       <label
         >{{ zh ? '所属项目' : 'Project'
-        }}<select v-model="projectChoice">
+        }}<NativeSelectFrame><select class="workspace-select" v-model="projectChoice">
           <option value="">{{ zh ? '未归类' : 'Ungrouped' }}</option>
           <option v-for="p in projects" :key="p.projectId" :value="p.projectId">
             {{ p.title }}
           </option>
-        </select></label
+        </select></NativeSelectFrame></label
       >
-      <p v-if="saveError" role="alert">{{ saveError }}</p>
+      <p v-if="error === 'save'" class="session-save-error" role="alert">{{ zh ? '会话未保存，输入内容已保留，请重试。' : 'Chat was not saved. Your edits are kept; try again.' }}</p>
       <div>
-        <button type="button" :disabled="saving" @click="editing = null">
+        <button class="session-cancel" type="button" :disabled="saving" @click="editing = null">
           {{ zh ? '取消' : 'Cancel' }}</button
-        ><button :disabled="saving">{{ zh ? '保存' : 'Save' }}</button>
+        ><button class="session-save" type="submit" :disabled="saving">{{ zh ? '保存' : 'Save' }}</button>
       </div>
     </form>
-    <p v-if="error" role="status">
+    <p v-if="error === 'load'" role="status">
       {{ zh ? '项目目录暂时无法读取。' : 'Could not load projects.' }}
       <button @click="load(false)">{{ zh ? '重试' : 'Retry' }}</button>
     </p>
     <template v-for="project in visibleProjects" :key="project.projectId">
       <div class="project-heading">
         <button
+          class="project-toggle"
+          type="button"
+          :title="project.title"
+          :aria-controls="`${navigationId}-${project.projectId}`"
           :aria-expanded="!collapsed.has(project.projectId)"
           @click="toggle(project.projectId)"
         >
@@ -41,20 +46,26 @@
             :size="14"
           /><WorkspaceIcon name="folder" /><span>{{ project.title }}</span></button
         ><button
+          class="project-new-chat"
+          type="button"
           :aria-label="zh ? `在${project.title}中新建会话` : `New chat in ${project.title}`"
           @click="newChat(project.projectId)"
         >
           <WorkspaceIcon name="plus" />
         </button>
       </div>
-      <div v-if="!collapsed.has(project.projectId)" class="project-sessions">
+      <div v-show="!collapsed.has(project.projectId)" :id="`${navigationId}-${project.projectId}`" class="project-sessions">
         <div
           v-for="item in filtered(project.projectId)"
           :key="item.id"
           class="session-row"
           :class="{ selected: selected(item) }"
         >
-          <router-link :to="link(item)" @click="$emit('navigate')"
+          <router-link
+            :to="link(item)"
+            :aria-current="selected(item) ? 'page' : undefined"
+            :title="item.title"
+            @click="$emit('navigate')"
             ><i :class="{ running: active(item.status) }"></i
             ><span>{{ item.title }}</span></router-link
           ><button
@@ -83,7 +94,11 @@
       class="session-row"
       :class="{ selected: selected(item) }"
     >
-      <router-link :to="link(item)" @click="$emit('navigate')"
+      <router-link
+        :to="link(item)"
+        :aria-current="selected(item) ? 'page' : undefined"
+        :title="item.title"
+        @click="$emit('navigate')"
         ><i :class="{ running: active(item.status) }"></i><span>{{ item.title }}</span></router-link
       ><button
         v-if="item.kind === 'conversation'"
@@ -97,14 +112,22 @@
         <WorkspaceIcon name="settings" :size="14" />
       </button>
     </div>
-    <button v-if="cursor" class="load-more" :disabled="loading" @click="load(true)">
-      {{ zh ? '加载更多会话' : 'Load more chats' }}
+    <p v-if="search && !loading && !error && !visibleProjects.length && !filtered(null).length" class="navigation-empty" role="status">
+      {{ zh ? '已加载内容中没有匹配项' : 'No matches in loaded items' }}
+    </p>
+    <p v-if="error === 'more'" class="navigation-more-error" role="status">
+      {{ zh ? '更多会话暂时无法读取，已加载会话仍保留。' : 'Could not load more chats. Your loaded chats are kept.' }}
+    </p>
+    <button v-if="cursor" type="button" class="load-more" :disabled="loading" :aria-busy="loading" @click="load(true)">
+      <span>{{ loading ? (zh ? '正在加载…' : 'Loading…') : error === 'more' ? (zh ? '重试加载更多' : 'Retry loading more') : (zh ? '加载更多会话' : 'Load more chats') }}</span>
+      <WorkspaceIcon :name="error === 'more' ? 'refresh' : 'chevron-down'" :size="14" />
     </button>
-    <slot v-if="error || (!loading && !sessions.length && !projects.length)" />
+    <slot v-if="error === 'load' || (!loading && !sessions.length && !projects.length)" />
   </div>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import NativeSelectFrame from '../NativeSelectFrame.vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import WorkspaceIcon from './WorkspaceIcon.vue';
 import {
@@ -116,18 +139,18 @@ const props = defineProps<{ zh: boolean; search: string }>();
 const emit = defineEmits<{ navigate: [] }>();
 const route = useRoute();
 const router = useRouter();
+const navigationId = useId();
 const projects = ref<{ projectId: string; title: string }[]>([]);
 const sessions = ref<WorkspaceSession[]>([]);
 const cursor = ref<string | null>(null);
-const error = ref('');
-const saveError = ref('');
+const error = ref<'' | 'load' | 'more' | 'save'>('');
 const loading = ref(false);
 const collapsed = ref(new Set<string>());
 const editing = ref<WorkspaceSession | null>(null);
 const sessionEditor = ref<HTMLFormElement | null>(null);
 watch(editing, async (value) => {
-  saveError.value = '';
   if (!value) return;
+  if (error.value === 'save') error.value = '';
   await nextTick();
   const input = sessionEditor.value?.querySelector('input');
   input?.focus({ preventScroll: true });
@@ -179,6 +202,7 @@ const newChat = (projectId: string) => {
   void router.push({ path: '/artigen/create', query: { projectId } });
 };
 async function load(append: boolean) {
+  if (append && (loading.value || !cursor.value)) return;
   const ticket = ++revision;
   loading.value = true;
   error.value = '';
@@ -189,8 +213,8 @@ async function load(append: boolean) {
     const merged = append ? [...sessions.value, ...data.sessions] : data.sessions;
     sessions.value = [...new Map(merged.map((s) => [s.kind + s.id, s])).values()];
     cursor.value = data.nextCursor;
-  } catch (e) {
-    if (ticket === revision) error.value = String(e);
+  } catch {
+    if (ticket === revision) error.value = append ? 'more' : 'load';
   } finally {
     if (ticket === revision) loading.value = false;
   }
@@ -198,7 +222,7 @@ async function load(append: boolean) {
 async function save() {
   if (!editing.value || saving.value) return;
   saving.value = true;
-  saveError.value = '';
+  error.value = '';
   const ticket = revision;
   try {
     await updateWorkspaceConversation(editing.value.id, {
@@ -208,10 +232,8 @@ async function save() {
     if (ticket !== revision) return;
     editing.value = null;
     await load(false);
-  } catch (e) {
-    if (ticket === revision) saveError.value = (e instanceof Error ? e.message : String(e)) === 'WORKSPACE_CONVERSATION_PROJECT_LOCKED'
-      ? (props.zh ? '包含执行记录的会话，请从任务的 GitHub 面板关联项目；已有项目不能迁移。名称仍可修改。' : 'For a chat with execution history, link a project from the task’s GitHub panel. An existing project cannot be changed. You can still edit the title.')
-      : (props.zh ? '会话未保存，请重试。修改内容已保留。' : 'Could not save the chat. Your changes are kept; try again.');
+  } catch {
+    if (ticket === revision) error.value = 'save';
   } finally {
     saving.value = false;
   }
@@ -263,26 +285,42 @@ button {
   align-items: center;
   margin-top: 7px;
 }
-.project-heading > button:first-child {
-  display: flex;
+.project-toggle {
+  display: grid;
+  grid-template-columns: 14px 16px minmax(0, 1fr);
   flex: 1;
   min-width: 0;
+  min-height: 32px;
   align-items: center;
   gap: 8px;
-  padding: 7px 5px;
+  padding: 6px 5px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
   text-align: left;
 }
-.project-heading span {
+.project-toggle > .workspace-icon { color: var(--muted); }
+.project-toggle span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
 }
-.project-heading > button:last-child {
+.project-new-chat {
   display: grid;
+  flex: 0 0 auto;
   place-items: center;
-  width: 28px;
+  width: 32px;
   height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.project-heading > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  .project-new-chat { visibility: hidden; }
+  .project-heading:is(:hover, :focus-within) .project-new-chat { visibility: visible; }
+  .project-heading > button:hover { background: var(--surface-hover); color: var(--text); }
 }
 .project-sessions {
   padding-left: 16px;
@@ -293,7 +331,11 @@ button {
   min-width: 0;
 }
 .session-row.selected {
-  background: var(--surface-hover);
+  background: var(--surface-selected);
+}
+.session-row.selected a {
+  color: var(--text);
+  font-weight: 560;
 }
 .session-row a {
   display: flex;
@@ -321,14 +363,22 @@ button {
   background: var(--acid);
 }
 .session-row > button {
-  width: 28px;
   display: grid;
+  flex: 0 0 32px;
   place-items: center;
+  width: 32px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--muted);
   opacity: 0;
 }
 .session-row:hover > button,
 .session-row:focus-within > button {
   opacity: 1;
+}
+.session-row > button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) {
+  .session-row > button:hover { color: var(--text); background: var(--surface-hover); }
 }
 .empty-project {
   display: block;
@@ -337,32 +387,90 @@ button {
   font-size: 12px;
 }
 .load-more {
-  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 7px;
   color: var(--muted);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+}
+.load-more:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.load-more:disabled { opacity: 1; cursor: progress; }
+.navigation-more-error { margin: 2px 0 0; line-height: 1.6; }
+@media (hover: hover) and (pointer: fine) {
+  .load-more:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
 }
 .session-editor {
   display: grid;
+  min-width: 0;
   gap: 12px;
-  padding: 12px 4px;
+  margin: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface);
 }
+.session-editor h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+.session-editor h2 .workspace-icon { color: var(--muted); }
 .session-editor label {
   display: grid;
-  gap: 5px;
+  min-width: 0;
+  gap: 6px;
+  color: var(--muted);
   font-size: 12px;
+  line-height: 18px;
 }
-.session-editor input,
-.session-editor select {
+.session-editor select { width: 100%; }
+.session-editor input {
+  box-sizing: border-box;
   min-width: 0;
   width: 100%;
-  background: var(--surface);
+  min-height: 36px;
+  padding: 7px 9px;
   border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
   color: var(--text);
-  padding: 8px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
 }
 .session-editor > div {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 6px;
+}
+.session-editor button {
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.session-editor .session-cancel { color: var(--muted); }
+.session-editor .session-save { color: var(--text); background: var(--surface-raised); font-weight: 500; }
+.session-editor :is(input,select,button):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.session-editor button:disabled { opacity: .5; cursor: progress; }
+.session-save-error { margin: 0; color: var(--danger); font-size: 12px; line-height: 1.6; }
+@media (hover: hover) and (pointer: fine) {
+  .session-editor button:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+}
+.navigation-empty {
+  margin: 8px 0;
+  line-height: 1.6;
 }
 .project-navigation > p {
   color: var(--muted);
@@ -376,16 +484,15 @@ button {
   select {
     min-height: 44px;
   }
-  input,
-  select {
-    font-size: 16px;
-  }
+  .session-editor :is(input,select,button) { min-height: 44px; }
+  .session-editor :is(input,select) { font-size: 16px; }
   .navigation-caption a,
-  .project-heading > button:last-child {
+  .project-new-chat {
     min-width: 44px;
   }
   .session-row > button {
     opacity: 1;
+    flex-basis: 44px;
     min-width: 44px;
   }
 }

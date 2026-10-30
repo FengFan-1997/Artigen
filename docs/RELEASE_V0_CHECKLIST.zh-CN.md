@@ -12,7 +12,7 @@
 4. 查看、下载生成产物；
 5. 刷新、重新登录或短暂断线后可以看到任务状态。
 
-公开注册、Runtime V2、子 Agent、Provider Scheduler 和高并发 campaign 在本 Beta 中保持关闭。既有爱支付能力保留，本轮不执行真实下单或付款测试；“不测试支付”不等于关闭支付。支付仍由平台实际配置控制，readiness 不代表真实付款验收。
+公开注册、自助支付、Runtime V2、子 Agent、Provider Scheduler 和高并发 campaign 在本 Beta 中保持关闭。支付和数据库相关 readiness 仍然可以存在，但 readiness 不等于用户流量已经开放。
 
 ## 环境真相
 
@@ -26,7 +26,7 @@
 
 生产、DEV 和未知环境按发布策略关闭公开注册，即使平台误设 `ARTIGEN_PUBLIC_SIGNUP_ENABLED=true` 也不会开放。邀请用户通过平台 Secret `ARTIGEN_INVITE_EMAILS` 维护，使用逗号分隔的规范化邮箱地址；不要把真实邀请名单提交到仓库。名单变更后必须重新执行登录、注册、项目创建和生成 smoke。密码注册、OTP 自动建号、Google 自动建号共用同一策略；已有用户不因移出邀请名单而被禁止登录，停用账号必须走管理员停用入口。
 
-生产蓝图使用最小常驻 `starter` 实例，避免 Beta 用户第一次访问时遇到 Free 实例冷启动。DEV 可以继续使用 Free 计划，但不能把 DEV 的冷启动行为当作生产可用性证据。
+当前 Production Render 保持 Free；用户已明确接受冷启动，因此 Beta 计划不自动升级实例或产生固定月费。Free 实例唤醒时首个请求可能明显延迟或触发上游超时，邀请测试和发布记录必须把这项限制说清楚，不能承诺首请求始终快速可用。DEV 也可以继续使用 Free，但 DEV 的冷启动行为不能代替生产可用性证据。只有在用户决定接受常驻成本、或产品需要稳定首请求时，才重新评估最小 `starter` 实例。
 
 ## 配置对照与开放顺序
 
@@ -34,7 +34,7 @@
 | --- | --- | --- | --- |
 | 环境名 | DEV API 使用 `APP_ENV=dev`，Preview 只指向 DEV | `APP_ENV=production` | meta.environment |
 | 公开注册 | 关闭；真实名单只放平台 Secret | 关闭；真实名单只放平台 Secret | 非受邀密码/OTP/Google 创建均 403 |
-| 既有爱支付 | 恢复原有开启配置，本轮不测试付款 | 保持已有平台配置 | `PAYMENTS_ENABLED` 由平台管理，蓝图不覆盖；API、readiness、meta 共用解析器 |
+| 自助支付 | `PAYMENTS_ENABLED=false` | `PAYMENTS_ENABLED=false` | API、readiness、meta 共用同一解析函数 |
 | 生成与钱包 | `PAID_FEATURES_ENABLED` 与生成开关验收后开启 | DEV 验收后设置同等配置 | 不能为了关闭支付而关闭生成/钱包 |
 | Runtime V2 | `AGENT_RUNTIME_V2_ENABLED=false` | 同左 | 原有真实开关，不新增同义开关 |
 | 数据库/对象存储 | DEV 库与 DEV bucket/prefix | 独立生产库与生产 bucket/prefix | 隔离检查、上传/读取/删除 |
@@ -43,7 +43,7 @@
 
 蓝图目前仍保守关闭生成、OTP 等依赖能力；这表示“待配置验收”，不表示直接套用蓝图就能交付 MVP。不要批量打开开关。先核对 Secret、迁移与存储隔离，再逐项开启并测试。
 
-上轮引入但未接入运行时的 `ARTIGEN_SELF_SERVE_PAYMENTS_ENABLED`、`ARTIGEN_AGENT_RUNTIME_V2_ENABLED` 已删除，统一使用现有 `PAYMENTS_ENABLED`、`AGENT_RUNTIME_V2_ENABLED`。发布门禁允许既有支付开启，不要求通过关闭支付来跳过付款测试；不改变账务记录或钱包余额。
+上轮引入但未接入运行时的 `ARTIGEN_SELF_SERVE_PAYMENTS_ENABLED`、`ARTIGEN_AGENT_RUNTIME_V2_ENABLED` 已删除，统一使用现有 `PAYMENTS_ENABLED`、`AGENT_RUNTIME_V2_ENABLED`。支付关闭不改变已有账务记录，也不删除钱包余额。
 
 ## 提交门禁
 
@@ -130,9 +130,5 @@ Beta 开放前必须留下一份不含秘密的恢复记录：
 | 版本回滚 | 上一 SHA、三端版本、探针、登录/生成/下载结果 | 待执行 |
 
 数据库使用现有 `pnpm db:backup:neon` 与 `pnpm db:restore:verify`；后者会重建目标 public schema，只能指向专用可丢弃的 restore/verify/drill 数据库，绝不能填生产或 DEV 业务库。先确认备份与独立恢复目标，不把生产数据复制进共享测试环境。对象存储只对演练前缀和合成文件操作。
-
-备份/审计按 `PG_OPS_EXPECTED_MAJOR=16`（生产默认）或 `18`（托管 DEV）明确选择版本；
-恢复由 manifest 固定同版本目标与客户端。工具的 Docker 合成数据演练与实际环境恢复记录分开，
-具体命令和边界见 [生产 Runbook 的数据库备份章节](../PRODUCTION_RUNBOOK.zh-CN.md#4-数据库备份)。
 
 邀请名单和反馈明细保留在私有记录中。每人记录 3 次任务的首次完成耗时、成功/失败、下载结果、重试意愿、成功任务模型成本。先收满至少 5 人和 15 次真实任务的证据，再判断 90% 成功率；不提前填写通过。

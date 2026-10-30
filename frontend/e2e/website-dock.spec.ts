@@ -1,0 +1,32 @@
+import { expect, test } from '@playwright/test';
+import { zipSync, strToU8 } from 'fflate';
+import { installWorkspaceFixture } from './helpers/workspaceReplicaFixtures';
+import { inputRunId } from './helpers/agentInputFixtures';
+
+test('switching a website and an edited file retains the unsaved draft', async ({ page }) => {
+  const fixture = await installWorkspaceFixture(page);
+  const artifactUrl = `/api/agent-runs/${inputRunId}/artifacts/51111111-1111-4111-8111-111111111111`;
+  fixture.state.run.artifacts = [{ artifactId: '51111111-1111-4111-8111-111111111111', assetId: null, parentArtifactId: null, role: 'website', filename: 'preview.zip', mimeType: 'application/zip', byteSize: 200, sha256: 'b'.repeat(64), version: 1, verificationStatus: 'passed', verification: {}, sources: [], costCredits: 0, url: artifactUrl, expiresAt: '2027-09-14T08:00:00.000Z', createdAt: '2026-08-14T08:00:00.000Z' }];
+  const archive = zipSync({ 'index.html': strToU8('<!doctype html><h1>预览内容</h1>') });
+  await page.route(`**${artifactUrl}`, route => route.fulfill({ contentType: 'application/zip', body: Buffer.from(archive) }));
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  const nav = page.getByRole('navigation', { name: '资源面板', exact: true });
+  await nav.getByRole('button', { name: '文件', exact: true }).click();
+  const tree = page.getByRole('complementary', { name: '文件目录', exact: true });
+  await tree.getByRole('button', { name: 'docs', exact: true }).click();
+  await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+  await page.getByRole('button', { name: '源码', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '文件编辑器', exact: true });
+  await editor.fill('未保存的编辑内容');
+  await nav.getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+  await page.getByRole('button', { name: '预览 preview.zip', exact: true }).click();
+  const preview = page.getByRole('region', { name: '网站预览', exact: true });
+  await expect(preview.frameLocator('iframe').getByRole('heading', { name: '预览内容' })).toBeVisible();
+  await nav.getByRole('button', { name: '文件', exact: true }).click();
+  await expect(editor).toContainText('未保存的编辑内容');
+  await nav.getByRole('button', { name: '网页', exact: true }).click();
+  await expect(preview.frameLocator('iframe').getByRole('heading', { name: '预览内容' })).toBeVisible();
+  expect(fixture.workspace.saves).toHaveLength(0);
+});

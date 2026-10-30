@@ -1,5 +1,7 @@
 import path from 'node:path';
+import { strToU8, zipSync } from 'fflate';
 import { expect, test, type Page } from '@playwright/test';
+import { installAgentInputFixture } from './helpers/agentInputFixtures';
 import { expectWorkspaceGeometry, installDevEnvironmentBadge } from './helpers/workspaceLayoutAudit';
 
 const auditWorkspaceAccessibility = async (page: Page) => page.locator('.agent-workspace-shell').evaluate((root) => {
@@ -145,26 +147,6 @@ const baseRun = {
   updatedAt: now
 };
 
-const installRunReadModels = async (page: Page) => {
-  await page.route('**/api/workspace/navigation*', route => route.fulfill({
-    json: { ok: true, projects: [], sessions: [], nextCursor: null }
-  }));
-  await page.route('**/api/credits/balance?*', route => route.fulfill({
-    json: { userId: 'agent-e2e', available: 87.5, frozen: 30 }
-  }));
-  await page.route('**/api/credits/holds?*', route => route.fulfill({ json: { ok: true, holds: [] } }));
-  await page.route(`**/api/agent-runs/${runId}`, route => route.fulfill({ json: { ok: true, run: baseRun } }));
-  await page.route('**/api/agent-runs/*/events', route => route.abort());
-  await page.route('**/api/agent-runs/*/history?*', route => route.fulfill({ json: { ok: true, events: [] } }));
-  await page.route('**/api/agent-runs/*/messages*', route => route.fulfill({
-    json: { ok: true, messages: [], nextCursor: null }
-  }));
-  await page.route('**/api/agent/status', route => route.fulfill({
-    json: { ok: true, status: { enabled: true, workerOnline: true, workerModelReady: true,
-      queueDepth: 0, concurrency: 2, modelFamily: '@cf/openai/gpt-oss-120b' } }
-  }));
-};
-
 const installSharedApi = async (
   page: Page,
   options: {
@@ -177,14 +159,18 @@ const installSharedApi = async (
     quoteRequirements?: Record<string, boolean>;
   } = {}
 ) => {
-  await installRunReadModels(page);
   await page.route('**/api/workspace/navigation', route => route.fulfill({contentType:'application/json',body:'{\"ok\":true,\"projects\":[],\"sessions\":[],\"nextCursor\":null}'}));
   let quoteRequestCount = 0;
   // Advanced-control cases exercise an explicitly expanded Inspector. The
   // default collapsed zero state is covered in agent-workspace-polish.spec.ts.
   await page.addInitScript(() => {
     if (!localStorage.getItem('artigen-workspace-preferences')) {
-      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 4, inspectorVisibility: { compose: false, task: false }, resourceMode:'task', theme: 'dark' }));
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
+        version: 4,
+        inspectorVisibility: { compose: false, task: false },
+        resourceMode: 'task',
+        theme: 'dark'
+      }));
     }
   });
   await page.route('**/api/auth/session', (route) => route.fulfill({
@@ -300,7 +286,6 @@ const installRunApi = async (
     onCancelRun?: () => void;
   } = {}
 ) => {
-  await installRunReadModels(page);
   let currentRun = structuredClone(options.run || baseRun);
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: 200,
@@ -322,7 +307,6 @@ const installRunApi = async (
     contentType: 'application/json',
     body: JSON.stringify({ ok: true, run: currentRun })
   }));
-  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: { ok: true, events: [] } }));
   await page.route(`**/api/agent-runs/${runId}/events`, (route) => route.abort());
   await page.route(`**/api/agent-runs/${runId}/subagents/*/cancel`, (route) => {
     const subagentId = new URL(route.request().url()).pathname.split('/').at(-2) || '';
@@ -378,6 +362,31 @@ test('computer Agent uses the unified three-lane workspace and five live inspect
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-workbench-1440-dark.png', fullPage: true });
   }
+});
+
+test('task suggestions disclose their action and focus the editable objective', async ({ page }) => {
+  await installSharedApi(page);
+  await page.goto('/artigen/agent');
+
+  const suggestion = page.getByRole('button', { name: '整理资料并生成多格式文件', exact: true });
+  const arrow = suggestion.locator('.prompt-suggestion-arrow');
+  const objective = page.getByRole('textbox', { name: '任务目标' });
+  const preset = '整理我提供的资料，制定一套完整设计方案，并交付可编辑报告、数据表和演示文稿。';
+  const coarsePointer = await page.evaluate(() => matchMedia('(pointer: coarse)').matches);
+
+  if (coarsePointer) {
+    await expect(arrow).toHaveCSS('opacity', '1');
+  } else {
+    await expect(arrow).toHaveCSS('opacity', '0');
+    await suggestion.focus();
+    await expect(arrow).toHaveCSS('opacity', '1');
+  }
+
+  await suggestion.click();
+  await expect(objective).toHaveValue(preset);
+  await expect(objective).toBeFocused();
+  await expect(objective).toHaveCSS('outline-style', 'none');
+  await expect.poll(() => objective.evaluate((element) => (element as HTMLTextAreaElement).selectionStart)).toBe(preset.length);
 });
 
 test('every visible workspace chrome control performs its advertised action', async ({ page }) => {
@@ -451,11 +460,78 @@ test('command palette is global, keyboard trapped, and returns focus on Escape',
   await page.keyboard.press('Control+K');
   const palette = page.getByRole('dialog', { name: '命令面板' });
   await expect(palette).toBeVisible();
-  await expect(palette.getByPlaceholder('搜索页面或动作…')).toBeFocused();
+  const input = palette.getByRole('combobox', { name: '搜索页面或动作' });
+  const options = palette.getByRole('option');
+  await expect(input).toBeFocused();
   await expect(palette).toContainText('电脑 Agent');
+  await expect(options).toHaveCount(5);
+  const close = palette.getByRole('button', { name: '关闭命令面板', exact: true });
+  await input.press('Tab');
+  await expect(close).toBeFocused();
+  await close.press('Shift+Tab');
+  await expect(input).toBeFocused();
+  await close.click();
+  await expect(palette).toBeHidden();
+  await expect(newTask).toBeFocused();
+  await page.keyboard.press('Control+K');
+  await expect(input).toBeFocused();
+  await expect(options.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowUp');
+  await expect(options.nth(4)).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('ArrowDown');
+  await expect(options.nth(0)).toHaveAttribute('aria-selected', 'true');
+  await options.nth(2).hover();
+  await expect(options.nth(2)).toHaveAttribute('aria-selected', 'true');
+  await expect(input).toHaveAttribute('aria-activedescendant', 'workspace-command-agent');
+  await page.keyboard.press('ArrowUp');
+  await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+  await input.fill('没有这个操作');
+  await expect(palette.getByRole('status')).toHaveText('没有匹配的操作');
+  await expect(input).not.toHaveAttribute('aria-activedescendant');
+  await page.keyboard.press('Enter');
+  await expect(palette).toBeVisible();
+  await input.fill('设计 Agent');
+  await expect(options).toHaveCount(1);
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Escape');
   await expect(palette).toBeHidden();
   await expect(newTask).toBeFocused();
+  await page.keyboard.press('Control+K');
+  await input.fill('设计 Agent');
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/artigen\/create/);
+
+  await page.goto('/artigen/agent');
+  await page.getByRole('button', { name: '外观：深色' }).click();
+  const shell = page.locator('.agent-workspace-shell');
+  await expect(shell).toHaveAttribute('data-theme', 'light');
+  await page.keyboard.press('Control+K');
+  await expect(input).toBeFocused();
+  await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+  const themeColors = await options.first().evaluate((option) => {
+    const palette = option.closest('.command-palette')!;
+    const bg = getComputedStyle(option).backgroundColor;
+    const paletteBg = getComputedStyle(palette).backgroundColor;
+    const fg = getComputedStyle(option.querySelector('b')!).color;
+    const channels = (color: string) => (color.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const luminance = (color: string) => channels(color).map((value) => {
+      const channel = value / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    }).reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const [high, low] = [luminance(fg), luminance(bg)].sort((a, b) => b - a);
+    return { bg, paletteBg, contrast: (high + 0.05) / (low + 0.05) };
+  });
+  expect(themeColors.bg).not.toBe(themeColors.paletteBg);
+  expect(themeColors.contrast).toBeGreaterThanOrEqual(4.5);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+K');
+  await expect(palette).toBeVisible();
+  const bounds = await palette.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
 test('desktop panel separators expose values and support arrows plus Home and End', async ({ page }) => {
@@ -657,8 +733,7 @@ test('image and subagent controls fail closed when production flags are unavaila
   await expect(imageCapability.locator('input')).toBeDisabled();
   const subagentCapability = page.locator('.capability-list label').filter({ hasText: '并行处理' });
   await expect(subagentCapability.locator('input')).toBeDisabled();
-  await expect(page.locator('.runtime-pill.warning')).toHaveCount(0);
-  await expect(page.locator('.task-meta')).toHaveCount(0);
+  await expect(page.locator('.runtime-pill')).toContainText('单 Agent 就绪');
 });
 
 test('run detail exposes parent plus three isolated subagents and cancels one without stopping the parent', async ({ page, browserName }) => {
@@ -675,18 +750,225 @@ test('run detail exposes parent plus three isolated subagents and cancels one wi
   await expect(page.locator('.subagent-card').nth(0)).toContainText('竞品定位');
   await expect(page.locator('.subagent-card').nth(1)).toContainText('视觉系统');
   await expect(page.locator('.subagent-card').nth(2)).toContainText('体验建议');
+  await expect(page.locator('.subagent-card').nth(0).locator('.subagent-status-label')).toHaveText('执行中');
+  await expect(page.locator('.subagent-card').nth(1).locator('.subagent-status-label')).toHaveText('已完成');
+  await expect(page.locator('.subagent-card').nth(0).locator('.subagent-meta > span')).toHaveText([
+    '7 / 20 步',
+    '1.25 点'
+  ]);
+  await expect(page.locator('.subagent-status i').first()).toHaveAttribute('aria-hidden', 'true');
   if (process.env.ARTIGEN_CAPTURE_REVIEW && browserName === 'chromium') {
     await page.screenshot({ path: '.impeccable/review/agent-run-detail-1440-dark.png', fullPage: true });
   }
 
+  const statusContrast = async () => page.locator('.subagent-status-label').evaluateAll((labels) => {
+    const channels = (value: string) => (value.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+    const luminance = (value: string) => channels(value).reduce((sum, channel, index) => {
+      const normalized = channel / 255;
+      const linear = normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      return sum + linear * [0.2126, 0.7152, 0.0722][index];
+    }, 0);
+    return labels.map((label) => {
+      const foreground = luminance(getComputedStyle(label).color);
+      const background = luminance(getComputedStyle(label.closest('.subagent-card')!).backgroundColor);
+      return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+    });
+  });
+  expect((await statusContrast()).every((ratio) => ratio >= 4.5)).toBe(true);
+  await page.getByRole('button', { name: '外观：深色' }).click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
+  expect((await statusContrast()).every((ratio) => ratio >= 4.5)).toBe(true);
+  await page.getByRole('button', { name: '外观：浅色' }).click();
+  await page.getByRole('button', { name: /外观：/ }).click();
+  await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'dark');
+
   await page.locator('.subagent-card').nth(0).getByRole('button', { name: '取消这个子 Agent' }).click();
   await expect.poll(() => cancelled).toEqual([childIds[0]]);
   await expect(page.locator('.subagent-card').nth(0)).toContainText('已取消');
-  await expect(page.locator('.run-state')).toContainText('执行中');
+  await expect(page.locator('.subagent-card').nth(0).locator('.subagent-status')).toHaveAttribute('data-status', 'cancelled');
+  await expect(page.locator('.runtime-pill')).toContainText('执行中');
+});
+
+test('run delivery labels are clear in the Files inspector and final response', async ({ page }, testInfo) => {
+  const deliveryRun = structuredClone(baseRun) as typeof baseRun;
+  deliveryRun.status = 'failed';
+  deliveryRun.subagents = [];
+  const artifact = deliveryRun.artifacts[0];
+  deliveryRun.artifacts = [
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111101', filename: 'brand-launch-research-accessibility-evidence-final-report.pdf', mimeType: 'application/pdf', byteSize: 245760, version: 1, verificationStatus: 'passed' },
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111102', filename: 'menu.csv', mimeType: 'text/csv', byteSize: 381, version: 2, verificationStatus: 'pending' },
+    { ...artifact, artifactId: '51111111-1111-4111-8111-111111111103', filename: 'launch-notes.md', mimeType: 'text/markdown', byteSize: 1275, version: 1, verificationStatus: 'failed' }
+  ];
+
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('delivery-language-initialized')) {
+      localStorage.setItem('app_lang', 'zh');
+      sessionStorage.setItem('delivery-language-initialized', '1');
+    }
+    localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode: 'task', theme: 'dark' }));
+  });
+  await installRunApi(page, { run: deliveryRun });
+  await page.route('**/api/workspace/navigation', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, projects: [], sessions: [], nextCursor: null }) }));
+  await page.route(`**/api/agent-runs/${runId}/messages*`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, messages: [], nextCursor: null }) }));
+  if (testInfo.project.name.includes('mobile-390')) await page.setViewportSize({ width: 390, height: 844 });
+  else await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.locator('.delivery-summary')).toBeVisible();
+  await page.locator('.conversation-scroll').evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  if (testInfo.project.name.includes('mobile-')) await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+
+  const statusLabels = page.locator('.file-list em');
+  await expect(statusLabels).toHaveText(['验证通过', '待验证', '验证失败']);
+  await expect(page.locator('.delivery-summary .artifact-verification')).toHaveText(['验证通过', '待验证', '验证失败']);
+  await expect(page.locator('.file-list a > span')).toHaveText(['PDF', 'CSV', 'MD']);
+  await expect(page.locator('.delivery-summary a > span')).toHaveText(['PDF', 'CSV', 'MD']);
+  for (const selector of ['.delivery-summary a', '.file-list a']) {
+    const file = page.locator(selector).first();
+    await expect(file).toHaveAttribute('title', deliveryRun.artifacts[0].filename);
+    expect(await file.evaluate((element) => {
+      const row = element.getBoundingClientRect(), download = element.querySelector('svg')!.getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && download.right <= row.right && download.left >= row.left;
+    })).toBe(true);
+  }
+  await expect(page.locator('#workspace-panel-files')).toContainText('交付文件');
+  await expect(page.locator('#workspace-panel-files')).not.toContainText(/passed|pending|failed/);
+  await expect(page.locator('.delivery-summary')).not.toContainText(/passed|pending|failed/);
+  const badgeGeometry = await page.locator('.artifact-verification').evaluateAll((badges) => badges.map((badge) => ({
+    width: badge.getBoundingClientRect().width,
+    parentWidth: badge.parentElement?.getBoundingClientRect().width || 0,
+    justifySelf: getComputedStyle(badge).justifySelf
+  })));
+  expect(badgeGeometry.every((badge) => badge.width < badge.parentWidth * 0.5 && badge.justifySelf === 'start')).toBe(true);
+
+  const contrastRatios = async () => page.locator('.artifact-verification').evaluateAll((badges) => {
+    const channels = (value: string) => (value.match(/[\d.]+/g) || []).map(Number);
+    const rgb = (value: string) => {
+      const color = channels(value).slice(0, 3);
+      return value.startsWith('color(srgb') ? color.map((channel) => channel * 255) : color;
+    };
+    const luminance = (value: string) => {
+      const [red, green, blue] = rgb(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+    };
+    return badges.map((badge) => {
+      let ancestor: Element | null = badge;
+      let background = 'rgb(20, 22, 18)';
+      while (ancestor) {
+        const candidate = getComputedStyle(ancestor).backgroundColor;
+        const alpha = channels(candidate)[3] ?? 1;
+        if (candidate !== 'transparent' && alpha >= 0.95) { background = candidate; break; }
+        ancestor = ancestor.parentElement;
+      }
+      const foregroundLight = luminance(getComputedStyle(badge).color);
+      const backgroundLight = luminance(background);
+      return { ratio: (Math.max(foregroundLight, backgroundLight) + 0.05) / (Math.min(foregroundLight, backgroundLight) + 0.05), text: badge.textContent?.trim() };
+    });
+  });
+  expect((await contrastRatios()).every(({ ratio }) => ratio >= 4.5)).toBe(true);
+  const darkAppearance = page.getByRole('button', { name: '外观：深色', exact: true });
+  if (await darkAppearance.isVisible()) {
+    await darkAppearance.click();
+    await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'light');
+    expect((await contrastRatios()).every(({ ratio }) => ratio >= 4.5)).toBe(true);
+    await page.getByRole('button', { name: '外观：浅色', exact: true }).click();
+    await page.getByRole('button', { name: '外观：跟随系统', exact: true }).click();
+    await expect(page.locator('.agent-workspace-shell')).toHaveAttribute('data-theme', 'dark');
+  }
+  if (process.env.ARTIGEN_DELIVERY_CAPTURE && !testInfo.project.name.includes('mobile-')) {
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.screenshot({ path: process.env.ARTIGEN_DELIVERY_CAPTURE, animations: 'disabled' });
+  }
+
+  await page.evaluate(() => localStorage.setItem('app_lang', 'en'));
+  await page.reload();
+  await expect(page.locator('.delivery-summary')).toBeVisible();
+  if (testInfo.project.name.includes('mobile-')) await page.getByRole('button', { name: 'Open inspector' }).click();
+  await page.getByRole('navigation', { name: 'Resources' }).getByRole('button', { name: 'Task', exact: true }).click();
+  await page.getByRole('tab', { name: /Files/ }).click();
+  await expect(page.locator('.file-list em')).toHaveText(['Verified', 'Pending verification', 'Verification failed']);
+  await expect(page.locator('.delivery-summary .artifact-verification')).toHaveText(['Verified', 'Pending verification', 'Verification failed']);
+  await expect(page.locator('#workspace-panel-files')).toContainText('Deliverables');
+});
+
+test('website preview keeps long filenames and its close action inside the viewport', async ({ page }, testInfo) => {
+  const theme = process.env.ARTIGEN_PREVIEW_THEME === 'light' ? 'light' : 'dark';
+  const filename = `${'brand-review-layout-accessibility-mobile-desktop-'.repeat(4)}website.zip`;
+  const previewRun = structuredClone(baseRun);
+  previewRun.status = 'succeeded';
+  previewRun.subagents = [];
+  previewRun.artifacts = [{ ...previewRun.artifacts[0], role: 'website', filename, mimeType: 'application/zip' }];
+  const archive = zipSync({ 'index.html': strToU8('<!doctype html><html><head><meta charset="utf-8"></head><body><h1>Artigen 网站预览</h1><p>已验证的本地测试页面。</p></body></html>') });
+  await page.addInitScript((theme) => {
+    localStorage.setItem('app_lang', 'zh');
+    localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode: 'task', theme }));
+  }, theme);
+  await installRunApi(page, { run: previewRun });
+  await page.route('**/api/workspace/navigation*', (route) => route.fulfill({ json: { ok: true, projects: [], sessions: [], nextCursor: null } }));
+  await page.route(`**/api/agent-runs/${runId}/messages*`, (route) => route.fulfill({ json: { ok: true, messages: [], nextCursor: null } }));
+  await page.route(`**${previewRun.artifacts[0].url}`, (route) => route.fulfill({ contentType: 'application/zip', body: Buffer.from(archive) }));
+  await page.goto(`/artigen/agent/runs/${runId}`);
+  await expect(page.locator('.delivery-summary')).toBeVisible();
+  if (testInfo.project.name.includes('mobile-')) await page.getByRole('button', { name: '打开检查器' }).click();
+  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('tab', { name: /文件/ }).click();
+  const trigger = page.getByRole('button', { name: `预览 ${filename}`, exact: true });
+  await expect(trigger).toHaveAttribute('title', filename);
+  await trigger.click();
+  const dialog = page.getByRole('region', { name: '网站预览', exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '网页', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dialog.frameLocator('iframe').getByRole('heading', { name: 'Artigen 网站预览' })).toBeVisible();
+  const close = dialog.getByRole('button', { name: '关闭预览', exact: true });
+  const closeBox = await close.boundingBox();
+  expect(closeBox).not.toBeNull();
+  expect(closeBox!.width).toBe(testInfo.project.name.includes('mobile-') ? 44 : 32);
+  expect(closeBox!.height).toBe(testInfo.project.name.includes('mobile-') ? 44 : 32);
+  const tab = page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '网页', exact: true });
+  const tabBox = await tab.boundingBox();
+  expect(tabBox).not.toBeNull();
+  const tabListBox = await page.locator('.resource-tabs-list').boundingBox();
+  expect(tabListBox).not.toBeNull();
+  expect(tabBox!.x).toBeGreaterThanOrEqual(tabListBox!.x - 1);
+  expect(tabBox!.x + tabBox!.width).toBeLessThanOrEqual(tabListBox!.x + tabListBox!.width + 1);
+  if (testInfo.project.name.includes('mobile-')) expect(tabBox!.height).toBeGreaterThanOrEqual(44);
+  else expect(tabBox!.width).toBeLessThan(100);
+  await page.mouse.move(0, 0);
+  if (process.env.ARTIGEN_PREVIEW_CAPTURE) await page.screenshot({ path: path.join(process.env.ARTIGEN_PREVIEW_CAPTURE, `${testInfo.project.name}.png`), animations: 'disabled' });
+  const geometry = await dialog.evaluate((element) => {
+    const header = element.querySelector('header')!;
+    const button = header.querySelector('button')!.getBoundingClientRect();
+    const bounds = element.getBoundingClientRect();
+    return { buttonLeft: button.left, buttonRight: button.right, dialogLeft: bounds.left, dialogRight: bounds.right, headerWidth: header.clientWidth, headerScrollWidth: header.scrollWidth, headerHeight: header.getBoundingClientRect().height };
+  });
+  expect(geometry.buttonLeft).toBeGreaterThanOrEqual(geometry.dialogLeft);
+  expect(geometry.buttonRight).toBeLessThanOrEqual(geometry.dialogRight);
+  expect(geometry.headerScrollWidth).toBeLessThanOrEqual(geometry.headerWidth + 1);
+  expect(geometry.headerHeight).toBeLessThanOrEqual(testInfo.project.name.includes('mobile-') ? 64 : 56);
+  await expect(dialog.locator('strong')).toHaveAttribute('title', filename);
+  await expect(close).toBeFocused();
+  await expect(dialog.locator('iframe')).toHaveAttribute('sandbox', 'allow-scripts');
+  await expect(dialog.locator('iframe')).toHaveAttribute('referrerpolicy', 'no-referrer');
+  const tabs = page.getByRole('navigation', { name: '资源面板' });
+  await tabs.getByRole('button', { name: '文件', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await tabs.getByRole('button', { name: '网页', exact: true }).click();
+  await expect(dialog.frameLocator('iframe').getByRole('heading', { name: 'Artigen 网站预览' })).toBeVisible();
+  await close.focus();
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await close.click();
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
 });
 
 test('switching run history replaces the run, event stream and audit timeline', async ({ page }) => {
-  await installRunReadModels(page);
   const secondRunId = '51111111-1111-4111-8111-111111111112';
   const secondRun = {
     ...structuredClone(baseRun),
@@ -772,21 +1054,20 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: /文件/ }).click();
   await expect(page.locator('#workspace-panel-files')).toContainText('artigen-design-audit.pdf');
-  await expect(page.locator('#workspace-panel-files')).toContainText('passed');
+  await expect(page.locator('#workspace-panel-files')).toContainText('验证通过');
   await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: '环境' }).click();
-  await expect(page.locator('.workspace-account .account-task-cost')).toContainText('本次已用 12.5 点');
-  await expect(page.locator('.workspace-account .account-value')).toHaveText('可用 87.5 点');
-  await expect(page.locator('#workspace-panel-environment')).toContainText('任务预算50 点');
-  await expect(page.getByRole('link', { name: /^点数与用量:/ })).toBeVisible();
+  await expect(page.locator('.workspace-topbar .task-cost')).toHaveText('已用 12.5 / 50 点');
+  await expect(page.getByRole('link', { name: '点数与用量', exact: true })).toBeVisible();
 
-  await page.getByLabel('更多任务操作', { exact: true }).click();
-  const stop = page.getByRole('button', { name: '结束任务并结算', exact: true });
+  const runMenu = page.locator('details.run-menu');
+  await runMenu.locator('summary').click();
+  const stop = runMenu.getByRole('button', { name: '结束任务并结算', exact: true });
   await stop.click();
   expect(cancelRequests).toBe(0);
-  await expect(page.getByRole('button', { name: '确认结束并结算', exact: true })).toBeVisible();
+  await expect(runMenu.getByRole('button', { name: '确认结束并结算', exact: true })).toBeVisible();
   await expect(page.locator('.run-notice')).toContainText('未使用冻结点数会释放');
-  await page.getByRole('button', { name: '确认结束并结算', exact: true }).click();
+  await runMenu.getByRole('button', { name: '确认结束并结算', exact: true }).click();
   await expect.poll(() => cancelRequests).toBe(1);
 });
 
@@ -812,6 +1093,19 @@ test('approval denial reason is explicitly labelled and keeps one recommended ac
 
   const reason = page.getByLabel('拒绝原因（可选）');
   await expect(reason).toBeVisible();
+  const approvalFacts = page.locator('.approval-card dl > div');
+  await expect(approvalFacts).toHaveCount(3);
+  const factStyles = await approvalFacts.evaluateAll((facts) => facts.map((fact) => {
+    const style = getComputedStyle(fact);
+    return { background: style.backgroundColor, radius: style.borderRadius, columns: style.gridTemplateColumns };
+  }));
+  expect(factStyles.every((fact) => fact.background === 'rgba(0, 0, 0, 0)' && fact.radius === '0px')).toBe(true);
+  expect(factStyles.every((fact) => fact.columns.split(' ').length === 2)).toBe(true);
+  const actionAndScrollBounds = await page.locator('.approval-card footer').evaluate((footer) => ({
+    footerBottom: footer.getBoundingClientRect().bottom,
+    scrollBottom: document.querySelector('.conversation-scroll')!.getBoundingClientRect().bottom
+  }));
+  expect(actionAndScrollBounds.footerBottom).toBeLessThanOrEqual(actionAndScrollBounds.scrollBottom);
   await reason.fill('需要先确认品牌团队意见');
   await expect(page.locator('.approval-card .approval-primary')).toHaveCount(1);
   await expect(page.getByRole('button', { name: '拒绝' })).toBeVisible();
@@ -977,83 +1271,87 @@ test('dark, light, system and reduced-motion workspace states keep names and con
   expect(duration).toBeLessThanOrEqual(0.02);
 });
 
-test('conversation activity restores commentary, tool calls and user updates after reload', async ({ page }, testInfo) => {
-  await installRunApi(page);
-  const events = Array.from({ length: 12 }, (_, index) => ({
-    eventId: String(index + 2), runId, subagentId: null, type: 'step.recorded', phase: 'running',
-    summary: `检查文件内容 ${index + 1}`, data: { toolName: 'sandbox_shell', status: index === 11 ? 'failed' : 'succeeded' }, createdAt: now
-  }));
-  const history = [
-    { eventId: '1', runId, subagentId: null, type: 'assistant.message', phase: 'running', summary: '我先查看已有菜单，再调整价格。', data: {}, createdAt: now },
-    ...events,
-    { eventId: '14', runId, subagentId: null, type: 'run.input_received', phase: 'running', summary: '已收到补充信息', data: { messageText: '保留原来的名称，只改价格。' }, createdAt: now },
-    { eventId: '15', runId, subagentId: null, type: 'context.input_applied', phase: 'running', summary: '你的补充要求已加入当前执行上下文。', data: {}, createdAt: now }
-  ];
-  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({
-    json: { ok: true, events: new URL(route.request().url()).searchParams.get('after') === '0' ? history : [] }
-  }));
-  await page.goto(`/artigen/agent/runs/${runId}`);
-  const timeline = page.getByRole('region', { name: '协作记录' });
-  await expect(timeline.getByText('我先查看已有菜单，再调整价格。')).toBeVisible();
-  await expect(timeline.locator('.tool-entry')).toHaveCount(12);
-  await timeline.locator('.tool-entry').first().locator('summary').click();
-  await expect(timeline.locator('.tool-entry').first().locator('dd').filter({ hasText: 'sandbox_shell' })).toBeVisible();
-  await expect(timeline.locator('.tool-entry.failed')).toHaveCount(1);
-  if (process.env.ARTIGEN_TIMELINE_SCREENSHOT_DIR) {
-    await page.screenshot({ path: path.join(process.env.ARTIGEN_TIMELINE_SCREENSHOT_DIR, `timeline-${testInfo.project.name}.png`), fullPage: true });
-  }
-  await expect(timeline.getByText('保留原来的名称，只改价格。')).toBeVisible();
+test('appearance reflects the selected mode across controls and preserves system preference', async ({ page }) => {
+  let quoteRequests = 0;
+  const created: Array<Record<string, unknown>> = [];
+  await installSharedApi(page, { onQuote: () => { quoteRequests += 1; }, onCreate: body => created.push(body) });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/artigen/agent');
+  const shell = page.locator('.agent-workspace-shell');
+  const appearance = page.locator('.workspace-rail').getByRole('button', { name: /^外观：/ });
+  const objective = page.getByRole('textbox', { name: '任务目标', exact: true });
+  await objective.fill('保留当前未发送任务');
+  await appearance.click();
+  await expect(shell).toHaveAttribute('data-theme', 'light');
+  await expect(appearance.locator('svg circle')).toHaveCount(1);
+  await expect(appearance).toHaveAttribute('aria-label', '外观：浅色');
+  await expect(appearance).toHaveAttribute('title', '切换到跟随系统');
+  await expect(appearance).toHaveAccessibleDescription('切换到跟随系统');
+  await appearance.click();
+  await expect(appearance.locator('svg rect')).toHaveCount(1);
+  await expect(appearance).toHaveAttribute('aria-label', '外观：跟随系统');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(shell).toHaveAttribute('data-theme', 'light');
+  await expect(appearance.locator('svg rect')).toHaveCount(1);
+  await page.keyboard.press('Control+K');
+  const palette = page.getByRole('dialog', { name: '命令面板', exact: true });
+  await palette.getByRole('combobox', { name: '搜索页面或动作' }).fill('切换主题');
+  const command = palette.getByRole('option', { name: /切换主题/ });
+  await expect(command.locator('svg rect')).toHaveCount(1);
+  await palette.getByRole('combobox', { name: '搜索页面或动作' }).press('Enter');
+  await expect(palette).toHaveCount(0);
+  await expect(shell).toHaveAttribute('data-theme', 'dark');
+  await expect(appearance.locator('svg circle, svg rect')).toHaveCount(0);
+  await expect(objective).toHaveValue('保留当前未发送任务');
+  await appearance.click();
+  await appearance.click();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('artigen-workspace-preferences')!).theme)).toBe('system');
   await page.reload();
-  await expect(timeline.locator('.tool-entry')).toHaveCount(12);
-  await expect(timeline.getByText('保留原来的名称，只改价格。')).toHaveCount(1);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-});
-
-test('terminal activity drains older history pages even without a live event stream', async ({ page }) => {
-  await installRunApi(page, { run: { ...baseRun, status: 'succeeded' } });
-  const cursors: string[] = [];
-  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => {
-    const after = new URL(route.request().url()).searchParams.get('after') || '0';
-    cursors.push(after);
-    const events = after === '0' ? Array.from({ length: 500 }, (_, i) => ({
-      eventId: String(i + 1), runId, type: 'cost.updated', summary: 'usage', data: {}, createdAt: now
-    })) : after === '500' ? [{ eventId: '501', runId, type: 'assistant.message', summary: '历史尾页的交付说明', data: {}, createdAt: now }] : [];
-    return route.fulfill({ json: { ok: true, events } });
-  });
-  await page.goto(`/artigen/agent/runs/${runId}`);
-  await expect(page.getByRole('region', { name: '协作记录' }).getByText('历史尾页的交付说明')).toBeVisible();
-  expect(cursors).toContain('500');
+  await expect(appearance).toHaveAttribute('aria-label', '外观：跟随系统');
+  await expect(appearance.locator('svg rect')).toHaveCount(1);
+  await expect(shell).toHaveAttribute('data-theme', 'light');
+  expect(quoteRequests).toBe(0);
+  expect(created).toHaveLength(0);
 });
 
 
-test('switching history isolates task activity and clears the prior stop confirmation', async ({ page }) => {
-  await installRunApi(page);
-  const secondId = '99999999-9999-4999-8999-999999999999';
-  const second = { ...baseRun, runId: secondId, objective: '第二个独立任务', objectivePreview: '第二个独立任务' };
-  await page.route('**/api/agent-runs', (route) => route.fulfill({ json: { ok: true, runs: [baseRun, second] } }));
-  await page.route(`**/api/agent-runs/${secondId}`, (route) => route.fulfill({ json: { ok: true, run: second } }));
-  await page.route(`**/api/agent-runs/${secondId}/events`, (route) => route.abort());
-  for (const id of [runId, secondId]) {
-    await page.route(`**/api/agent-runs/${id}/history?*`, (route) => route.fulfill({ json: { ok: true,
-      events: new URL(route.request().url()).searchParams.get('after') === '0' ? [
-        { eventId: id === runId ? '1' : '2', runId: id, type: 'assistant.message', summary: id === runId ? '第一个任务的记录' : '第二个任务的记录', data: {}, createdAt: now }
-      ] : []
-    } }));
-  }
-  await page.goto(`/artigen/agent/runs/${runId}`);
-  const activity = page.getByRole('region', { name: '协作记录' });
-  await expect(activity).toContainText('第一个任务的记录');
-  await page.getByLabel('更多任务操作', { exact: true }).click();
-  await page.getByRole('button', { name: '结束任务并结算', exact: true }).click();
-  await expect(page.getByRole('button', { name: '确认结束并结算', exact: true })).toBeVisible();
-  const next = page.locator(`a[href="/artigen/agent/runs/${secondId}"]`);
-  if (!await next.isVisible()) await page.getByRole('button', { name: '打开历史' }).click();
-  await next.click();
-  if ((page.viewportSize()?.width || 1440) < 1440)
-    await expect(page.locator('#workspace-history-panel')).toHaveAttribute('aria-hidden', 'true');
-  await expect(activity).toContainText('第二个任务的记录');
-  await expect(activity).not.toContainText('第一个任务的记录');
-  await page.getByLabel('更多任务操作', { exact: true }).click();
-  await expect(page.getByRole('button', { name: '结束任务并结算', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '确认结束并结算', exact: true })).toHaveCount(0);
+test('budget slider announces units and invalidates an earlier quote when changed', async ({ page }) => {
+  const { state } = await installAgentInputFixture(page, { inspector: true });
+  await page.goto('/artigen/agent');
+  await page.getByRole('textbox', { name: '任务目标', exact: true }).fill('修改预算后重新确认报价再启动');
+  const resources = page.getByRole('navigation', { name: '资源面板', exact: true });
+  if (!await resources.isVisible()) await page.getByRole('button', { name: '打开检查器', exact: true }).click();
+  await resources.getByRole('button', { name: '任务', exact: true }).click();
+  const budget = page.getByRole('slider', { name: '最高预算点数', exact: true });
+  await expect(budget).toHaveAttribute('aria-valuetext', '50 点');
+  await expect(budget).toHaveAccessibleDescription('按实际使用结算，未使用部分自动释放。');
+  await budget.press('Home');
+  await expect(budget).toHaveValue('10');
+  await budget.press('ArrowLeft');
+  await expect(budget).toHaveValue('10');
+  await budget.press('End');
+  await expect(budget).toHaveValue('500');
+  await budget.press('ArrowRight');
+  await expect(budget).toHaveValue('500');
+  await budget.press('Home');
+  for (let i = 0; i < 5; i++) await budget.press('ArrowRight');
+  await expect(budget).toHaveAttribute('aria-valuetext', '60 点');
+  await page.getByRole('button', { name: '发送任务目标', exact: true }).click();
+  const confirm = page.getByRole('button', { name: '确认并运行', exact: true });
+  await expect(confirm).toBeEnabled();
+  expect(state.quotes.map(body => body.maxCredits)).toEqual([60]);
+  await budget.press('ArrowRight');
+  await expect(budget).toHaveAttribute('aria-valuetext', '70 点');
+  await expect(confirm).toHaveCount(0);
+  await expect(page.getByText('任务内容已更新', { exact: true })).toBeVisible();
+  expect(state.quotes).toHaveLength(1);
+  expect(state.creates).toHaveLength(0);
+  await page.getByRole('button', { name: '发送任务目标', exact: true }).click();
+  await expect(confirm).toBeEnabled();
+  expect(state.quotes.map(body => body.maxCredits)).toEqual([60, 70]);
+  await confirm.click();
+  await expect(page).toHaveURL(`/artigen/agent/runs/${runId}`);
+  expect(state.creates).toHaveLength(1);
+  expect(state.creates[0].maxCredits).toBe(70);
+  expect(state.unknown).toEqual([]);
 });

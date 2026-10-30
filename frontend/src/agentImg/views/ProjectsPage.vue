@@ -368,10 +368,11 @@ onBeforeUnmount(() => window.removeEventListener('app-auth-changed', handleAuthC
 <style scoped>
 .projects-page { min-height: 100vh; color: #f7f8f2; text-align: left; background: #080a0d; }
 .projects-shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 56px 0 96px; }
-.projects-hero { display: flex; justify-content: space-between; gap: 48px; align-items: end; padding: 48px; border: 1px solid #2a302d; border-radius: 28px; background: radial-gradient(circle at 82% 0, rgba(204,255,0,.16), transparent 34%), #111512; }
+.projects-hero { display: flex; justify-content: space-between; gap: 32px; align-items: center; padding: 28px 32px; border: 0; border-radius: 18px; background: #111311; }
 .projects-hero-copy { flex: 1 1 0; min-width: 0; }
-.projects-hero h1 { max-width: 760px; margin: 8px 0 14px; font-size: clamp(36px, 5vw, 68px); line-height: .98; letter-spacing: -.055em; }
-.projects-hero p:not(.eyebrow) { max-width: 680px; color: #aeb7af; font-size: 17px; line-height: 1.7; }
+.projects-hero h1 { max-width: 760px; margin: 8px 0 10px; font-size: clamp(30px, 3.1vw, 42px); line-height: 1.08; letter-spacing: -.035em; }
+.projects-hero p:not(.eyebrow) { max-width: 680px; color: #aeb7af; font-size: 15px; line-height: 1.55; }
+.projects-hero .project-primary-action { min-height: 44px; padding: 0 16px; border-radius: 10px; font-size: 13px; }
 .eyebrow { margin: 0; color: #ccff00; font-size: 12px; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
 .project-primary-action,.project-secondary-action,.project-text-action { display: inline-flex; width: auto; height: auto; align-items: center; justify-content: center; border: 0; box-shadow: none; cursor: pointer; font: inherit; font-weight: 800; }
 .project-primary-action { flex: 0 0 auto; min-height: 48px; padding: 0 22px; border-radius: 14px; color: #111; background: #ccff00; }
@@ -405,6 +406,6 @@ textarea { resize: vertical; }
 .card-text-button { border: 0; padding: 0; background: none; color: #838d85; cursor: pointer; font: inherit; font-size: 12px; font-weight: 750; }
 .empty-state { display: grid; justify-items: start; gap: 10px; padding: 42px; border: 1px dashed #343d35; border-radius: 16px; color: #919b93; }
 .empty-state strong { color: #fff; font-size: 18px; }
-@media (max-width: 900px) { .projects-hero { align-items: start; flex-direction: column; padding: 32px; } .projects-hero-copy { width: 100%; } .project-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 620px) { .projects-shell { width: min(100% - 24px, 1180px); padding-top: 24px; } .projects-hero,.composer-card,.projects-section { padding: 22px; border-radius: 18px; } .form-grid,.project-grid { grid-template-columns: 1fr; } .form-grid .full { grid-column: auto; } .composer-actions { align-items: stretch; flex-direction: column; } .composer-actions .project-primary-action { width: 100%; } }
+@media (max-width: 900px) { .projects-hero { align-items: start; flex-direction: column; gap: 18px; padding: 24px; } .projects-hero-copy { width: 100%; } .project-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .projects-shell { width: min(100% - 24px, 1180px); padding-top: 24px; } .projects-hero { padding: 20px; border-radius: 16px; } .projects-hero h1 { font-size: clamp(28px, 8vw, 32px); } .composer-card,.projects-section { padding: 22px; border-radius: 18px; } .form-grid,.project-grid { grid-template-columns: 1fr; } .form-grid .full { grid-column: auto; } .composer-actions { align-items: stretch; flex-direction: column; } .composer-actions .project-primary-action { width: 100%; } }
 </style>

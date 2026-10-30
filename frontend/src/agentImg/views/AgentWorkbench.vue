@@ -37,7 +37,7 @@
     </template>
 
     <section class="agent-conversation" :class="{ active: hasConversation }">
-      <div ref="conversationScroll" class="conversation-scroll" aria-live="polite">
+      <div class="conversation-scroll" aria-live="polite">
         <div v-if="!hasConversation" class="conversation-empty">
           <h1>{{ zh ? '今天要一起完成什么？' : 'What should we finish together?' }}</h1>
         </div>
@@ -66,7 +66,10 @@
                   <p>{{ scopeReceipt }}</p>
                   <p v-if="form.capabilities.browser">{{ zh ? '允许访问：' : 'Allowed sites: ' }}{{ browserConfig().allowedOrigins?.join(' · ') || '—' }}</p>
                   <p v-if="selectedFiles.length">{{ zh ? '参考文件：' : 'References: ' }}{{ selectedFiles.map(file => file.name).join(' · ') }}</p>
-                  <button type="button" :disabled="busy" @click="editQuotedRequest">{{ zh ? '修改要求与附件' : 'Edit request and references' }}</button>
+                  <button class="quote-edit" type="button" :disabled="busy" @click="editQuotedRequest">
+                    <span>{{ zh ? '修改要求与附件' : 'Edit request and references' }}</span>
+                    <WorkspaceIcon name="arrow-right" :size="16" />
+                  </button>
                 </section>
                 <dl class="quote-summary">
                   <div><dt>{{ zh ? '预计' : 'Estimate' }}</dt><dd>{{ quote.estimatedCredits.minimum }}–{{ quote.estimatedCredits.maximum }} {{ zh ? '点' : 'cr' }}</dd></div>
@@ -89,7 +92,7 @@
         </div>
       </div>
 
-      <div class="conversation-dock" :style="{ paddingInlineEnd: `calc(var(--conversation-gutter) + ${scrollbarGutter}px)` }">
+      <div class="conversation-dock">
         <div class="objective-composer">
           <ComposerBox
             ref="objectiveComposer"
@@ -114,9 +117,12 @@
             @remove-attachment="removeSelectedFile"
           />
         </div>
-        <p v-if="draftRestored" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿；如需参考文件，请重新选择。' : 'Your local draft was restored. Choose any reference files again.' }}</p>
-        <div v-if="!hasConversation && !form.objective.trim() && !selectedFiles.length" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
-          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)"><WorkspaceIcon :name="suggestionIcons[index]" :size="16" /><span>{{ suggestionLabels[index] }}</span></button>
+        <DraftRestoredNotice v-if="draftRestored" :zh="zh" />
+        <div v-if="!hasConversation" class="prompt-suggestions" :aria-label="zh ? '任务建议' : 'Task suggestions'">
+          <button v-for="(preset, index) in presets" :key="preset" type="button" @click="applyPreset(index)">
+            <span>{{ suggestionLabels[index] }}</span>
+            <WorkspaceIcon class="prompt-suggestion-arrow" name="arrow-right" />
+          </button>
         </div>
       </div>
     </section>
@@ -143,10 +149,11 @@
         </section>
         <section class="inspector-card">
           <header><span>{{ zh ? '交付物' : 'Deliverables' }}</span></header>
-          <div class="option-grid">
-            <label v-for="item in deliverableOptions" :key="item.id" :class="{ disabled: item.disabled }">
+          <div class="option-grid" role="group" :aria-label="zh ? '交付物' : 'Deliverables'">
+            <label v-for="item in deliverableOptions" :key="item.id" :class="{ disabled: item.disabled, selected: form.deliverables[item.id] }">
+              <b class="deliverable-format">{{ item.code }}</b>
+              <span class="deliverable-label">{{ item.label }}<small v-if="item.disabled">{{ zh ? '暂不可用' : 'Unavailable' }}</small></span>
               <input v-model="form.deliverables[item.id]" :name="`deliverable-${item.id}`" type="checkbox" :disabled="item.disabled" />
-              <span><b>{{ item.code }}</b><small>{{ item.label }}</small></span>
             </label>
           </div>
         </section>
@@ -166,17 +173,21 @@
             <small id="agent-origin-help">{{ zh ? '填写完整 HTTPS 站点，不含路径；多个站点用逗号分隔。' : 'Use HTTPS origins without paths. Separate sites with commas.' }}</small>
             <label><input v-model="form.persistSession" name="persist-browser-session" type="checkbox" />{{ zh ? '加密保存会话 30 天' : 'Encrypt session for 30 days' }}</label>
             <label v-if="browserProfiles.length" for="agent-browser-profile">{{ zh ? '恢复已保存的会话' : 'Restore saved session' }}</label>
-            <select v-if="browserProfiles.length" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
+            <NativeSelectFrame v-if="browserProfiles.length"><select class="workspace-select" id="agent-browser-profile" v-model="form.profileId" name="browser-profile" @change="selectBrowserProfile">
               <option value="">{{ zh ? '不恢复已保存会话' : 'No saved session' }}</option>
               <option v-for="profile in browserProfiles" :key="profile.profileId" :value="profile.profileId">{{ profile.label }} · {{ profile.siteOrigin }}</option>
-            </select>
+            </select></NativeSelectFrame>
             <button v-if="form.profileId" type="button" class="text-danger" @click="revokeSelectedProfile">{{ zh ? '撤销会话' : 'Revoke session' }}</button>
           </section>
         </TechnicalDetails>
-        <section class="inspector-card">
-          <header><span>{{ zh ? '最高预算' : 'Maximum budget' }}</span><b>{{ form.maxCredits }} {{ zh ? '点' : 'cr' }}</b></header>
-          <input v-model.number="form.maxCredits" name="max-credits" class="budget-range" type="range" min="10" max="500" step="10" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" />
-          <small>{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
+        <section class="inspector-card budget-card">
+          <header>
+            <label for="agent-max-credits">{{ zh ? '最高预算' : 'Maximum budget' }}</label>
+            <output for="agent-max-credits" aria-live="off">{{ form.maxCredits }} <span>{{ zh ? '点' : 'cr' }}</span></output>
+          </header>
+          <input id="agent-max-credits" v-model.number="form.maxCredits" name="max-credits" class="budget-range" type="range" :min="budgetLimits.min" :max="budgetLimits.max" :step="budgetLimits.step" :aria-label="zh ? '最高预算点数' : 'Maximum credit budget'" :aria-valuetext="`${form.maxCredits} ${zh ? '点' : 'credits'}`" aria-describedby="agent-budget-help" />
+          <div class="budget-scale" aria-hidden="true"><span>{{ budgetLimits.min }} {{ zh ? '点' : 'cr' }}</span><span>{{ budgetLimits.max }} {{ zh ? '点' : 'cr' }}</span></div>
+          <small id="agent-budget-help">{{ zh ? '按实际使用结算，未使用部分自动释放。' : 'Actual usage only; unused hold is released.' }}</small>
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
@@ -251,17 +262,18 @@
 </template>
 
 <script setup lang="ts">
-import { useScrollbarGutter } from '../composables/useScrollbarGutter';
-import { computed, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
+import NativeSelectFrame from '../components/NativeSelectFrame.vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRef, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useLanguageStore } from '@/stores/language';
 import { getCurrentUserId } from '@/login/session';
 import { useWorkspaceDraft } from '../composables/useWorkspaceDraft';
-import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
+import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
 import { mergeReferenceFiles, referenceFileKey } from '../utils/referenceFiles';
 import {
   createAgentRun,
@@ -311,8 +323,7 @@ const busy = computed(() => quoting.value || creating.value);
 const hasConversation = computed(() => Boolean(
   submittedObjective.value || quoting.value || quote.value || notice.value
 ));
-const conversationScroll = ref<HTMLElement | null>(null);
-const scrollbarGutter = useScrollbarGutter(conversationScroll);
+const budgetLimits = { min: 10, max: 500, step: 10 };
 const form = reactive({
   objective: '',
   maxCredits: 50,
@@ -503,7 +514,7 @@ const workspaceStatus = computed<{ label: string; tone: 'ready' | 'busy' | 'warn
     return { label: creating.value ? (zh.value ? '正在启动' : 'Starting') : (zh.value ? '正在报价' : 'Quoting'), tone: 'busy' };
   }
   if (!serviceStatus.value?.subagentsEnabled) {
-    return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'ready' };
+    return { label: zh.value ? '单 Agent 就绪' : 'Single Agent ready', tone: 'warning' };
   }
   return { label: zh.value ? 'Agent 就绪' : 'Agent ready', tone: 'ready' };
 });
@@ -526,7 +537,6 @@ const filteredRuns = (search: string) => {
   if (!query) return runs.value;
   return runs.value.filter((run) => `${run.objectivePreview || ''} ${run.status}`.toLocaleLowerCase().includes(query));
 };
-const suggestionIcons = ['search', 'file', 'image'] as const;
 const presets = computed(() => zh.value
   ? [
       '研究三个直接竞品。把品牌定位、视觉系统和产品体验分别委派给三个子 Agent，最后交付带来源的 Markdown 与 PDF 提案。',
@@ -541,8 +551,10 @@ const presets = computed(() => zh.value
 const suggestionLabels = computed(() => zh.value
   ? ['研究竞品并交付提案', '整理资料并生成多格式文件', '生成可评审的图片设计稿']
   : ['Research competitors and deliver a proposal', 'Turn references into editable files', 'Create a review-ready image design']);
-const applyPreset = (index: number) => {
+const applyPreset = async (index: number) => {
   form.objective = presets.value[index] || '';
+  await nextTick();
+  objectiveComposer.value?.focusAtEnd();
 };
 const resetRunDraft = () => {
   form.objective = '';
@@ -834,15 +846,17 @@ onBeforeUnmount(() => {
 .agent-conversation { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
 .agent-conversation:not(.active) { grid-template-columns:minmax(0,1fr); grid-template-rows: auto auto; align-content: safe center; padding-block: 48px; overflow-y: auto; }
 .agent-conversation:not(.active) .conversation-scroll { overflow: visible; }
-.conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.conversation-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
 .conversation-empty { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 0 0 10px; justify-items: start; }
 .conversation-empty h1 { margin: 0; color: var(--text); font-size: clamp(28px, 3vw, 36px); font-weight: 680; line-height: 1.18; letter-spacing: -.035em; text-wrap: balance; }
-.prompt-suggestions { display: flex; flex-wrap: wrap; width: min(var(--conversation-max), 100%); gap: 8px; margin: 16px auto 0; }
-.prompt-suggestions button { display: inline-flex; align-items:center; gap:8px; max-width:100%; min-height: 36px; padding: 7px 10px; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
+.prompt-suggestions { display: grid; width: min(var(--conversation-max), 100%); gap: 4px; margin: 20px auto 0; }
+.prompt-suggestions button { display: grid; grid-template-columns: minmax(0, 1fr) 16px; gap: 12px; align-items: center; width: 100%; min-height: 42px; padding: 9px 10px; color: var(--muted); border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; transition: background-color 160ms ease, color 160ms ease, transform 120ms cubic-bezier(.23,1,.32,1); }
 .prompt-suggestions button:hover { color: var(--text); background: var(--surface-hover); }
 .prompt-suggestions button:active { transform: scale(.995); }
 .prompt-suggestions button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.prompt-suggestions span { font-size: 13px; line-height:20px; }
+.prompt-suggestions span { font-size: 14px; }
+.prompt-suggestion-arrow { justify-self: end; color: var(--acid-text); opacity: 0; transform: translateX(-3px); transition: opacity 140ms ease, transform 180ms cubic-bezier(.23,1,.32,1); }
+.prompt-suggestions button:hover .prompt-suggestion-arrow, .prompt-suggestions button:focus .prompt-suggestion-arrow { opacity: 1; transform: translateX(0); }
 .conversation-thread { display: grid; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) - var(--conversation-gutter))); margin: 0 auto; padding: 36px 0 64px; gap: 28px; }
 .conversation-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; align-items: start; }
 .message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 0; border-radius: 8px; color: var(--muted); font-size: 12px; font-weight: 700; background: var(--surface); }
@@ -859,15 +873,15 @@ onBeforeUnmount(() => {
 .quote-summary dd { margin: 0; color: var(--text); font: 680 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .conversation-dock { position: relative; z-index: 2; width: 100%; padding: 16px var(--conversation-gutter) max(16px, env(safe-area-inset-bottom)); background: var(--bg); }
 .objective-composer { min-width:0; width: min(var(--conversation-max), 100%); margin: 0 auto; }
-.draft-restored { width: min(var(--conversation-max),100%); margin: 8px auto 0; color: var(--muted); font-size: var(--font-meta); line-height: 1.5; }
+.draft-restored { width: min(var(--conversation-max),100%); margin: 8px auto 0; }
 .objective-composer :deep(.composer-box) { color: var(--text); background: var(--surface); }
 .run-action { min-height: 38px; padding: 0 13px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .run-action { display: inline-flex; align-items: center; gap: 7px; color: #0e100f; border: 0; background: var(--acid); }
 .run-action:disabled { opacity: .45; cursor: not-allowed; }
 .run-action:active { transform: scale(.98); }
 .run-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px 9px 13px; color: var(--acid-text); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); box-shadow: inset 3px 0 var(--acid); font-size: 12px; }
-.workspace-notice.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); box-shadow: inset 3px 0 var(--danger); }
+.workspace-notice { width: 100%; margin: 2px 0 0; padding: 9px 10px; color: var(--acid-text); border: 0; border-radius: 8px; background: color-mix(in srgb, var(--acid) 7%, transparent); font-size: 12px; }
+.workspace-notice.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .history-group { padding: 4px 8px 16px; }
 .history-label { display: flex; align-items: center; justify-content: space-between; padding: 6px 9px 9px; color: var(--muted); font-size: 12px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
@@ -896,22 +910,38 @@ onBeforeUnmount(() => {
 .inspector-card dt, .inspector-card p, .inspector-card small { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .inspector-card > strong { color: var(--text); font-size: 13px; }
-.option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
-.option-grid label, .capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 0; border-radius: 8px; background: var(--surface-raised); }
-.option-grid label.disabled, .capability-list label.disabled { opacity: .45; }
-.option-grid input, .capability-list input, .browser-scope input, .budget-range { accent-color: var(--acid); }
-.option-grid span, .capability-list span { display: grid; gap: 2px; }
-.option-grid b, .capability-list b { color: var(--text); font-size: 12px; }
-.option-grid small, .capability-list small { font-size: 12px; }
+.option-grid { display: grid; gap: 2px; }
+.option-grid label { display: grid; grid-template-columns: 48px minmax(0, 1fr) 18px; gap: 10px; align-items: center; min-height: 44px; padding: 8px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; }
+.option-grid label.selected { background: var(--surface-raised); }
+.option-grid label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.option-grid label.disabled { cursor: not-allowed; }
+.deliverable-format { display: grid; place-items: center; height: 28px; border-radius: 5px; background: var(--surface-raised); color: var(--muted); font: 500 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.deliverable-label { min-width: 0; color: var(--text); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.deliverable-label small { display: block; }
+.option-grid input { width: 16px; height: 16px; margin: 0; accent-color: var(--text); cursor: inherit; }
+.option-grid input:focus-visible { outline: none; }
+@media (hover: hover) { .option-grid label:not(.disabled):hover { background: var(--surface-hover); } }
+.capability-list label { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 0; border-radius: 8px; background: var(--surface-raised); }
+.capability-list label.disabled { opacity: .45; }
+.capability-list input, .browser-scope input { accent-color: var(--acid); }
+.capability-list span { display: grid; gap: 2px; }
+.capability-list b { color: var(--text); font-size: 12px; }
+.capability-list small { font-size: 12px; }
 .capability-list { display: grid; gap: 6px; }
 .runtime-settings { padding-inline: 0; }
 .browser-scope { display: grid; gap: 8px; }
 .browser-scope header { margin-bottom: 2px; }
-.browser-scope > input, .browser-scope select { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
-.browser-scope > input:focus-visible, .browser-scope select:focus-visible, .budget-range:focus-visible, .option-grid input:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.browser-scope > input { min-height: 38px; padding: 0 9px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); font-size: 12px; }
+.browser-scope > input:focus-visible, .budget-range:focus-visible, .capability-list input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .browser-scope > label { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
 .text-danger { justify-self: start; min-height: 36px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
-.budget-range { width: 100%; }
+.budget-card header { margin-bottom: 2px; }
+.budget-card header > label { color: var(--text); font-size: 13px; font-weight: 560; cursor: pointer; }
+.budget-card output { min-width: 64px; padding: 4px 8px; border-radius: 6px; color: var(--text); background: var(--surface-raised); font-size: 13px; font-weight: 560; font-variant-numeric: tabular-nums; text-align: right; }
+.budget-card output span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.budget-range { display: block; width: 100%; height: 44px; margin: 0; accent-color: var(--text); cursor: pointer; }
+.budget-scale { display: flex; justify-content: space-between; gap: 16px; margin: -2px 0 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.budget-card > small { display: block; }
 .execution-spine { position: relative; display: grid; gap: 0; }
 .execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
 .execution-spine article { position: relative; display: grid; grid-template-columns: 17px 1fr; gap: 10px; min-height: 62px; }
@@ -934,11 +964,10 @@ onBeforeUnmount(() => {
 .visually-hidden { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
 .browser-scope > label { color: var(--text); font-size: 13px; line-height: 1.5; }
-.option-grid label,.capability-list label { align-items: center; min-height: 44px; }
-.budget-range { height: 44px; margin: 0; }
+.capability-list label { align-items: center; min-height: 44px; }
 @media (max-width: 800px) {
   .agent-conversation:not(.active) { align-content: start; padding-block: 32px 24px; }
-  .browser-scope > input,.browser-scope select { min-height: 44px; font-size: 16px; }
+  .browser-scope > input { min-height: 44px; font-size: 16px; }
   .conversation-empty { padding-bottom: 8px; }
   .conversation-empty h1 { font-size: 26px; }
   .conversation-empty > p, .conversation-message p { font-size: 14px; }
@@ -949,10 +978,12 @@ onBeforeUnmount(() => {
   .conversation-dock { padding-block: 8px max(12px, env(safe-area-inset-bottom)); }
   .run-action { min-height: 44px; }
   .history-label button { width: 44px; height: 44px; }
-  .option-grid { grid-template-columns: 1fr; }
+}
+@media (pointer: coarse) {
+  .prompt-suggestions button { min-height: 44px; }
+  .prompt-suggestion-arrow { opacity: 1; transform: none; }
 }
 @media (max-height: 620px) {
-  .agent-conversation:not(.active) { padding-block: 8px; }
   .conversation-empty { align-content: start; padding-block: 24px; }
   .prompt-suggestions { gap: 5px; }
   .prompt-suggestions button { min-height: 44px; }
@@ -966,12 +997,17 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .prompt-suggestions button, .objective-composer { transition: none; }
+  .prompt-suggestion-arrow { transition: none; transform: none; }
 }
 
 .quote-scope { display: grid; gap: 7px; margin: 3px 0 9px; }
 .quote-scope > b { color: var(--text); font-size: 13px; font-weight: 600; }
 .quote-scope p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
-.quote-scope button { justify-self: start; min-height: 36px; padding: 7px 10px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface-raised); font-size: 13px; cursor: pointer; }
-.quote-scope button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-@media (max-width: 799px) { .quote-scope button { min-height: 44px; } }
+.quote-edit { display: inline-flex; align-items: center; justify-self: start; gap: 8px; margin-inline-start: -10px; max-width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; color: var(--muted); border: 0; border-radius: 8px; background: transparent; font: inherit; font-size: 13px; font-weight: 500; line-height: 20px; text-align: left; cursor: pointer; }
+.quote-edit > span { min-width: 0; overflow-wrap: anywhere; }
+.quote-edit:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.quote-edit:active:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.quote-edit:disabled { opacity: .45; cursor: not-allowed; }
+@media (hover: hover) and (pointer: fine) { .quote-edit:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .quote-edit { min-height: 44px; } }
 </style>

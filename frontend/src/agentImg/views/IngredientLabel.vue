@@ -292,7 +292,7 @@ const updateWatermark = () => {
     }
     const watermarkWidth = actualDisplayWidth * 0.78;
     const fontSize = 72 * (watermarkWidth / 500);
-    watermark.style.cssText = `display: flex; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: ${watermarkWidth}px; height: ${watermarkWidth / 4}px; font-size: ${fontSize}px; font-weight: 600; color: rgba(0,0,0,0.08); z-index: 10; pointer-events: none; align-items: center; justify-content: center; text-align: center; line-height: 1;`;
+    watermark.style.cssText = `display: flex; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: ${watermarkWidth}px; height: ${watermarkWidth / 4}px; font-size: ${fontSize}px; font-weight: 600; color: rgba(0,0,0,0.42); z-index: 10; pointer-events: none; align-items: center; justify-content: center; text-align: center; line-height: 1;`;
   } else {
     watermark.style.display = 'none';
   }
@@ -980,6 +980,7 @@ const backButtonStyles = {
                     <button
                       class="generate-button local-layout-button hover-effect"
                       type="button"
+                      tabindex="0"
                       :disabled="!ingredientsInput || isLoading"
                       @click="onLocalLayout"
                     >
@@ -1707,6 +1708,10 @@ const backButtonStyles = {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.demo-watermark {
+  color: rgba(0, 0, 0, 0.72);
 }
 
 .image-container {

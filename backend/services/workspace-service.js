@@ -132,23 +132,6 @@ const createWorkspaceService = ({ pool, env = process.env }) => {
         );
         if (!owned.rowCount) throw new ApiError(404, "PROJECT_NOT_FOUND");
       }
-      if (projectId !== undefined) {
-        const conversation = await client.query(
-          "SELECT project_id FROM design_conversations WHERE id=$1 AND user_id=$2 AND (expires_at IS NULL OR expires_at>now()) FOR UPDATE",
-          [conversationId, owner],
-        );
-        if (!conversation.rowCount) throw new ApiError(404, "CONVERSATION_NOT_FOUND");
-        if ((conversation.rows[0].project_id || null) !== (projectId || null)) {
-          const dependent = await client.query(
-            `SELECT 1 WHERE
-              EXISTS(SELECT 1 FROM design_executions WHERE conversation_id=$1
-                AND (agent_run_id IS NOT NULL OR status NOT IN ('succeeded','failed','cancelled')))
-              OR EXISTS(SELECT 1 FROM design_planning_jobs WHERE conversation_id=$1 AND status IN ('queued','running'))`,
-            [conversationId],
-          );
-          if (dependent.rowCount) throw new ApiError(409, "WORKSPACE_CONVERSATION_PROJECT_LOCKED");
-        }
-      }
       const result = await client.query(
         `UPDATE design_conversations SET title=COALESCE($3,title),project_id=CASE WHEN $4 THEN $5::uuid ELSE project_id END,updated_at=now()
       WHERE id=$1 AND user_id=$2 AND (expires_at IS NULL OR expires_at>now()) RETURNING id`,
@@ -204,7 +187,9 @@ const createWorkspaceService = ({ pool, env = process.env }) => {
             role: record.kind === "user_input" ? "user" : "assistant",
             kind: value.kind || "text",
             text: value.text || value.message || "",
-            ...(Array.isArray(value.attachments) ? { attachments: value.attachments } : {}),
+            ...(Array.isArray(value.assetIds)
+              ? { assetIds: value.assetIds, attachments: value.attachments || [] }
+              : {}),
             createdAt: record.created_at,
           };
         }),

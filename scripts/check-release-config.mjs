@@ -13,14 +13,12 @@ const requireMatch = (name, pattern, message) => {
 // deploy by /readyz and must never be used as Render's restart signal.
 requireMatch('render.yaml', /^\s+healthCheckPath:\s*\/healthz\s*$/m, 'healthCheckPath must be /healthz');
 requireMatch('render.yaml', /^\s+autoDeployTrigger:\s*off\s*$/m, 'production deploys must remain manually promoted');
-requireMatch('render.yaml', /^\s+plan:\s*starter\s*$/m, 'production must use a non-sleeping starter instance');
+requireMatch('render.yaml', /^\s+plan:\s*free\s*$/m, 'production must remain on the user-approved Free plan');
 requireMatch('render.yaml', /^\s+- key: APP_ENV\s*\n\s+value:\s*production\s*$/m, 'production APP_ENV must be explicit');
 requireMatch('render.yaml', /^\s+- key: AGENT_RUNTIME_V2_ENABLED\s*\n\s+value:\s*["']?false["']?\s*$/m, 'Runtime V2 must remain closed for beta');
 requireMatch('render.yaml', /^\s+- key: AGENT_PROVIDER_SCHEDULER_ENABLED\s*\n\s+value:\s*["']?false["']?\s*$/m, 'provider scheduler must remain closed for beta');
 requireMatch('render.yaml', /^\s+- key: ARTIGEN_PUBLIC_SIGNUP_ENABLED\s*\n\s+value:\s*["']?false["']?\s*$/m, 'public signup must remain closed for beta');
-for (const blueprint of ['render.yaml', 'render.dev.yaml']) {
-  requireMatch(blueprint, /^\s+- key: PAYMENTS_ENABLED\s*\n\s+sync:\s*false\s*$/m, 'payment availability must remain platform-managed');
-}
+requireMatch('render.yaml', /^\s+- key: PAYMENTS_ENABLED\s*\n\s+value:\s*["']?false["']?\s*$/m, 'self-serve payments must remain closed for beta');
 requireMatch('render.dev.yaml', /^\s+healthCheckPath:\s*\/healthz\s*$/m, 'DEV healthCheckPath must be /healthz');
 requireMatch('render.dev.yaml', /^\s+- key: APP_ENV\s*\n\s+value:\s*dev\s*$/m, 'DEV APP_ENV must be explicit');
 requireMatch('render.dev.yaml', /^\s+- key: AGENT_RUNTIME_V2_ROLLOUT_PERCENT\s*\n\s+value:\s*["']?0["']?\s*$/m, 'DEV Runtime V2 rollout must be zero');

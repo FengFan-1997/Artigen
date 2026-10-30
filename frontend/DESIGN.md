@@ -5,17 +5,13 @@ colors:
   dark-background: "#111311"
   dark-sidebar: "#1B1E1B"
   dark-surface: "#232622"
-  dark-border: "#3B4139"
-  dark-control-border: "#7B8375"
-  dark-panel-border: "#596151"
+  dark-border: "#3A3F38"
   dark-text: "#F3F4EF"
   muted: "#A1A79B"
   light-background: "#F4F5F1"
   light-sidebar: "#E9ECE6"
   light-surface: "#FFFFFF"
-  light-border: "#D6DCD0"
-  light-control-border: "#78816F"
-  light-panel-border: "#A1AB95"
+  light-border: "#D8DDD3"
   light-text: "#171A16"
   execution: "#C8FF3D"
   danger: "#FF6B62"
@@ -35,7 +31,9 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 
 - 默认深色，同时完整支持浅色与系统主题。
 - 默认移除装饰性边框，以相邻背景明度、间距、排版和对齐建立层级；焦点、审批、错误、验证与真实屏幕边界仍保留功能性提示。
+- 严禁内容容器使用装饰性彩色边框或单侧装饰边框、色条；无论由 `border-left/right`、`inset box-shadow`、渐变或伪元素实现，都属于禁用样式。卡片、提示、审批、预算、错误和交付内容统一用整体表面、留白、文案、图标及状态标签表达层级。结构性分割线使用中性色，键盘焦点使用完整可见轮廓，不能退化成单侧色条。
 - 技术事实不删除也不伪装，但模型、Provider、沙箱、Worker、出口、并发、保留期和能力限制默认进入“技术详情”，不主动打扰普通用户。
+- 技术详情、运行设置、能力边界等共享折叠行使用左侧箭头、13px中等字重和透明默认表面；展开内容与标题文字轴线对齐，悬停才显示中性整行反馈，不叠加卡片底色。沿用原生details/summary及即时箭头状态，触屏包含平板至少44px，内容ID使用Vue唯一ID并与aria-controls对应。
 - 系统工作字体：`-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif`。
 - 正文保持 15px，控件 13px，桌面元数据以 12px 为常规下限，主要标题 18–38px。移动输入不小于 16px。
 - Inspector 与 Composer 可使用 18–20px 的大圆角来表达持久工具面；普通信息组 8–10px，控制 7–10px。不要把所有内容做成胶囊。
@@ -49,7 +47,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Sidebar `#1B1E1B`
 - Surface `#232622`
 - Raised surface `#2A2E29`
-- Hairline `#3B4139`, panel divider `#596151`, control outline `#7B8375`
+- Border `#3A3F38`
 - Text `#F3F4EF`
 - Muted `#A1A79B`
 
@@ -59,7 +57,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - Sidebar `#E9ECE6`
 - Surface `#FFFFFF`
 - Raised surface `#F0F2ED`
-- Hairline `#D6DCD0`, panel divider `#A1AB95`, control outline `#78816F`
+- Border `#CFD5CA`
 - Text `#171A16`
 - Muted `#5B6557`
 
@@ -85,14 +83,14 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 面板宽度、折叠和主题偏好只保存在本机，不写入服务端。
 - 空任务默认收起 Inspector，开始对话后按任务展示；用户明确选择的折叠偏好优先。
 - 顶栏固定承载标题、必要状态、唯一费用位置和控制；不常驻展示模型副标题或 Runtime 胶囊。
-- 区域以相邻背景色区分；资源面板利用完整列宽，不保留旧版悬浮边距和大圆角。功能栏与项目树共用导航表面；会话、资源与目录以表面层次及适量1px边界区分，内部顶栏仅保留必要的细线；8px拖拽命中区在悬停、拖拽或键盘聚焦时增强显示；取消指针或窗口失焦后必须结束拖动。
+- 区域以相邻背景色区分；资源面板利用完整列宽，不保留旧版悬浮边距和大圆角。8px拖拽命中区在悬停、拖拽或键盘聚焦时明确显示；取消指针或窗口失焦后必须结束拖动。
 - 中间输入框在零状态和运行状态中保持同一个心智位置：先表达目标，发送后停靠到底部继续对话。
 - 底部 Composer 是三条路由共享的稳定工具台：20px 左右圆角、两行信息层级、圆形发送动作；不能让 Create、Computer Agent 与 Run Detail 各自漂移成不同组件语言。
 
 ### Alignment grammar
 
 - 导航、历史、正文、设置、计划、文件列表和零状态主问题统一左对齐；只有图标按钮和 Inspector 页签居中。移动顶栏标题、状态和费用保留文字并左对齐。
-- 费用、点数和短数值右对齐并使用 tabular numerals；长值换到标签下方，不用参差的右对齐制造密度。
+- 费用、点数和短数值右对齐并使用 tabular numerals；长值换到标签下方，不用参差的右对齐制造密度。终态结算摘要沿用原生定义列表，名称左、记录金额右，窄屏长值整组换行；直接展示服务端金额及单位，保留精度，不在展示层重算或推断退款。
 - 标题、零状态、消息、通知、交付物和 Composer 共用 `760px` 阅读宽度与同一响应式 gutter，左右轴线的几何误差不得超过 1px。
 - 图标按钮中的图形中心误差不得超过 0.5px；图标与文字的垂直中心误差不得超过 1px。确有需要的光学校正只能在共享图标注册表中记录，范围为 ±1px。
 
@@ -102,42 +100,120 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 导航图标 16px、普通控件 18px、主要动作与移动端 20px；图标按钮显式清除浏览器和全局按钮 padding。
 - 桌面图标控件使用固定正方形几何，移动端点击区至少 44×44px；隐藏文字后必须重新以 Grid 居中图标，不能保留文本按钮的 gap 或水平 padding。
 
+### 图标与边缘留白验收
+
+以下规则适用于新增或受本次修改影响的图标、控件、弹窗及布局。已有不符合项须在涉及该区域时修复或记录，不能因为旧样式存在就作为新设计依据。
+
+- **边缘留白**：图标或箭头的实际可见轮廓与所属控件的可见边界，包括背景色分界，四周至少留 `8px`；优先使用 `10–12px`。图文之间至少留 `8px`，不得贴边、被裁切或与焦点轮廓重叠。这里的距离按 CSS 像素衡量，不用把不可见的点击区或 SVG 空白算作可见留白。
+- **对齐轴线**：同一导航栏、列表或工具栏中的图标使用固定大小、不可压缩的图标槽，槽中心对齐同一轴线；检查真实绘制轮廓的光学中心，而不是只让 SVG 盒子居中。标题旁图标与标题首行垂直对齐，图标容器与标题之间留出间距；非交互标题图标不添加装饰性方框，操作图标的背景或焦点边界只用于表达交互。确需光学校正时遵守上面的共享注册表及 `±1px` 限制。
+- **下拉箭头**：检查关闭状态下实际绘制的箭头与控件边缘、选中文本的距离；长文本应在独立文字区省略或收缩，不能挤占箭头区域。原生 `select` 的箭头位置由浏览器和系统绘制，普通 `padding` 或 DOM 边框尺寸不能证明留白合规。若目标环境不满足规则，优先复用项目已有合规实现；确需自绘时，保留原生 `select` 的键盘、焦点、选项及可访问名称，用不可交互、`aria-hidden` 的共享 SVG 箭头和逻辑方向内距，避免重复箭头，并验证强制颜色等系统外观下仍可辨识。
+- **快捷键标签**：快捷键文字在自己的标签内水平和垂直居中；标签内部文字横向至少留 `4px`、纵向至少留 `2px`，标签外侧距所属行可见边缘至少 `8px`。标签与主标题首行对齐，长标题收缩或换行时不得挤压、重叠或裁切标签。
+- **验收方式**：用实际浏览器检查受影响区域的浅色/深色、桌面/手机及悬停、键盘焦点、禁用等适用状态；至少覆盖 `390px` 和 `1440px`，并检查长文案、滚动及相应触屏尺寸。通过截图放大检查可见图形轮廓、边缘和对齐轴线，同时测量可取得的控件盒子、间距与点击命中区；图标按钮中心误差和图文对齐仍遵守上面的数值。检查截图中箭头及图形是否真正留白，不能仅凭截图文件存在、DOM 元素居中或页面无横向滚动判定通过。
+- **环境边界**：浏览器原生箭头或菜单不一定可由 DOM 或自动化截图完整读取；必须在可用的目标浏览器中查看实际呈现。无法验证的浏览器、系统或真机要列为未覆盖，不宣称全平台合规。检查范围、截图及结果随该改动的验收记录保留；对应问题未修复前，不能将该项标记为通过。
+
 ## Left lane
 
 - 品牌、新任务、搜索、分组历史、项目/工具/高级生图入口。
 - 底部集中点数、主题、设置和账户。
+- 外观入口按已选偏好显示共享图标：深色月亮、浅色太阳、跟随系统显示器；功能栏、手机历史底部与命令面板使用同一派生图标。当前名称保持可访问，原生提示与描述说明下一次切换目标；目标提示与实际切换共用同一nextTheme。系统偏好不因系统明暗变化而伪装为手动选中，沿用原theme/resolvedTheme及本机持久化，不增加独立偏好或弹层。
 - 历史项优先显示任务目标、状态和更新时间；活动状态有文字与状态点。
+- 项目标题行使用固定箭头/文件夹槽及可收缩文字列，长标题保留完整原生提示；桌面新会话加号仅在组悬停或键盘聚焦时显示并预留固定槽位，触屏常显且至少44px。折叠按钮用aria-expanded/aria-controls关联稳定会话容器，收起后容器隐藏且退出Tab顺序；保持原项目范围、搜索和独立折叠状态，不加装饰边条。
+- 会话编辑使用有名称的紧凑内嵌表单，标题、标签、输入与保存/取消分层；中性整体表面、完整字段边框及焦点轮廓，保存与透明取消区分，触屏含平板控件44px、输入16px。保存失败在表单内明确提示且保留名称和项目选择，不能误报为项目目录读取失败；重新编辑时清除旧保存错误。沿用原编辑状态与PATCH接口，不另建草稿或提交状态。
+- 会话分页入口采用13px轻量文字与共享向下箭头，中性悬停及完整焦点，触屏至少44px；请求中禁用并明确显示加载中。分页失败保留已有列表与游标，在同一入口重试，不显示首次目录读取失败提示或混入备用运行列表；重试成功继续去重追加，完成后移除入口。
+- 历史搜索无匹配时明确提示搜索范围为已加载内容，并提供带名称的清除按钮；清除后恢复列表并保留输入焦点。非空搜索的第一次 Escape 仅清除关键词，第二次沿用抽屉关闭行为；输入法组合中的 Escape 留给输入法，不清除搜索或关闭抽屉。
 - 功能栏固定56px，项目栏可独立隐藏；移动抽屉打开后焦点进入抽屉，Tab循环，Escape关闭并恢复到实际触发按钮。
+- 命令面板结果使用共享16px SVG类别图标、固定图标列、可收缩文字列与独立快捷键；标题13px中等字重、提示12px，图标对齐标题首行。搜索栏提供有名称的真实关闭按钮，触屏包括平板至少44px；关闭复用原焦点恢复，Tab只在搜索和关闭入口内循环。输入框使用搜索整行的一处完整焦点轮廓，关闭按钮保留自己的完整轮廓，禁止重复嵌套焦点框。
 
 ## Center lane
 
 - `/artigen/create` 零状态只保留一个紧凑问题、主输入框和少量真实建议。附件本地边界放在附件按钮说明中，选中文件或需要云端上传时再展开。
 - `/artigen/agent` 直接询问最终交付，不以大型能力表单开场；交付物、能力、站点范围与预算留在 Inspector。
-- 运行详情以“已验证用户短 ID—Agent 关键结论—审批—交付”形成连续对话，不跳到另一套后台。主会话只保留一处可折叠执行记录；工具调用按服务端 callId、runId 与 subagentId 关联，开始/完成回执合为一行。展开后展示调用标识、时间和事件编号，不展示原始参数、命令或私有输出。子 Agent 状态与完整原始审计仍在右栏。
-- 用户补充内容、审批和暂停都在同一任务上下文中完成；结束任务并结算放在更多菜单，必须明确确认。
+- 创建页交付格式使用纵向紧凑选择行：固定宽度的中性格式标记、可换行说明、末端对齐的原生复选框；整行至少44px并可点击，选中用整体中性表面，键盘焦点围绕整行完整可见。不可用选项保留可读说明与真实disabled状态，不能只降低整行透明度；不新增独立选择状态或绕过原报价和图片能力校验。
+- 创建页最高预算采用紧凑标签与中性数值表面、原生range及可见的最小/最大刻度；数值与请求共用form.maxCredits，刻度与滑杆共用范围/步长。保留44px滑动命中区、完整键盘焦点、原生方向键/Home/End；读屏值带单位并关联结算说明。预算改变后旧报价仍须失效，不能静默重报或自动启动。
+- 空白 Agent 工作区的任务建议保持为轻量文本行；悬停或聚焦时用共享箭头图标提示可操作，触屏下常显。选择建议后把焦点和插入点移到目标输入末尾，方便用户接着改写。
+- 运行详情以“你—Agent 关键结论—审批—交付”形成连续对话，不跳到另一套后台。主会话只保留一处可折叠执行记录；工具调用按服务端 callId、runId 与 subagentId 关联，开始/完成回执合为一行。展开后展示调用标识、时间和事件编号，不展示原始参数、命令或私有输出。子 Agent 状态与完整原始审计仍在右栏。
+- 中间交付区与任务检查器共用成果文件行样式：中性类型标记、可收缩的文件名列、大小/版本及验证标签、固定下载列。长文件名正确省略并保留完整title和DOM文字，不能越过文字列；卡片标题与底色保持中性，混合验证状态只由各文件标签表达，不以整卡成功色暗示全部通过。
+- 任务文件页无成果时使用紧凑左对齐的共享文件图标、15px标题与13px说明，保留真实零数量，不用居中单行占位或虚假上传/创建按钮。空状态直接取决于原产物数组，文件到达后恢复原下载与验证标签，不新增状态、请求、动画或装饰边条。
+- 运行交付文件按 MIME 显示文件类型；文件名、大小/版本和验证状态分层展示。`pending`、`passed`、`failed` 转为当前语言的状态文字与紧凑语义标签，不向用户暴露内部枚举；文件面板标题保持中性，因其可能同时包含待验证、已通过和未通过的产物。
+- 用户补充内容、审批和停止都在同一任务上下文中完成。
+- 过期审批采用共享中性提示，明确数量和不可批准状态；运行详情的重新读取复用原 GET 加载、去重与错误状态，401 引导登录、404 返回历史，设计会话提供任务链接。失败保留过期说明与未发送输入，不重新批准或启动执行；触屏操作至少 44px。
+- 任务首次读取失败使用紧凑左对齐标题、说明和主次分明的恢复操作：可重试时突出重新读取，登录失效时突出重新登录，返回历史保持次级；任务不存在时返回历史为唯一主入口。不使用彩色错误外框或大面积危险色。沿用真实401/404/服务暂不可用分流、请求去重和登录returnTo；重试期间禁用主按钮并保留明确忙碌文字，触屏含平板至少44px。
+- 需显式重试的调用提示使用中性整体表面、18px共享图标、15px标题与13px原说明，透明文字动作带16px箭头且与正文轴线一致；完整焦点、触屏含平板44px，不使用整行高饱和按钮或装饰边框。直接复用retryRequired/controlBusy，处理中显示通用动作状态并禁止重复控制提交，失败保留说明与草稿，成功按原回执退出；不自动重试、不重新创建任务、不改费用语义或另存动作状态。
+- 澄清问题采用中性整体表面、清楚的问题正文与纵向快捷回复行，不使用彩色外框；长选项左对齐完整换行，末端箭头说明可执行，提示选择会直接回复。快捷回复复用发送状态禁用，并在处理函数赋值草稿前检查忙碌状态；发送期间不覆盖用户下一条草稿，失败可重试并沿用现有幂等请求标识。
 - 固定输入区必须为最后一条内容保留足够滚动空间，不能遮挡消息或交付物。
 - 三条路由使用同一个 Composer：Enter 发送、Shift+Enter 换行、中文输入法确认不触发发送；发送中保留输入能力，回执只清除匹配原稿，失败重试复用同一次请求标识。
-- **附件样式是全产品硬性规范，优先于任何冲突的旧页面或局部样式，并以用户指定参考会话为准。**附件卡片固定在输入文字上方，单行横向排列，首卡左边缘与正文首字符对齐；不得换行、塞进文字行或放到文字下方。空间不足时使用横向滚动、前后箭头和淡出边缘提示。文件卡片显示名称、类型、体积及移除操作；图片可以使用本地缩略图，但仍保留名称、类型、体积的可访问信息。移除或卸载时释放图片预览 URL，并在键盘移除后恢复焦点。
+- 恢复本机草稿采用共享中性文件图标、13px状态标题与独立12px参考文件重选说明，保持左对齐和原生status语义；运行页仅支持文字，不显示附件说明。创建页、设计会话停靠区、Agent工作台与运行页均保留提示，手机不得因通用段落隐藏规则漏掉恢复状态；原restored、账号/任务隔离、输入后消失与刷新恢复机制不变，不新增清除/发送动作或装饰边条。
+- Composer附件条使用16px共享图标、12px中等字重文件名和不收缩的11px大小信息；省略名称保留完整title与移除按钮名称。桌面移除入口保持紧凑居中、悬停有中性表面反馈，手机和平板触屏沿用至少44px命中区，不叠加装饰性边框。
+- Agent报价范围中的修改入口采用透明默认表面、13px文字与固定16px共享箭头；文字与范围说明轴线一致，悬停/按下才使用中性反馈，保持完整键盘焦点，触屏含平板至少44px。长名称在自身文字列换行，不挤压图标或溢出；沿用原生按钮、busy禁用和修改后显式重新报价规则，保留输入及附件，不因进入编辑而上传或创建任务。
 - 启动前附件可连续追加、按文件元信息去重并逐个移除；超出数量或执行器限制时明确提示并保留原选择，不截断或替换。报价展示交付物、权限、站点与附件范围，修改范围必须重新报价。上传失败保留引用，创建失败重试复用已上传附件。
-- Run 输入接受文字和 assetIds，可只发附件；文件引用在消息上方，底部动作行左侧加号、右侧发送，快捷键不另占底行。运行中附件复用上传接口与同一幂等标识，失败保留草稿和选择，服务端持久化后由 Worker 校验并加入上下文。附件选择仅在本机内存中，未成功发送前刷新需重选；旧版 OpenAI 执行器不支持动态附件时明确提示。
+- Run 当前输入协议只支持文字与审批；运行中不展示虚假的文件添加入口，并说明新文件需在新任务中添加。附件仅在内存中持有，刷新后需重选。
 - 工具成功/失败必须有明确布尔回执；缺失结果标为待确认，不从缺失字段推断失败。阅读旧记录时新事件不能抢走位置，使用明确的回到底部入口。
 
 ## Resource workspace
 
 右侧顶层入口为“文件、变更、GitHub、任务”。文件采用多标签、面包屑、预览/源码、状态栏及可独立隐藏的目录；编辑器以文档本身为主，避免重复嵌套卡片。项目、资源、资源内部目录分别隐藏；文件编辑缓存保留，不因切换任务页签而卸载。
 
-任务内保留原环境、计划、子 Agent、电脑及交付验证信息，确保原审批、接管、来源和下载能力仍可用。交付验证暂保留在任务的文件页签，待静态网站包等专用预览迁移到统一文件面板后再删除这一兼容入口。后台事件不能抢走当前页签。
+- 右侧文件筛选只作用于已加载的项目文件，placeholder与无结果状态须明确范围，不暗示扫描本机目录。非空时提供有名称的清除按钮，清除后恢复列表并保留输入焦点；首次Escape清空筛选，空筛选的Escape沿用面板关闭，IME组合中的Escape不清空也不关闭。输入区使用完整焦点轮廓，清除按钮在触屏保留44px目标。
+- 新建文本文件在资源区内使用有名称的紧凑表单，显示相对路径标签、仅明确保存后写入的说明及创建/取消操作；不使用浏览器prompt。中性整体表面、完整输入边框/焦点、触屏16px输入与44px操作。无效路径保留输入并在字段旁提示，Escape和取消恢复触发按钮焦点，IME确认不创建或关闭；换项目/账号或切换资源类别关闭旧表单。创建只打开源码编辑，不自动保存或上传；保留其他文档草稿、原路径校验和显式保存/冲突规则。
+- 文件路径栏分开显示来源、目录和当前文件名；来源使用中性箭头分隔，长目录优先省略，文件名以正文色和中等字重突出，超长文件名仍限于可用宽度。完整相对路径保留在title及DOM文本中；路径只是位置说明，不伪装成可点击目录导航。
+- 文件读取中的等待状态采用固定16px文件图标与可收缩文字列，明确当前文件名和真实读取状态，长文件名完整换行并保留路径提示；延续原active/loading来源，读取区域暴露忙碌语义，不添加虚构百分比或循环动画。等待时不显示已保存状态，关闭/切换沿用原文档generation保护，不加装饰边框。
+- 文件读取失败采用紧凑左对齐信息列：共享文件图标、错误标题、完整可换行文件名、真实错误说明与重新读取按钮；路径保留title，按钮使用中性表面、完整焦点与44px触屏目标。读取防重入，迟到失败/完成受当前文档generation保护；键盘重试失败后回按钮，成功后回文件标签，不抢走用户已移到其他控件的焦点，保留未保存修改的重新读取确认；读取失败时不显示“已保存”状态栏。
+- 差异区以实际比较文本与打开时基线的精确相等关系决定空状态，不以异步增删行统计推断。内容一致时使用紧凑左对齐共享图标、15px标题及13px说明，不挂载双栏编辑器、不显示+0/−0或无效应用入口；空文本也可一致，换行等真实差异不能被trim抹去。说明区分当前编辑、Agent候选与历史版本，不能把历史版本称为Agent修改；同内容候选在执行入口同样拒绝重复写入，实际差异继续复用只读MergeView、原保存/冲突/应用/撤销流程，无彩色或单侧装饰边框。
+- 差异增删数字只在当前比较计算成功后展示；未计算或加载失败时留空，不以0或旧来源结果占位。文件、模式、文本或比较来源变化时清除旧数字并让异步回填失效；相同内容沿用既有空状态，统计失败不阻断只读阅读、明确应用或保存。
+- 差异区在原有Agent候选存在时显示原生“比较来源”选择器，13px标签明确关联控件，现有比较说明通过aria-describedby复用。当前编辑、Agent候选和正在比较的历史版本必须准确对应原proposal；历史版本以匹配原值的禁用选项显示，避免空白，但不额外维护历史列表或在无候选场景新增控件。主题中性表面、完整焦点、触屏含平板44px/16px，长路径在控件内受限且完整option/原生title保留。选择来源只做原比较，不保存或应用，不改冲突保护或新增菜单/状态/依赖。
+- 编辑器查找/替换沿用CodeMirror原生面板、DOM顺序、查询与替换命令，不自建菜单或搜索状态。输入、导航、选项和替换按编辑器自身宽度分行；窄列继续压缩为两列，关闭入口独立留位，桌面28px、触屏含平板44px，所有触屏输入/操作不小于44px与16px。清除与主题冲突的原生按钮渐变，使用已有主题文字/背景与完整焦点；只调整布局和控件边界，不改语法颜色、编辑状态、保存、冲突或只读差异规则。
+- 文件顶部预览/源码采用有可访问名称的紧凑分段组，两个原生按钮沿用文档的唯一view状态和互斥aria-pressed；选中项以中性独立表面与字重表达，保存、下载留在组外。保留原生Enter/Space、焦点和未保存内容，触屏含平板每个按钮至少44px，不额外维护选中状态或添加装饰性彩色边框。
+- 文件底部状态栏将保存状态与版本作为不可拆开的信息组，操作靠右成组，空间不足时按组换行；避免把“未保存”和版本挤成碎片。操作默认透明，精确指针悬停使用中性表面，保留完整焦点轮廓、至少44px触屏入口和中英文版本选择名称；沿用现有保存/版本状态。
+- 文件历史版本选择保留原生select，并用关联的可见“比较版本”标签说明用途；默认“选择…”不冒充当前版本。选择控件采用中性抬升表面、完整键盘焦点，触屏含平板至少44px/16px文字；标签与选择器作为一组换行，不拆散或隐藏用途说明。沿用原versions与compareVersion，仅打开只读差异，不隐式保存、应用或丢弃草稿，不新增菜单、依赖或状态来源。
+- 文件操作通知使用紧凑中性整体表面、共享文件图标、可换行正文与独立关闭入口；关闭仅清除提示并把焦点返回当前文件标签，无文件时回目录开关，不能隐式保存、丢弃草稿或解除版本冲突。正文保留status播报，关闭按钮有中英文名称、完整键盘焦点及至少44px触屏目标；不按消息字符串猜测成功状态，不添加彩色或单侧装饰边框。
+- 不支持预览的二进制文件使用居中的紧凑信息列：图标、左对齐完整文件名、明确预览说明及类型/大小定义列表，值从原文件元数据读取。长文件名与MIME类型在自己的文字列换行，不产生信息页横向滚动；保留完整路径提示。下载使用共享图标、完整焦点轮廓和至少44px触屏入口，沿用原Blob/文件名，不改字节或伪装为可编辑内容；不增加彩色或单侧装饰边框。
+
+- GitHub未关联仓库时采用紧凑左对齐信息列：15px标题、连接账号操作、独立命名的仓库表单、格式说明和非整栏宽的关联按钮。输入关闭自动大写/拼写检查，触屏含平板16px输入和44px控件；使用中性表面与完整焦点。沿用busy/输入/校验及原项目关联接口，不另存连接状态；处理中清除旧提示并禁用重复提交，失败保留输入，中英文校验提示对应当前语言，不把项目关联误称为GitHub仓库写操作。
+- GitHub已关联但记录为空时，用中性共享图标、15px类别标题和简短下一步说明区分PR与提交；提供当前仓库及类别的HTTPS GitHub链接，编码owner/repository并使用noopener noreferrer，键盘完整焦点、触屏44px。空状态只复用原无记录/非忙碌/无错误条件，加载、失败和有记录时均不出现，不新增空列表状态或仓库写操作。
+- GitHub记录类型使用紧凑中性分段按钮，沿用kind作为唯一选中来源和原生aria-pressed，提供中英文名称与完整焦点轮廓、触屏44px。切换类别立即清空旧列表和旧分页入口，加载期间明确忙碌，不让旧PR/提交冒充新类别；读取失败只显示错误，不误报为空列表；迟到响应沿用既有revision保护。重复选择当前类别不发请求，显式刷新仍可重新读取当前类别，不增加独立选中/请求状态或远端写操作。
+- GitHub记录与差异文件的分页共用轻量13px文字及固定16px向下箭头，透明默认表面、中性悬停、完整键盘焦点和触屏含平板44px；记录分页文字与记录标题轴线一致。加载直接复用busy禁用/aria-busy并在入口显示当前动作，不在已加载列表顶部重复插入loading。追加读取失败保留已有内容和分页页码，重试清除旧提示，成功后按原hasMore决定保留入口；首次读取在原读取函数内清除旧分页标记，避免刷新、切换记录或关联仓库后沿用旧入口；沿用只读GET、revision保护和原始差异，不新增分页状态、动画或装饰边框。
+- GitHub详情顶部使用共享返回箭头、文字入口与靠右的外链操作，采用透明默认表面/中性悬停和完整焦点，触屏含平板至少44px。长标题保留完整正文并在本栏换行；外链继续使用原HTTPS GitHub校验与noopener noreferrer。打开详情前只记录当前列表容器滚动，返回时原记录以preventScroll聚焦并还原该位置，避免浏览器自动居中造成阅读跳动；复用原items和记录键，不重新读取列表或写入仓库，异步返回沿用revision校验，不增加持久偏好或动画。
+- GitHub差异文件头行沿用原生details/summary，使用固定16px共享箭头、可收缩文件路径和独立不换行的等宽增删统计；长路径省略但保留完整DOM与title，不把行数挤到路径末尾。箭头直接跟随原生open状态，保留Enter/Space、完整焦点及触屏含平板44px入口；只读差异原文/二进制说明与原查询不变，不添加装饰边框或独立展开状态。
+
+任务内保留原环境、计划、子 Agent、电脑及交付验证信息，确保原审批、接管、来源和下载能力仍可用。能力快照使用只读定义列表：名称左对齐，图标和“已启用/未启用”文字靠右，不能只依靠颜色圆点表达布尔值，也不伪装成可修改权限的开关；权威来源仍为run.capabilities。交付验证暂保留在任务的文件页签，待静态网站包等专用预览迁移到统一文件面板后再删除这一兼容入口。后台事件不能抢走当前页签。
+
+- 运行详情父、子Agent卡片共享28px图标槽、10px图文间距及12px内距，左边缘和文字轴线一致；子任务组仅用8px留白分隔，不使用伪元素单侧竖线或额外缩进。长标题在可收缩文字列换行，状态与原步骤/费用保持独立，取消按钮在触屏含平板至少44px；沿用原任务关系、状态和取消接口，不增加状态或装饰边框。
+
+- 审计记录采用上下两层：事件名称与不换行的等宽时间在同一元信息行，摘要独占下一行并在本栏完整换行，不能用固定52px时间列挤压正文。时间保留原格式并使用datetime关联原createdAt；名称/摘要沿用原本地化与安全摘要函数，不展示私有工具参数。记录列表保留300px内部滚动、命名的列表语义与原生键盘聚焦/完整焦点，新增事件不重置内部阅读位置；沿用原events去重/顺序/折叠，不增加状态、请求、动画或装饰边框。
 
 最左侧功能栏56px，项目导航默认280px；1440px起采用完整布局，会话保留至少480px。资源默认约52%窗口宽，内部不足640px时目录与文件视图切换。800–1439px项目/资源使用抽屉，手机为单主区和全屏资源；触控目标至少44px。会话阅读轴最大760px，资源利用其余空间，外层取消悬浮边距和大圆角。
 
 公开过程、最终正文和用户输入来自持久化内容；Markdown不解释原始HTML。工具回执保持可折叠。授权图片与文件可从消息打开资源标签。模型私有分析和工具原始参数不进入公开消息。没有保存的旧正文不补造。
 
+- Markdown六级标题统一由WorkspaceMarkdown定义：h1/h2/h3为22/19/17px，h4-h6不小于15px正文，650字重和1.45行高；段间24px、下间距8px，所有层级首项去顶部空白、末项去底部空白。保留原生h1-h6语义和完整原文，长标题沿原正文列换行；运行公开消息、设计会话和文件预览共用，不依赖浏览器默认小字，不新增标题装饰线、渲染器或偏好状态。
+
+- Markdown列表沿用原生ul/ol/li与起始编号，不用自制计数器或装饰标记。无序缩进1.5em，有序保留2.5em容纳多位编号；相邻项间距6px，嵌套列表与多段说明分别控制边距，末尾子块不叠加底部空白。运行消息、设计会话和文件预览共用样式，长行内代码使用受列宽约束的原生盒，避免换行内距伸出文字列；列表内围栏仍局部横向滚动，不改原文或渲染安全规则。
+
+- Markdown引用段落保留blockquote语义，以主题抬升表面、正文文字色和12px/16px整体内距建立层级，禁止左侧竖线或其他单侧装饰边框；末尾段落/列表不额外叠加底部外距。运行消息、设计会话与文件预览沿用同一共享样式，不改原文、列表或链接安全规则。
+
+- 行内参数、路径和命令使用中性浅底与紧凑内距区分正文，不使用彩色边框；长路径可换行并保持每行底色完整。围栏代码保留原始空白与局部横向滚动，字号沿用代码容器的 13px，不能再被行内代码的相对字号二次缩小。
+- Markdown围栏代码复用原MarkdownIt fence渲染，增加中性连续表面内的12px语言/复制行；语言元信息转义、未标注时显示text，正文沿用13px代码字号及独立横向滚动。复制仅取对应pre/code解析后的正文，保留缩进和尾行，不包含围栏/语言/操作文案；按钮支持键盘、完整焦点、触屏含平板44px，以及明确忙碌/成功/失败重试和可访问反馈。反馈只更新动作节点，不重绘整段代码；内容/语言变化或卸载清理定时器并使旧异步回执失效。继续关闭原始HTML、限制链接协议与授权图片；不新增语法配色、依赖或独立语言偏好。
+- Markdown中已授权文件引用使用紧凑中性单行标签，与外部网页链接区分；宽度受正文与36ch上限约束，超长省略，完整路径通过title保留，原始链接文字仍留在DOM。嵌套code不叠加第二层底色或缩小字体，原生链接与完整键盘焦点保留；手机和平板触屏至少44px。沿用原文件解析、授权和右侧打开事件，不把未授权路径包装成文件入口，不新增彩色边框或独立状态。
+
+- PDF翻页工具条与正文滚动区各占独立一行，阅读长页面后仍能翻页；工具条不能悬浮盖住正文。正文在内部滚动并限制滚动传播，沿用PDF.js、页码边界、加载/失败状态、键盘焦点和44px触屏目标，不另建翻页状态。
+- PDF预览失败时显示左对齐共享文件图标、标题与原文件下载说明，隐藏失败画布、页码保持占位并禁用翻页；不添加无效重试或装饰边框。提示、加载/页码与导航名称跟随父资源面板的唯一语言来源，下载继续使用原Blob；原PDF.js、渲染取消与卸载清理不变，不能把预览失败误报为原文件已损坏。
+
+- 图片预览的缩放工具条独立于图片画布滚动，放大后横纵拖看仍可随时恢复适合宽度；缩放按钮使用共享 SVG 和固定几何，在 25%/400% 边界明确禁用对应动作。百分比代表相对于适合宽度的缩放，重置动作须有明确可访问名称，手机点击区至少 44px。
+- 图片解码失败时以共享图片图标、15px标题与13px原文件下载说明替代浏览器破图，隐藏无效缩放与画布；提示跟随资源语言，使用status播报，不断言原文件损坏或添加无效重试。失败事实按打开的文档保存，并由出错图片的对象URL归属定位，重新读取重置；切换文件不串状态，下载沿用原Blob，关闭和对象URL释放规则不变。采用中性文字与留白，不加彩色或单侧装饰边框。
+
+本机文件夹根行使用共享文件夹图标、可收缩的单行名称与独立断开图标按钮；完整名称保留在title和DOM文字中，断开按钮名称须包含具体文件夹。按钮保持正方形、中性悬停反馈与完整焦点轮廓，手机和平板触屏至少44px；保留未保存内容的断开确认及草稿行为，不把根行伪装为可展开按钮。
+
+本机目录权限恢复在根目录文字轴线下使用13px标题、12px说明与共享箭头的透明动作，完整键盘焦点及触屏含平板44px；禁止浏览器默认白底白字和彩色或单侧边框。请求复用原connecting锁，处理中禁用并明确动作，拒绝或读取失败在原位置播报，重试清除旧错误；成功读取才退出恢复态，断开/切换后的迟到结果不得回填目录或提示。沿用原只读授权、目录句柄及草稿，不新增权限偏好、依赖或隐式上传。
+
+本机子目录按需读取时，在文件名轴线下使用12px中性状态文字并标记aria-busy；失败说明点击当前文件夹重试，不推断必须重新授权。提示跟随工作区语言递归传递，重试开始清除旧错误，成功后移除反馈；同一目录读取中反复收起/展开不重复请求，读取完成不擅自重新展开用户已收起的目录。文件夹按钮保留完整焦点及44px触屏目标，不添加彩色或单侧边框。
+
 本机目录仅在Chrome授权后按需读取；用户主动加入上下文才上传选中文件。文本候选基于原文件哈希生成真实差异，逐文件确认写回，冲突不覆盖；当前编辑会话保留最近一次应用的撤销。用户编辑的云文件生成新版本，不继承Agent验证标记。
 
 ## Execution spine
 
-- 计划节点与子任务状态通过一条稀疏酸性绿轨迹连接，这是 Artigen 的视觉签名。
+- 执行信号沿计划步骤与子任务分布，酸性绿只表达当前执行，不依赖贯穿内容的装饰性连线。
 - 当前节点可用酸性绿；完成用语义成功色；等待保持中性；失败或取消使用危险色。
+- 运行详情的计划面板采用带完成数量的有序清单：完成用共享勾选图标、当前步骤用执行图标和中性整体背景、待执行用序号；保留文字状态与当前步骤语义。长标题在内容列完整换行，标记始终对齐首行，不使用单侧边条。
 - 进度变化只使用 `transform`、`opacity` 和颜色，150–220ms。退出快于进入。
 - `prefers-reduced-motion` 下去除位移和循环动画；键盘触发不播放位移动画。
 
@@ -146,6 +222,7 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 - 对话、规划、验证、父 Agent 和所有子 Agent 只能显示并调用 Cloudflare Workers AI `@cf/openai/gpt-oss-120b`；图片输出只调用 `Kwai-Kolors/Kolors`。
 - 所有图片只能显示并调用 `Kwai-Kolors/Kolors`。
 - 子 Agent 是真实独立 GPT-OSS-120B 上下文，不是视觉占位符：最多 3 个、深度固定 1、20 步、10 分钟。
+- 子 Agent 卡片在名称行显示带文字的实时状态；步骤和点数单独对齐展示，状态不只靠颜色表达，元数据按当前界面语言本地化。
 - 子 Agent 只能读取授权输入并运行离线 Shell；不获得浏览器、电脑、连接器、Kolors、审批或最终交付权。
 - 父 Agent 独占外部能力、审批和最终文件声明。失败或取消单个子 Agent 不应伪装成父任务失败。
 - UI 必须如实显示实际执行器、预算、已用点数、排队、审批和验证状态。
@@ -153,19 +230,29 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 ## Interaction rules
 
 - `Cmd/Ctrl+K` 打开命令面板，`Cmd/Ctrl+N` 新建任务。
+- 命令面板以搜索框承载选项列表；打开时首项默认选中，方向键循环切换，鼠标悬停同步选中，Enter 执行当前项。筛选结果更新后回到首项；无结果时给出明确空状态，Escape 恢复打开前焦点。
 - 所有覆盖层都支持 Escape、焦点陷阱和焦点恢复。
 - 页签支持左右方向键、Home 和 End。
 - 移动触控目标至少 44×44px；桌面密度可以更高，但焦点轮廓必须清晰。
 - 主内容前提供跳转链接；动态图使用 `aria-live`，审批与错误使用明确语义。
 - 用户当前页签、滚动位置和输入草稿不应被后台事件无故重置。
+- 运行详情与设计会话共用中性浮动“回到底部”控件：回看旧内容时显示圆形向下箭头，有新内容时显示带文字的紧凑提示；到达底部后隐藏。控件悬浮在Composer上方，不能挤占阅读区或改变输入框高度、位置，保留44px点击目标、完整焦点轮廓和显式点击后的即时滚动；不新增独立滚动状态源或动画。
+- 运行目标、公开用户消息与设计会话共用用户气泡样式：四角一致的18px圆角，桌面14px/18px内距、最多90%且不超过640px；手机使用完整可用宽度和12px/14px内距。沿用主题抬升表面，不加尾角、彩色或单侧边框，Markdown末尾不叠加额外段间空白；保持消息原文、时间和复制行为。
+- 运行页初始任务与持久化公开消息共用MessageTimestamp：显示本地化小时/分钟，12px中性文字、等宽数字及不换行；原生datetime保留有效createdAt，title补足完整本地日期、秒与时区，避免跨日同一时刻失去上下文。沿用父语言与浏览器本地时区，不另存偏好或加计时器；无效旧时间仅显示占位及本地化说明，不输出无效datetime或影响正文。工具/审计继续保留原秒级格式，不改消息排序、读取和复制，不加装饰边框。
+- 运行页初始任务原文按实际五行行高提供预览，只有真实溢出才显示“显示更多/收起”；原文保留在同一个DOM节点，不按字符数截断或重新解释Markdown。行数由同一常量供CSS与测量使用，ResizeObserver随可用宽度/正文更新溢出事实，同任务后台重读保留用户展开选择，新正文/任务DOM重置并在卸载断开观察。原生按钮使用稳定aria-controls/aria-expanded、共享箭头、完整焦点和44px触屏目标；收起后仅显式把按钮保留在可见区，无动画或持久偏好。费用、审批、失败与输入区保持原独立呈现，不纳入原文折叠。
+- 公开消息读取失败采用中性整体表面、固定共享图标列、标题/保留内容说明与明确的重新读取入口；禁止装饰边条。忙碌状态沿用唯一running来源，手动重试同步防重复，不挤入SSE合并重读队列；保留缓存正文、未发送输入及原账号/运行隔离。按钮用aria-disabled配合同步守卫保留键盘焦点，读取中显示明确文字，触屏含平板至少44px；不启动Agent执行，不保留被替换的裸按钮样式。
+- 已保存的运行会话消息提供“复制消息”操作：桌面仅在悬停或键盘聚焦时出现，触屏设备常显；复制结果通过可访问状态播报，权限失败保留可重试入口。
+- 运行进度摘要中的当前动作保持单行；文本过长时省略显示并提供完整原生提示，步骤计数和展开入口始终保持可见。
 
 ## Readability and accessibility floor
 
 - 元数据在桌面端不得小于 11px，控件文字不得小于 12px，正文保持 14px；移动端输入文字不得小于 16px、正文不得小于 14px。
 - 隐藏的原生文件输入不能进入 Tab 顺序，且仍需提供可访问名称；可见触发按钮负责键盘和焦点反馈。
 - 审批、拒绝原因和预算提升等高风险输入必须有持久可见的关联标签，placeholder 不能代替 label。
+- 审批依据、影响和撤销信息使用紧凑的标签/内容行，不再嵌套成多张小卡片；窄栏允许内容换行，并尽量让决策按钮在初始视区可达。
 - 宽度分隔条必须是可聚焦的 `separator`，暴露当前、最小和最大值；方向键调整，Shift 加速，Home/End 跳到边界。
 - 移动端主动作、取消、澄清和通知按钮至少 44×44px；焦点指示必须在暗色、浅色和系统主题中保持可辨识。
+- 运行顶部“停止”进入二次确认态后，窄屏也必须显示“确认停止”文字，不能只靠按钮变红表达状态；确认按钮文字在深浅危险色背景下均达到4.5:1对比度，并保留既有二次确认与费用说明。
 - reduced motion 下动画与过渡时长必须真实归零，不能使用接近零的非零时长；特别需要在 Chromium、Firefox 和 WebKit 中分别验证。
 - 中间消息流只保留澄清、审批、关键总结和交付；后台技术事件进入计划或审计，避免把日志伪装成对话。
 
@@ -183,8 +270,12 @@ Artigen 的 Agent 页面是一套持续任务空间，不是营销 Hero、配置
 | Left history panel | Desktop collapsible; mobile hidden and `inert` | Desktop expands in place; mobile drawer opens with scrim | Close button, scrim, or Escape closes | Restore focus to the history opener; collapse control exposes `aria-expanded` and `aria-controls` |
 | Right Inspector | Desktop collapsible; mobile hidden and `inert` | Active tab and live state remain visible | Close button, scrim, or Escape closes | Restore focus to the Inspector opener; tabs keep roving focus and `aria-selected` |
 | Command palette | Not mounted | Dialog focuses search and traps Tab | Escape closes and returns focus | `role=dialog`, labelled search, no background focus |
-| Website preview | Not mounted | Dialog focuses close affordance and traps Tab | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
+| Website preview | Not mounted | Native modal dialog focuses close affordance and contains focus, including over mobile drawers | Close button or Escape closes | `aria-labelledby`, focus returns to the preview trigger |
+
+- 网站预览标题保持紧凑单行，长文件名省略并保留完整标题提示；关闭按钮不参与压缩，手机点击区至少 44px。预览入口也需要截断保护，不能让文件名撑出资源区。网页成果预览位于右侧工作区并保留沙箱隔离，移动端沿用资源抽屉的焦点约束。
 | Run controls | Pause, resume, retry, stop reflect the current status | Busy state disables duplicate submissions | Stop requires a second explicit activation | Status and failure text are announced through live regions |
+| Tool receipt rows | Timestamp, event summary and receipt ID stay in one aligned row | Long summaries wrap only in their own column | Receipt ID remains visible at mobile widths | IDs and timestamps use secondary tabular typography |
+| Terminal Run actions | Completed, failed, and cancelled runs replace the disabled composer with a compact status and a clear next task link | Project context carries into the next task; active Run input and unread-update controls remain available only in their applicable states | The saved run stays readable and its status is not inferred from color alone |
 | Reduced motion | — | No looping or positional animation | — | All state changes remain understandable from text and color |
 
 ## Do / Don't
@@ -201,7 +292,7 @@ Don't:
 - 不恢复明亮营销 Hero 或赛博朋克表单后台。
 - 不复制 Codex 的商标、资产、文案或像素级组件。
 - 不让酸性绿成为大面积装饰背景。
-- 不用层层卡片、装饰性分隔线、模型口号或 `LOCAL FIRST` 标签制造技术感。
+- 不用层层卡片、永久分隔线、模型口号或 `LOCAL FIRST` 标签制造技术感。
 - 不把快速工作流伪装成 Computer Agent，也不把视觉占位符称为子 Agent。
 - 不在移动端隐藏费用、安全边界、审批后果或验证状态。
 
@@ -209,46 +300,45 @@ Don't:
 
 - 以长标题、120条会话、60条混合长消息、12个长文件标签、10个附件、250文件和5000行文本验证；页面无整页横向溢出不代表控件未被祖先裁切，关键动作还需命中与焦点检查。
 - 文件标签独立滚动，目录开关不可被挤出；激活、关闭和资源模式切换后保持选中标签可见及键盘焦点。多个路径引用同一资产时优先匹配精确文件ID。
+- 文件标签的未保存圆点独立于名称省略区，完整路径通过标题提示保留，未保存状态同时进入可访问名称。桌面非当前标签的关闭按钮仅在悬停或组内聚焦时显示，当前标签与触屏关闭入口常显；关闭槽位固定且不随显隐挤动名称。自动滚动必须露出整个当前标签及关闭入口，保留未保存确认和关闭后的焦点恢复，不添加彩色边条。
 - 会话编辑表单紧邻项目列表顶部，进入时立即聚焦。附件区和长输入分别限高、内部滚动，窄屏Composer不能撑大Grid，短屏顶端内容必须可达。
 - Markdown宽表格局部滚动并保持单元格可读宽度；编辑器使用明暗主题语义色，不沿用只适合浅色的默认高亮。
 - GitHub列表和记录详情互相切换，返回恢复原记录焦点；刷新使旧请求失效时，当前请求仍必须释放busy状态。
+- GitHub PR/提交记录采用固定图标列与单行标题，过长标题省略显示，保留完整原生标题提示和详情正文；元数据独立一行。悬停或键盘聚焦时使用中性整体表面表达可操作，不添加装饰性边框。
 - 命令面板按可用高度滚动；嵌套控件已处理的键盘事件不能再触发Shell，编辑器搜索的第一次Escape仅关闭搜索。
 - 触屏规则按pointer:coarse生效，包含平板而不限手机宽度；紧凑子组件不得覆盖44px最小触控尺寸。
+- 文件树目录行使用独立箭头槽与文件类型图标，名称列纵向对齐；当前文件用 `aria-current="page"` 表达，并仅用低面积主题强调色区分图标，不加行边框或连接线。
+- 项目会话导航中的当前会话使用主题选中表面和中等字重；链接用 `aria-current="page"` 暴露位置，截断标题可通过原生提示查看全文，不以额外边框区分状态。
 
 
-## Workspace chrome refinement
+## 原生控件与共享弹窗收敛
 
-- Desktop brand, conversation and resource navigation share a 56px header baseline. The 56px feature rail uses centered 20px SVGs in 44px hit areas, compact 4px gaps and explicit current-location/pressed states. The appearance glyph reflects light, dark or system mode. Desktop does not repeat the brand monogram in the adjacent project header.
-- Resource modes use icon-and-label tabs at their natural width; the directory toggle and close action stay anchored on the right. With no open documents there is no empty file-tab row. Closing the last document restores focus to the directory toggle in the shared header.
-- Environment identification belongs in technical details; the conversation header keeps only the task title and compact actions. The global floating DEV badge is hidden only while a workspace shell is present; it must not cover resource actions or require guessed padding offsets.
-- Compose and active-task inspector visibility have independent version-4 preferences. Version-2/3 visibility migrates only to active tasks: a prior open task inspector does not force an empty resource panel into a new request. An explicit compose preference is restored, including when switching between those contexts.
-- A healthy single Agent is a ready state, not a warning. Genuine offline, model mismatch, running, approval and cost states remain visible. Empty-state suggestions are compact icon actions and disappear once a goal or references have been supplied.
-- The shared Composer uses a visible 1px functional border without a shadow and one 2px theme-colored container focus outline. Its textarea does not add a second outline. Pointer clicks on workspace controls do not inherit the global browser-blue focus ring; keyboard focus retains the semantic theme outline.
+- 工作区项目归属、浏览器会话、比较来源及历史版本四处原生选择框使用同一 `workspace-select` 样式，颜色读取Shell的唯一主题变量；子组件保留各自宽度和表单布局。桌面36px/13px，触屏含平板44px/16px，保留完整焦点轮廓、原生选项、标签、禁用及事件处理，不另建选择状态或自制弹出层。
+- 职业形象与标准证件照流程沿用平台原生选择方式，职业风格标签必须关联实际select；禁止为品牌感重建仅能点击的下拉层、菜单单侧色条或全局点击监听。该工具保留既有固定深色上下文，不宣称跟随工作区明暗模式。
+- 命令面板、网站预览与现有工具弹窗复用CloseButton和WorkspaceIcon关闭图标；共享44px入口、主题文字/悬停与完整焦点。保留各容器原有位置、焦点陷阱、Escape及返回入口；网站预览仍用原生dialog、受限iframe，不替换未保存/离开页面的原生数据保护确认。
+- 工具弹窗配置区宽度必须包含内距，弹性文字列允许收缩及换行；窄屏不能靠祖先overflow隐藏被撑出的内容。
+- 只读差异两栏均可用Tab聚焦并打开CodeMirror原生查找，明确aria-readonly；不可编辑、不出现替换操作、不隐式写回。项目行新建入口沿用原有组内聚焦显现及自然Tab顺序。
 
-### Functional boundaries and review surfaces
 
-- Keep the navigation rail and project tree on one shared surface. Use distinct conversation and editor surfaces, one medium panel divider and quiet internal hairlines instead of making every line equally strong. The main header is not boxed.
-- Input outlines, scrollbar thumbs and focus indicators stay independently readable (at least 3:1 against their relevant surfaces). This requirement is not applied indiscriminately to decorative dividers. Resize handles keep pointer and keyboard access with neutral interaction feedback, without permanent bright grips. The default shared border token is a hairline; control-border and panel-border have specific, separate roles.
-- Scrollbars use their own theme token, a native 12px WebKit track with a padded rounded thumb and the native standard-color fallback in other engines. Run conversation content keeps 12px clearance from the scrollbar without changing its reading width.
-- The editable source uses the complete upstream VS Code Light/Dark themes from `@uiw/codemirror-theme-vscode`. Use CodeMirror's visible active line and gutter as provided by the theme; keep the normal text cursor and do not add local syntax, selection, caret, active-line or gutter colors. The shell resolved theme is authoritative; CodeMirror Compartment reconfiguration preserves the editable view and undo/selection/scroll state. Only geometry and touch target adaptations belong locally. Diff review uses the MIT-licensed `@git-diff-view/vue` component in GitHub split layout on wide panels and unified layout below 720px; it owns syntax highlighting, gutters, and addition/deletion surfaces. Load the read-only diff component and its styles only when the resource workspace is opened. Keep file names and explicit save/apply/undo actions in Artigen’s review header. Save/error notices stay compact and retain their status text.
-- Diff headings identify actual source versions: opened/current edits, saved/Agent candidate, or saved/history. Only changed lines and gutter markers get semantic red/green; never tint whole versions as if all text changed. Identical content displays an explicit no-changes state.
-- Comparison mode is read-only at every width; the user applies a candidate through Artigen’s explicit action. Keep the component’s GitHub semantic surfaces and line numbers intact, and do not overlay a second hand-built diff palette. Existing draft, conflict and explicit apply/save rules remain authoritative.
-- Reference rationale: [Linear UI redesign](https://linear.app/now/how-we-redesigned-the-linear-ui) (surface hierarchy, density and alignment); [VS Code themes for CodeMirror](https://github.com/uiwjs/react-codemirror/tree/master/themes/vscode) (editor colors and active-line states); [git-diff-view](https://github.com/MrWangJustToDo/git-diff-view) (mature GitHub-style split/unified diffs). Codex screenshots supplied by the user remain the visual reference for the workspace arrangement. This is an Artigen adaptation, not a claim to reproduce another product exactly.
+### 图标与原生选择控件
 
-### Compact review chrome
+- Agent 工作区的通用图标使用 `@lucide/vue` 按需导入，统一 24 单位视口与 1.75 描边；图标语义由 `WorkspaceIcon` 集中映射，保留按钮本身的可访问名称。品牌标识和业务插画不强行替换为通用图标。
+- 下拉框使用 `NativeSelectFrame` 保留原生 `select` 的键盘和系统选择行为，箭头距控件内侧边缘 12px、文本留出 40px；系统强制颜色模式恢复原生箭头。实现后在浅色、深色和窄屏检查实际图形与边缘的距离，禁止仅依赖浏览器默认箭头。
+- 资源面板标签区的结构分隔线与两侧留白对齐，选中态使用柔和圆角。弹窗标题的装饰图标不额外加边框，并与标题垂直居中。
 
-- In Changes mode, file tabs identify the document; do not repeat the file breadcrumb and preview/source/save toolbar. A single review header owns filename, real line counts and applicable save/apply/undo actions. Keep history/candidate safety notices explicit.
-- Candidate selection is progressive disclosure: a native details/summary opens a labeled select; changing the source or Escape closes it and restores focus. On narrow screens the popup stays within the review panel, and controls remain at least 44px for touch. Do not occupy a permanent full-width row when no source selection is needed.
-- Related preview/source choices use a quiet segmented selected state, distinct from primary write actions. The review keeps code visible instead of stacking decorative controls.
-- Additional references: [Zed split diffs](https://zed.dev/blog/split-diffs) (clear base/current comparison with minimal surrounding chrome); [Primer SegmentedControl](https://primer.style/product/components/segmented-control/) (related immediate view choices and selected states). These guide interaction hierarchy, not a new brand palette.
+### FAQ 与相似展开内容
 
-## 登录与运行反馈修复
+- 展开的 FAQ 采用共享的中性完整四边框和圆角，边框须在背景上清晰可辨；不可使用彩色单侧边线，也不可仅靠过浅的背景区分。收起项可以使用中性结构分隔线。首页、工具页、图片工作坊、工具介绍和价格页复用同一套 FAQ 样式，不为每个页面单独复制。
+- 保留原生 `details` / `summary` 和键盘操作，焦点轮廓完整；文字换行时图标不贴边、不被遮挡。受影响页面在桌面与手机实际检查展开、收起、悬停和键盘焦点；未提供的主题不得声称已验证。
 
-- 登录弹窗不放福利 Banner 或生成次数估算。登录／注册入口旁以轻量气泡展示服务端 `signupOffer.credits`；公开注册关闭、赠点为零、配置读取失败或弹窗已打开时隐藏。后端实际赠点与公开配置使用同一解析。
-- 每个功能栏入口提供可见 tooltip、悬停、键盘焦点及当前状态。tooltip 不依赖原生 title，Escape 可关闭。导航失败显示原因。
-- 左下固定显示钱包可用点数与本次实际用量，终态显示结算值；小额消耗不能格式化成零。冻结、预算和退款在详情；失败显示重试，窄屏从历史抽屉可达。
-- 顶栏标题单行截断，动作区不收缩；暂停／继续为图标按钮，结束并结算在更多菜单中保留确认。
-- Agent 消息旁显示排队、准备、执行、暂停中、已暂停、需要确认及服务不可用等真实状态。离线由现有服务状态接口判断，网络断连单独反馈；不显示“等待执行容量”、独立步骤卡或虚构完成比例。详细步骤在右侧。执行动效服从 reduced-motion。
-- 首条和补充消息使用已验证账号短 ID，完整 ID 放在悬停说明；附件名称与应用回执来自持久记录，不补造已读取状态。
-- GitHub 面板明确区分“查看项目”与“关联当前任务”；前者不改变文件及任务归属。无项目可就地创建并继续选择。关联前展示范围，设计会话明确确认整个会话；正在执行的相关任务可就地暂停，安全后确认关联且不自动恢复。
-- 关联只允许首次关联或同项目幂等，不迁移已有项目；验证、未决调用或未完成子任务会阻止关联。保留沙箱、检查点与计费回执，终态关联只改归属，不增加 GitHub 权限。
+
+### Agent 源码与差异编辑器主题
+
+- 编辑器和两侧只读差异使用 `@uiw/codemirror-theme-vscode` 的完整浅色、深色主题，随工作区实际外观切换；代码背景、行号和语法颜色由上游主题统一管理，不覆盖为产品绿。工作区导航与操作保留 Artigen 品牌。
+- 切换主题不得重建普通编辑器或丢失内容、选区、撤销历史及滚动位置；差异比较继续只读，写回须使用明确的应用入口。移动端与窄面板必须检查搜索、水平滚动和差异可读性。
+
+- Agent 网站成果预览作为右侧工作区内的网页标签呈现；切换文件或任务后可返回预览，关闭时返回任务中的原入口。只展示已加载的网站成果，iframe 保留原有沙箱及 referrer 限制；不把产物预览描述为任意网址浏览器。手机沿用工作区抽屉，长标题可省略但保留完整 title 与关闭入口。
+
+- 右侧资源标签靠左按内容定宽，桌面操作按钮采用紧凑尺寸，触屏及平板仍保留至少44px命中区。标签过多时仅标签组横向滚动，关闭入口固定，切换后选中项自动滚入可见区域；焦点轮廓与长文案保持可见。
+- 编辑器有足够宽度时将文件目录放在代码画布左侧，两者之间使用中性结构分隔线；目录在 DOM 和键盘顺序中也位于代码之前。紧凑面板仍在目录与文件间切换，不为了保持双栏挤压代码；代码行高保持适当阅读间距，沿用上游主题。
+- 文件状态栏与工作区内距对齐，顶部结构分隔线不贯穿至列边缘；保存状态与操作保留独立可换行区域，长语言文案不得裁切，触屏继续保留44px目标。

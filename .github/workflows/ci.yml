@@ -119,10 +119,16 @@ jobs:
         include:
           - project: chromium-desktop
             browser: chromium
-            shard: "1/1"
+            shard: "1/2"
+          - project: chromium-desktop
+            browser: chromium
+            shard: "2/2"
           - project: firefox-desktop
             browser: firefox
-            shard: "1/1"
+            shard: "1/2"
+          - project: firefox-desktop
+            browser: firefox
+            shard: "2/2"
           - project: webkit-desktop
             browser: webkit
             shard: "1/2"
@@ -131,10 +137,16 @@ jobs:
             shard: "2/2"
           - project: chromium-mobile-360
             browser: chromium
-            shard: "1/1"
+            shard: "1/2"
+          - project: chromium-mobile-360
+            browser: chromium
+            shard: "2/2"
           - project: chromium-mobile-390
             browser: chromium
-            shard: "1/1"
+            shard: "1/2"
+          - project: chromium-mobile-390
+            browser: chromium
+            shard: "2/2"
           - project: webkit-tablet-768
             browser: webkit
             shard: "1/2"

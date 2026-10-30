@@ -1,23 +1,26 @@
 <template>
   <AgentWorkspaceShell
+    ref="workspaceShell"
     :project-id="run?.projectId"
     :artifacts="artifacts"
     :zh="zh"
     :title="run?.objectivePreview || (zh ? 'Agent 运行' : 'Agent run')"
     subtitle=""
-    :status-label="run ? '' : loadError ? (zh ? '读取失败' : 'Could not load') : (zh ? '读取中' : 'Loading')"
+    :status-label="run ? statusLabel(run.status) : loadError ? (zh ? '读取失败' : 'Could not load') : (zh ? '读取中' : 'Loading')"
     :status-tone="workspaceTone"
-    :task-cost-label="taskCostLabel"
+    :task-cost-label="taskUsageLabel"
+    :account-task-cost-label="accountTaskUsageLabel"
     :credit-label="creditLabel"
     :credit-loading="creditsLoading"
     :credit-error="creditsError ? (zh ? '余额暂时无法读取' : 'Balance could not load') : ''"
     :run-id="runId"
     :run-status="run?.status"
-    @refresh-credits="refreshCredits"
-    @project-associated="refreshAfterMutation(currentSelection())"
     :badges="{ subagents: activeSubagents, computer: takeoverRequired ? 1 : 0, files: artifacts.length, plan: pendingApprovals.length }"
     :live-announcement="loadError || notice || failureText"
+    :website-available="Boolean(previewHtml)"
     @new-task="$router.push('/artigen/agent')"
+    @refresh-credits="refreshCredits"
+    @project-associated="refreshAfterMutation(currentSelection())"
   >
     <template #history="{ search }">
       <div class="history-group">
@@ -37,16 +40,19 @@
 
     <template #topbar-actions>
       <div v-if="run" class="run-controls">
-        <button v-if="canPause" class="run-icon-control" type="button" :disabled="controlBusy || run.progress.pauseRequested" :aria-label="run.progress.pauseRequested ? (zh ? '正在暂停' : 'Pausing') : (zh ? '暂停' : 'Pause')" :data-tooltip="zh ? '暂停任务' : 'Pause task'" @click="control('pause')">
+        <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" class="run-icon-control landscape-refresh-control" type="button" :disabled="refreshingStatus" :aria-label="zh ? '刷新状态' : 'Refresh status'" :title="zh ? '刷新状态' : 'Refresh status'" @click="refreshStatus">
+          <WorkspaceIcon name="refresh" :size="18" />
+        </button>
+        <button v-if="canPause" class="run-icon-control" type="button" :disabled="controlBusy || run.progress.pauseRequested" :aria-label="run.progress.pauseRequested ? (zh ? '正在暂停' : 'Pausing') : (zh ? '暂停' : 'Pause')" :title="zh ? '暂停任务' : 'Pause task'" @click="control('pause')">
           <WorkspaceIcon name="pause" :size="18" />
         </button>
-        <button v-if="canResume" class="run-icon-control primary-control" type="button" :disabled="controlBusy" :aria-label="retryRequired ? (zh ? '重试' : 'Retry') : (zh ? '继续' : 'Resume')" :data-tooltip="retryRequired ? (zh ? '确认重试' : 'Confirm retry') : (zh ? '继续任务' : 'Resume task')" @click="control('resume')">
+        <button v-if="canResume" class="run-icon-control primary-control" type="button" :disabled="controlBusy" :aria-label="retryRequired ? (zh ? '重试' : 'Retry') : (zh ? '继续' : 'Resume')" :title="retryRequired ? (zh ? '确认重试' : 'Confirm retry') : (zh ? '继续任务' : 'Resume task')" @click="control('resume')">
           <WorkspaceIcon name="play" :size="18" />
         </button>
         <details v-if="!terminal" ref="runMenu" class="run-menu" @keydown.esc.prevent.stop="closeRunMenu(true)">
           <summary class="run-icon-control" :aria-label="zh ? '更多任务操作' : 'More task actions'" :title="zh ? '更多任务操作' : 'More task actions'"><WorkspaceIcon name="more" :size="18" /></summary>
           <div class="run-menu-content">
-            <button class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" @click="requestCancel">
+            <button class="danger-control" :class="{ armed: stopArmed }" type="button" :disabled="controlBusy" :aria-label="stopArmed ? (zh ? '确认结束并结算' : 'Confirm end and settle') : (zh ? '结束任务并结算' : 'End task and settle')" @click="requestCancel">
               <WorkspaceIcon name="stop" :size="18" />
               <span>{{ stopArmed ? (zh ? '确认结束并结算' : 'Confirm end and settle') : (zh ? '结束任务并结算' : 'End task and settle') }}</span>
             </button>
@@ -62,39 +68,51 @@
         <h1>{{ zh ? '任务暂时无法打开' : 'This task could not open' }}</h1>
         <p role="alert">{{ loadError }}</p>
         <div class="load-actions">
-          <router-link v-if="loadErrorKind === 'auth'" :to="{ path: '/login', query: { returnTo: route.fullPath } }">{{ zh ? '重新登录' : 'Sign in again' }}</router-link>
-          <button v-else-if="loadErrorKind !== 'not-found'" type="button" :disabled="loadingRun" @click="load()">{{ loadingRun ? (zh ? '正在重试…' : 'Retrying…') : (zh ? '重新读取任务' : 'Retry loading') }}</button>
-          <router-link to="/artigen/agent">{{ zh ? '返回任务历史' : 'Back to task history' }}</router-link>
+          <router-link v-if="loadErrorKind === 'auth'" class="load-primary" :to="{ path: '/login', query: { returnTo: route.fullPath } }"><WorkspaceIcon name="arrow-right" :size="16" />{{ zh ? '重新登录' : 'Sign in again' }}</router-link>
+          <button v-else-if="loadErrorKind !== 'not-found'" class="load-primary" type="button" :disabled="loadingRun" @click="load()"><WorkspaceIcon name="refresh" :size="16" />{{ loadingRun ? (zh ? '正在重试…' : 'Retrying…') : (zh ? '重新读取任务' : 'Retry loading') }}</button>
+          <router-link :class="loadErrorKind === 'not-found' ? 'load-primary' : 'load-secondary'" to="/artigen/agent">{{ zh ? '返回任务历史' : 'Back to task history' }}</router-link>
         </div>
       </template>
       <template v-else><h1>{{ zh ? '正在读取任务…' : 'Loading this task…' }}</h1><p role="status">{{ zh ? '读取完成后会显示已有进度和成果。' : 'Your saved progress and results will appear here.' }}</p></template>
     </section>
     <section v-else class="conversation-workspace">
       <div ref="scrollArea" class="conversation-scroll" @scroll="onConversationScroll">
-        <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive">
+        <details v-if="!['unavailable', 'disconnected'].includes(displayState)" class="run-progress-panel">
+          <summary class="run-progress-header">
+            <strong :title="currentAction">{{ currentAction }}</strong>
+            <span>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }} {{ zh ? '步' : 'steps' }}</span>
+            <WorkspaceIcon name="list" :size="16" />
+          </summary>
+          <div v-if="phaseStages.length" class="phase-track">
+            <span v-for="stage in phaseStages" :key="stage.id" :class="{ active: stage.active, done: stage.done }"><i></i>{{ stage.label }}</span>
+          </div>
+        </details>
+        <section v-if="run.progress.clarificationRequired && run.progress.clarification" class="clarification-card" aria-live="assertive" :aria-busy="sending">
           <span class="progress-kicker">{{ zh ? '需要你的输入' : 'Needs your input' }}</span>
           <h2>{{ run.progress.clarification.question }}</h2>
-          <div class="quick-answers">
-            <button v-for="option in run.progress.clarification.options || []" :key="option" type="button" @click="submitClarification(option)">{{ option }}</button>
+          <p v-if="run.progress.clarification.options?.length" class="clarification-hint">{{ zh ? '选择一项直接回复，也可在下方输入其他要求。' : 'Choose an answer to send it, or type another response below.' }}</p>
+          <div class="quick-answers" role="group" :aria-label="zh ? '快捷回复' : 'Quick replies'">
+            <button v-for="option in run.progress.clarification.options || []" :key="option" type="button" :disabled="sending" @click="submitClarification(option)"><span>{{ option }}</span><WorkspaceIcon name="arrow-right" :size="16" /></button>
           </div>
         </section>
-        <article class="message user-message">
-          <header><span :title="userId">{{ userLabel }}</span><time>{{ formatTime(run.createdAt) }}</time></header>
-          <p>{{ run.objective }}</p>
+        <article class="message user-message workspace-user-bubble">
+          <header><span :title="userId">{{ userLabel }}</span><MessageTimestamp :value="run.createdAt" :zh="zh" /></header>
+          <p :id="objectiveTextId" ref="objectiveText" class="objective-text" :class="{ 'objective-expanded': objectiveExpanded }" :style="{ '--objective-preview-lines': objectivePreviewLines }">{{ run.objective }}</p>
+          <button v-if="objectiveOverflow" class="objective-toggle" type="button" :aria-expanded="objectiveExpanded" :aria-controls="objectiveTextId" @click="toggleObjective">{{ objectiveExpanded ? (zh ? '收起' : 'Show less') : (zh ? '显示更多' : 'Show more') }}<WorkspaceIcon name="chevron-down" :size="16" /></button>
         </article>
 
         <article class="message agent-message">
           <span class="agent-avatar" aria-hidden="true">A</span>
           <div>
-            <header><span>Artigen Agent</span></header>
+            <header><span>Artigen Agent</span><small>{{ statusLabel(run.status) }}</small></header>
             <div class="run-state" :class="displayState" role="status" aria-live="polite">
               <WorkspaceIcon :name="displayStateIcon" :size="16" :class="{ spinning: stateAnimating }" />
               <span>{{ displayStateLabel }}</span>
-              <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" type="button" :disabled="refreshingStatus" @click="refreshStatus">{{ zh ? '刷新状态' : 'Refresh status' }}</button>
+              <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" class="run-inline-refresh" type="button" :disabled="refreshingStatus" @click="refreshStatus">{{ zh ? '刷新状态' : 'Refresh status' }}</button>
             </div>
             <small v-if="streamDisconnected && !terminal && !['disconnected', 'unavailable'].includes(displayState)" class="connection-note" role="status">{{ zh ? '实时连接中断，正在定期同步。' : 'Live connection interrupted; syncing periodically.' }}</small>
             <p>{{ runSummary }}</p>
-            <dl v-if="terminal" class="settlement-summary">
+            <dl v-if="terminal" class="settlement-summary" :aria-label="zh ? '本次结算' : 'Run settlement'">
               <div><dt>{{ zh ? '已结算' : 'Charged' }}</dt><dd>{{ run.budget.charged }} {{ zh ? '点' : 'credits' }}</dd></div>
               <div><dt>{{ zh ? '已退还' : 'Refunded' }}</dt><dd>{{ run.budget.refunded }} {{ zh ? '点' : 'credits' }}</dd></div>
               <div><dt>{{ zh ? '已释放冻结' : 'Released hold' }}</dt><dd>{{ run.budget.released }} {{ zh ? '点' : 'credits' }}</dd></div>
@@ -102,16 +120,24 @@
           </div>
         </article>
 
-        <p v-if="expiredApprovals.length" class="approval-expired" role="status">{{ zh ? '有审批已过期，不能再批准；请刷新任务查看最新状态。' : 'An approval expired and can no longer be granted. Refresh for the current status.' }}</p>
+        <ExpiredApprovalsNotice :count="expiredApprovals.length" :zh="zh" :busy="loadingRun" :error="loadError">
+          <template #actions>
+            <router-link v-if="loadErrorKind === 'auth'" :to="{ path: '/login', query: { returnTo: route.fullPath } }">{{ zh ? '重新登录' : 'Sign in again' }}</router-link>
+            <router-link v-else-if="loadErrorKind === 'not-found'" to="/artigen/agent">{{ zh ? '返回任务历史' : 'Back to task history' }}</router-link>
+            <button v-else type="button" :disabled="loadingRun" @click="load()"><WorkspaceIcon name="refresh" :size="16" />{{ loadingRun ? (zh ? '正在读取…' : 'Loading…') : (zh ? '重新读取任务' : 'Reload task') }}</button>
+          </template>
+        </ExpiredApprovalsNotice>
 
         <article v-if="retryRequired" class="retry-required" role="status">
+          <WorkspaceIcon name="refresh" :size="18" />
           <div>
             <b>{{ zh ? '这次调用结果无法确认' : 'This call could not be confirmed' }}</b>
             <p>{{ zh ? '系统没有自动重试，也没有把这次未落账调用计入费用。你可以确认后安全重试。' : 'It was not retried automatically or charged without a receipt. You can explicitly retry it now.' }}</p>
+            <button type="button" :disabled="controlBusy" :aria-busy="controlBusy" @click="control('resume')">
+              <span>{{ controlBusy ? (zh ? '正在处理…' : 'Working…') : (zh ? '确认重试' : 'Retry now') }}</span>
+              <WorkspaceIcon name="arrow-right" :size="16" />
+            </button>
           </div>
-          <button type="button" :disabled="controlBusy" @click="control('resume')">
-            {{ zh ? '确认重试' : 'Retry now' }}
-          </button>
         </article>
 
         <article v-for="approval in pendingApprovals" :key="approval.approvalId" class="approval-card">
@@ -135,9 +161,9 @@
           </footer>
         </article>
 
-        <RunConversationStream :run-id="runId" :events="events" :files="conversationFiles" :zh="zh" :terminal="terminal" :subagents="run.subagents" @layout-change="scrollToLatest()" />
+        <RunConversationStream :run-id="runId" :refresh-token="conversationRefreshToken" :events="events" :files="conversationFiles" :zh="zh" :terminal="terminal" :subagents="run.subagents" @layout-change="scrollToLatest()" />
 
-        <article v-for="event in conversationEvents.filter(event => event.type !== 'message.created' && event.type !== 'context.input_applied' && !event.type.startsWith('run.input'))" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
+        <article v-for="event in conversationEvents.filter(event => event.type !== 'message.created' && !event.type.startsWith('run.input'))" :key="event.eventId" class="message event-message" :class="{ child: event.subagentId }">
           <span class="agent-avatar" aria-hidden="true">{{ event.subagentId ? 'S' : 'A' }}</span>
           <div>
             <header>
@@ -150,20 +176,34 @@
 
         <div v-if="terminal && artifacts.length" class="delivery-summary">
           <header><span>{{ run.status === 'succeeded' ? (zh ? '交付完成' : 'Delivery complete') : (zh ? '已保留的成果' : 'Saved partial results') }}</span><b>{{ artifacts.length }}</b></header>
-          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer" @click="openDeliveredFile(artifact, $event)">
+          <a v-for="artifact in artifacts" :key="`center-${artifact.artifactId}`" :href="agentAssetUrl(artifact)" :title="artifact.filename" target="_blank" rel="noopener noreferrer">
             <span>{{ fileCode(artifact.mimeType) }}</span>
-            <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · {{ artifact.verificationStatus }}</small></div>
-            <WorkspaceIcon name="file" />
+            <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em class="artifact-verification" :class="artifact.verificationStatus">{{ artifactVerificationLabel(artifact.verificationStatus) }}</em></div>
+            <WorkspaceIcon name="download" />
           </a>
         </div>
       </div>
 
       <p v-if="loadError || notice" class="run-notice" :role="loadError ? 'alert' : 'status'" aria-live="polite">{{ loadError || notice }}</p>
-      <p v-if="draftRestored && !terminal" class="draft-restored" role="status">{{ zh ? '已恢复本机草稿。' : 'Your local draft was restored.' }}</p>
+      <DraftRestoredNotice v-if="draftRestored && !terminal" :zh="zh" :references="false" />
       <div class="run-composer">
         <input ref="fileInput" class="run-file-input" type="file" multiple tabindex="-1" :aria-label="zh ? '添加任务附件' : 'Add task attachments'" @change="selectFiles" />
-        <button v-if="hasUnreadUpdates" class="run-new-updates" type="button" @click="scrollToLatest(true)">{{ zh ? '有新内容 · 回到底部' : 'New updates · Jump to latest' }}</button>
+        <ConversationJump v-if="!nearBottom" :unread="hasUnreadUpdates" :zh="zh" @jump="jumpToLatest" />
+        <div v-if="terminal && !message.trim()" class="run-ended-bar" role="group" :aria-label="zh ? '任务结束后的操作' : 'Run ended actions'">
+          <span class="run-ended-status" :class="run.status" aria-hidden="true">
+            <WorkspaceIcon :name="run.status === 'succeeded' ? 'check' : run.status === 'cancelled' ? 'stop' : 'file'" :size="16" />
+          </span>
+          <span class="run-ended-copy">
+            <strong>{{ run.status === 'failed' ? (zh ? '任务未完成' : 'Run did not complete') : run.status === 'cancelled' ? (zh ? '任务已停止' : 'Run stopped') : (zh ? '任务已完成' : 'Run completed') }}</strong>
+            <small>{{ artifacts.length ? (zh ? `已保留 ${artifacts.length} 份成果；执行记录和结算信息仍在此任务中。` : `${artifacts.length} result${artifacts.length === 1 ? '' : 's'} saved; activity and settlement remain here.`) : (zh ? '执行记录和结算信息仍保留在当前任务中。' : 'Activity and settlement remain available in this task.') }}</small>
+          </span>
+          <router-link class="run-ended-action" :to="run.projectId ? { path: '/artigen/agent', query: { projectId: run.projectId } } : '/artigen/agent'">
+            <span>{{ zh ? '新建任务' : 'New task' }}</span>
+            <WorkspaceIcon name="arrow-right" :size="16" />
+          </router-link>
+        </div>
         <ComposerBox
+          v-else
           :draft="message"
           :attachments="composerAttachments"
           :zh="zh"
@@ -194,21 +234,21 @@
           <header><span>{{ zh ? '运行概览' : 'Run overview' }}</span><i :class="{ healthy: workspaceTone === 'ready' }"></i></header>
           <dl>
             <div><dt>{{ zh ? '状态' : 'Status' }}</dt><dd>{{ statusLabel(run.status) }}</dd></div>
-            <div><dt>{{ zh ? '步骤用量' : 'Steps used' }}</dt><dd>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }}</dd></div>
-            <div><dt>{{ zh ? '任务预算' : 'Task budget' }}</dt><dd>{{ formatRunCredits(run.budget.maximum) }} {{ zh ? '点' : 'credits' }}</dd></div>
-            <div><dt>{{ zh ? '任务冻结' : 'Task hold' }}</dt><dd>{{ formatRunCredits(run.budget.frozen) }} {{ zh ? '点' : 'credits' }}</dd></div>
+            <div><dt>{{ zh ? '执行进度' : 'Progress' }}</dt><dd>{{ run.progress.stepCount }} / {{ run.progress.maxSteps }}</dd></div>
             <div><dt>{{ zh ? '已验证交付' : 'Verified files' }}</dt><dd>{{ artifacts.filter((item) => item.verificationStatus === 'passed').length }}</dd></div>
           </dl>
         </section>
         <section class="inspector-card">
           <header><span>{{ zh ? '能力' : 'Capabilities' }}</span></header>
-          <div class="grant-list">
-            <span v-for="(enabled, capability) in run.capabilities" :key="capability" :class="{ enabled }"><i></i>{{ capabilityLabel(String(capability)) }}</span>
-          </div>
+          <dl class="grant-list">
+            <div v-for="(enabled, capability) in run.capabilities" :key="capability">
+              <dt>{{ capabilityLabel(String(capability)) }}</dt>
+              <dd><WorkspaceIcon :name="enabled ? 'check' : 'minus'" :size="14" /><span>{{ enabled ? (zh ? '已启用' : 'Enabled') : (zh ? '未启用' : 'Not enabled') }}</span></dd>
+            </div>
+          </dl>
         </section>
         <TechnicalDetails :label="zh ? '技术详情' : 'Technical details'">
           <dl class="technical-list">
-            <div><dt>{{ zh ? '环境' : 'Environment' }}</dt><dd>{{ environmentLabel }}</dd></div>
             <div v-if="run.runtime"><dt>{{ zh ? '运行时' : 'Runtime' }}</dt><dd>V{{ run.runtime.version }} · {{ run.runtime.promptProfile || 'legacy' }}</dd></div>
             <div v-if="run.runtime?.skills?.length"><dt>{{ zh ? '已加载规范' : 'Loaded skills' }}</dt><dd>{{ run.runtime.skills.map((skill) => `${skill.id}@${skill.version}`).join(' · ') }}</dd></div>
             <div><dt>{{ zh ? '父与子文本模型' : 'Parent & child text' }}</dt><dd>{{ run.model.name }}</dd></div>
@@ -221,17 +261,27 @@
     </template>
 
     <template #plan>
-      <div class="execution-spine">
-        <article v-for="stage in stages" :key="stage.id" :class="{ active: stage.active, complete: stage.done }">
-          <i></i>
-          <div><b>{{ stage.label }}</b><span>{{ stage.description }}</span></div>
-        </article>
+      <div class="execution-plan">
+        <header>
+          <b>{{ zh ? '执行计划' : 'Execution plan' }}</b>
+          <span>{{ stages.filter(stage => stage.done).length }} / {{ stages.length }} {{ zh ? '已完成' : 'completed' }}</span>
+        </header>
+        <ol :aria-label="zh ? '执行计划' : 'Execution plan'">
+          <li v-for="stage in stages" :key="stage.id" :class="{ active: stage.active, complete: stage.done }" :aria-current="stage.active ? 'step' : undefined">
+            <span class="plan-marker" aria-hidden="true">
+              <WorkspaceIcon v-if="stage.done" name="check" :size="16" />
+              <WorkspaceIcon v-else-if="stage.active" name="play" :size="16" />
+              <template v-else>{{ stage.index }}</template>
+            </span>
+            <div><b>{{ stage.label }}</b><span class="plan-state">{{ stage.description }}</span></div>
+          </li>
+        </ol>
       </div>
       <TechnicalDetails class="audit-details" :label="`${zh ? '审计记录' : 'Audit log'} · ${events.length}`">
-        <div>
-          <article v-for="event in events" :key="`audit-${event.eventId}`">
-            <time>{{ formatTime(event.createdAt) }}</time>
-            <span><b>{{ eventLabel(event.type) }}</b><small>{{ eventSummary(event) }}</small></span>
+        <div class="audit-entries" role="list" :aria-label="zh ? '审计事件' : 'Audit events'" tabindex="0">
+          <article v-for="event in events" :key="`audit-${event.eventId}`" role="listitem">
+            <header><b>{{ eventLabel(event.type) }}</b><time :datetime="event.createdAt">{{ formatTime(event.createdAt) }}</time></header>
+            <small>{{ eventSummary(event) }}</small>
           </article>
         </div>
       </TechnicalDetails>
@@ -247,9 +297,18 @@
           <article v-for="child in run.subagents" :key="child.subagentId" class="subagent-card">
             <span class="agent-node">S{{ child.ordinal }}</span>
             <div>
-              <header><b>{{ child.label || child.role }}</b><i :class="child.status"></i></header>
+              <header>
+                <b>{{ child.label || child.role }}</b>
+                <span class="subagent-status" :data-status="child.status">
+                  <i aria-hidden="true"></i>
+                  <span class="subagent-status-label">{{ subagentStatusLabel(child.status) }}</span>
+                </span>
+              </header>
               <p>{{ child.summary || child.role }}</p>
-              <small>{{ subagentStatusLabel(child.status) }} · {{ child.progress.stepCount }}/{{ child.progress.maxSteps }} steps · {{ child.usage.credits.toFixed(2) }} cr</small>
+              <small class="subagent-meta">
+                <span>{{ child.progress.stepCount }} / {{ child.progress.maxSteps }} {{ zh ? '步' : 'steps' }}</span>
+                <span>{{ child.usage.credits.toFixed(2) }} {{ zh ? '点' : 'cr' }}</span>
+              </small>
               <button v-if="['queued', 'running'].includes(child.status)" type="button" :disabled="subagentBusyId === child.subagentId" @click="cancelChild(child.subagentId)">{{ zh ? '取消这个子 Agent' : 'Cancel this subagent' }}</button>
             </div>
           </article>
@@ -280,29 +339,37 @@
     <template #files>
       <div class="inspector-stack">
         <section class="inspector-card">
-          <header><span>{{ zh ? '已验证交付' : 'Verified delivery' }}</span><b>{{ artifacts.length }}</b></header>
+          <header><span>{{ zh ? '交付文件' : 'Deliverables' }}</span><b>{{ artifacts.length }}</b></header>
           <div v-if="artifacts.length" class="file-list">
-            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" target="_blank" rel="noopener noreferrer" @click="openDeliveredFile(artifact, $event)">
+            <a v-for="artifact in artifacts" :key="artifact.artifactId" :href="agentAssetUrl(artifact)" :title="artifact.filename" target="_blank" rel="noopener noreferrer">
               <span>{{ fileCode(artifact.mimeType) }}</span>
-              <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em :class="artifact.verificationStatus">{{ artifact.verificationStatus }}</em></div>
-              <WorkspaceIcon name="file" />
+              <div><b>{{ artifact.filename }}</b><small>{{ formatBytes(artifact.byteSize) }} · v{{ artifact.version }}</small><em class="artifact-verification" :class="artifact.verificationStatus">{{ artifactVerificationLabel(artifact.verificationStatus) }}</em></div>
+              <WorkspaceIcon name="download" />
             </a>
           </div>
-          <div v-else class="inspector-empty">{{ zh ? '文件通过验证后才会显示。' : 'Files appear only after verification.' }}</div>
+          <div v-else class="deliverables-empty">
+            <WorkspaceIcon name="file" :size="18" />
+            <div>
+              <h3>{{ zh ? '暂无交付文件' : 'No deliverables yet' }}</h3>
+              <p>{{ zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.' }}</p>
+            </div>
+          </div>
         </section>
-        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
+        <button v-for="artifact in websiteArtifacts" :key="`preview:${artifact.artifactId}`" class="preview-control" type="button" :title="artifact.filename" @click="previewWebsite(artifact, $event)">{{ zh ? `预览 ${artifact.filename}` : `Preview ${artifact.filename}` }}</button>
       </div>
     </template>
 
-    <section v-if="previewHtml" ref="previewModal" class="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" @keydown="onPreviewKeydown">
-      <header><strong id="preview-modal-title">{{ previewName }}</strong><button ref="previewCloseButton" type="button" :aria-label="zh ? '关闭预览' : 'Close preview'" @click="closePreview"><WorkspaceIcon name="close" :size="18" /></button></header>
-      <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
-    </section>
+    <template #website>
+      <div class="website-preview" @keydown.esc.stop.prevent="closePreview">
+        <header><strong :title="previewName">{{ previewName }}</strong><CloseButton ref="previewCloseButton" :label="zh ? '关闭预览' : 'Close preview'" @click="closePreview" /></header>
+        <iframe :srcdoc="previewHtml" :title="previewName" sandbox="allow-scripts" referrerpolicy="no-referrer" />
+      </div>
+    </template>
   </AgentWorkspaceShell>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import RFB from '@novnc/novnc/lib/rfb';
 import { useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
@@ -318,9 +385,14 @@ import AgentWorkspaceShell from '../components/workspace/AgentWorkspaceShell.vue
 import { useAgentActivity } from '../composables/useAgentActivity';
 import TechnicalDetails from '../components/workspace/TechnicalDetails.vue';
 import WorkspaceIcon from '../components/workspace/WorkspaceIcon.vue';
+import CloseButton from '../components/CloseButton.vue';
+import MessageTimestamp from '../components/workspace/MessageTimestamp.vue';
+import DraftRestoredNotice from '../components/workspace/DraftRestoredNotice.vue';
+import ExpiredApprovalsNotice from '../components/workspace/ExpiredApprovalsNotice.vue';
 import ComposerBox from '../components/designConversation/ComposerBox.vue';
 import RunConversationStream from '../components/workspace/RunConversationStream.vue';
-import { openWorkspaceFile, type WorkspaceFile } from '../services/workspaceFiles';
+import ConversationJump from '../components/workspace/ConversationJump.vue';
+import type { WorkspaceFile } from '../services/workspaceFiles';
 import { agentEventSummary, isAgentActivity } from '../utils/agentActivity';
 import {
   agentAssetUrl,
@@ -349,21 +421,39 @@ const zh = computed(() => currentLang.value === 'zh');
 const { userId, userLabel } = useUserIdentity(zh);
 const runId = computed(() => String(route.params.runId || ''));
 const run = ref<AgentRun | null>(null);
+const objectivePreviewLines = 5;
+const objectiveTextId = `run-objective-${useId()}`;
+const objectiveText = ref<HTMLElement | null>(null);
+const objectiveExpanded = ref(false);
+const objectiveOverflow = ref(false);
+let objectiveObserver: ResizeObserver | null = null;
+watch([objectiveText, () => run.value?.objective], ([element]) => {
+  objectiveObserver?.disconnect();
+  objectiveExpanded.value = false;
+  objectiveOverflow.value = false;
+  if (!element) return;
+  objectiveObserver ||= new ResizeObserver(() => {
+    const text = objectiveText.value;
+    if (text) objectiveOverflow.value = text.scrollHeight > parseFloat(getComputedStyle(text).lineHeight) * objectivePreviewLines + 1;
+  });
+  objectiveObserver.observe(element);
+}, { flush: 'post' });
+async function toggleObjective(event: MouseEvent) {
+  const button = event.currentTarget as HTMLButtonElement;
+  objectiveExpanded.value = !objectiveExpanded.value;
+  if (!objectiveExpanded.value) {
+    await nextTick();
+    if (button.isConnected) button.scrollIntoView({ block: 'nearest' });
+  }
+}
 const loadingRun = ref(true);
 const loadError = ref('');
 const loadErrorKind = ref<'auth' | 'not-found' | 'unavailable' | null>(null);
 const runs = ref<AgentRun[]>([]);
+const events = ref<AgentEvent[]>([]);
 const activity = useAgentActivity();
-const events = computed(() => activity.records[runId.value] || []);
+const conversationRefreshToken = ref(0);
 const conversationFiles = computed<WorkspaceFile[]>(() => artifacts.value.filter(a => a.assetId && a.url).map(a => ({ id: 'artifact:' + a.artifactId, path: a.filename, assetId: a.assetId!, revision: a.version, mimeType: a.mimeType, byteSize: a.byteSize, sha256: a.sha256 || '', url: a.url!, originArtifactId: a.artifactId })));
-
-function openDeliveredFile(artifact: AgentArtifact, event: MouseEvent) {
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  const file = conversationFiles.value.find(item => item.originArtifactId === artifact.artifactId);
-  if (!file) return;
-  event.preventDefault();
-  openWorkspaceFile(file);
-}
 
 const scrollArea = ref<HTMLElement | null>(null);
 const nearBottom = ref(true);
@@ -376,6 +466,11 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const uploading = ref(false);
 const composerAttachments = computed(() => selectedFiles.value.map(file => ({ clientId: referenceFileKey(file), name: file.name, mimeType: file.type || 'application/octet-stream', byteSize: file.size, file })));
 const runMenu = ref<HTMLDetailsElement | null>(null);
+const closeRunMenu = (restoreFocus = false) => {
+  if (!runMenu.value) return;
+  runMenu.value.open = false;
+  if (restoreFocus) void nextTick(() => runMenu.value?.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true }));
+};
 const credits = ref<CreditsBalance | null>(null);
 const creditsLoading = ref(false);
 const creditsError = ref(false);
@@ -388,7 +483,6 @@ let lastCreditsRead = 0;
 let creditsRequest: Promise<void> | null = null;
 let creditsRefreshNeeded = false;
 let statusRequest: Promise<void> | null = null;
-const environmentLabel = import.meta.env.VITE_APP_ENV || import.meta.env.MODE;
 const notice = ref('');
 const controlBusy = ref(false);
 const sending = ref(false);
@@ -401,28 +495,22 @@ const activeTakeoverApprovalId = ref('');
 const desktopScreen = ref<HTMLDivElement | null>(null);
 const previewHtml = ref('');
 const previewName = ref('');
-const previewModal = ref<HTMLElement | null>(null);
-const previewCloseButton = ref<HTMLButtonElement | null>(null);
-let previewReturnFocus: HTMLElement | null = null;
+const workspaceShell = ref<InstanceType<typeof AgentWorkspaceShell> | null>(null);
+const previewCloseButton = ref<InstanceType<typeof CloseButton> | null>(null);
 let previewRevision = 0;
+let previewReturnFocus: HTMLElement | null = null;
 let closeStream: (() => void) | null = null;
 let pollTimer: number | null = null;
 let eventRefreshTimer: number | null = null;
 let stopArmTimer: number | null = null;
-type RunSelection = { runId: string; owner: string; revision: number };
-let loadInFlight: { selection: RunSelection; promise: Promise<void> } | null = null;
+let loadInFlight: { runId: string; promise: Promise<void> } | null = null;
 let loadRevision = 0;
 let disposed = false;
 let desktopClient: RFB | null = null;
-
-const currentSelection = (targetRunId = runId.value): RunSelection => ({
-  runId: targetRunId,
-  owner: getCurrentUserId(),
-  revision: auxiliaryRevision
-});
-const selectionIsCurrent = (selection: RunSelection) => !disposed &&
-  selection.runId === runId.value && selection.owner === getCurrentUserId() &&
-  selection.revision === auxiliaryRevision;
+const eventIds = new Set<string>();
+type RunSelection = { runId: string; owner: string; revision: number };
+const currentSelection = (targetRunId = runId.value): RunSelection => ({ runId: targetRunId, owner: getCurrentUserId(), revision: auxiliaryRevision });
+const selectionIsCurrent = (selection: RunSelection) => !disposed && selection.runId === runId.value && selection.owner === getCurrentUserId() && selection.revision === auxiliaryRevision;
 
 const terminal = computed(() => ['succeeded', 'failed', 'cancelled'].includes(run.value?.status || ''));
 const displayState = computed(() => run.value ? runDisplayState(run.value, serviceStatus.value, Boolean(loadError.value) || serviceError.value) : 'draft');
@@ -448,8 +536,17 @@ const displayStateIcon = computed(() => {
 });
 const stateAnimating = computed(() => ['running', 'provisioning', 'verifying'].includes(displayState.value));
 const creditLabel = computed(() => credits.value ? `${zh.value ? '可用' : 'Available'} ${formatRunCredits(credits.value.available)} ${zh.value ? '点' : 'credits'}` : '');
-const taskCostLabel = computed(() => run.value ? `${terminal.value ? (zh.value ? '本次结算' : 'Charged') : (zh.value ? '本次已用' : 'Task usage')} ${formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used)} ${zh.value ? '点' : 'credits'}` : '');
-
+const taskUsageLabel = computed(() => {
+  if (!run.value) return '';
+  const used = formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used);
+  const maximum = formatRunCredits(run.value.budget.maximum);
+  return `${terminal.value ? (zh.value ? '结算' : 'Charged') : (zh.value ? '已用' : 'Used')} ${used} / ${maximum} ${zh.value ? '点' : 'credits'}`;
+});
+const accountTaskUsageLabel = computed(() => {
+  if (!run.value) return '';
+  const amount = formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used);
+  return `${terminal.value ? (zh.value ? '本次结算' : 'Charged') : (zh.value ? '本次已用' : 'Task usage')} ${amount} ${zh.value ? '点' : 'credits'}`;
+});
 const refreshCredits = (requireLatest = false) => {
   if (creditsRequest) {
     if (requireLatest) creditsRefreshNeeded = true;
@@ -467,9 +564,12 @@ const refreshCredits = (requireLatest = false) => {
         credits.value = result;
         creditsError.value = !result;
         lastCreditsRead = Date.now();
-        // Settlement may happen while a pre-settlement balance is in flight.
-        // Drain that invalidation even when terminal runs stop their polling.
       } while (creditsRefreshNeeded);
+    } catch {
+      if (!disposed && revision === auxiliaryRevision && owner === getCurrentUserId()) {
+        credits.value = null;
+        creditsError.value = true;
+      }
     } finally {
       if (!disposed && revision === auxiliaryRevision) creditsLoading.value = false;
     }
@@ -496,18 +596,14 @@ const loadServiceStatus = () => {
   return request;
 };
 const refreshStatus = async () => {
-  const selection = currentSelection();
+  const targetRunId = runId.value;
   refreshingStatus.value = true;
-  try { await Promise.all([load(), loadServiceStatus()]); }
-  finally { if (selectionIsCurrent(selection)) refreshingStatus.value = false; }
+  try { await Promise.all([load(targetRunId), loadServiceStatus()]); }
+  finally { if (targetRunId === runId.value) refreshingStatus.value = false; }
 };
-const closeRunMenu = (restore = false) => {
-  if (!runMenu.value) return;
-  runMenu.value.open = false;
-  if (restore) runMenu.value.querySelector('summary')?.focus();
-};
-const onOutsideRunMenu = (event: PointerEvent) => {
-  if (event.target instanceof Node && !runMenu.value?.contains(event.target)) closeRunMenu();
+const refreshAfterMutation = async (selection: RunSelection) => {
+  if (!selectionIsCurrent(selection)) return;
+  await Promise.all([load(selection.runId), refreshCredits(true)]);
 };
 const selectFiles = (event: Event) => {
   const input = event.target as HTMLInputElement;
@@ -561,7 +657,7 @@ const conversationEvents = computed(() =>
 );
 const currentAction = computed(() => {
   if (run.value?.progress.clarificationRequired) return zh.value ? '等待你的补充' : 'Waiting for your input';
-  if (run.value?.status === 'queued') return zh.value ? '任务已排队，开始后会在这里更新。' : 'Your task is queued. Updates will appear here when it starts.';
+  if (run.value?.status === 'queued') return zh.value ? '等待执行容量' : 'Waiting for capacity';
   if (run.value?.status === 'provisioning') return zh.value ? '正在准备隔离环境' : 'Preparing isolated environment';
   if (run.value?.status === 'verifying') return zh.value ? '正在验证交付结果' : 'Verifying deliverables';
   if (run.value?.status === 'succeeded') return zh.value ? '交付已完成' : 'Delivery complete';
@@ -572,10 +668,14 @@ const currentAction = computed(() => {
   const latest = events.value.at(-1);
   return latest ? agentEventSummary(latest, zh.value) : (zh.value ? 'Agent 正在执行' : 'Agent is working');
 });
+const phaseStages = computed(() => {
+  return (run.value?.progress.plan || []).map((step, index) => ({
+    id: `step-${index}`, label: step.label,
+    active: step.status === 'in_progress' && !terminal.value,
+    done: step.status === 'completed'
+  }));
+});
 const runSummary = computed(() => {
-  if (displayState.value === 'unavailable') return zh.value ? '任务已保存。执行服务恢复后可继续，也可以暂停或结束任务。' : 'Your task is saved. Continue when the service recovers, or pause or end it.';
-  if (displayState.value === 'disconnected') return zh.value ? '暂时无法同步最新状态，已显示的内容会保留。' : 'The latest status could not sync. Saved content remains available.';
-  if (displayState.value === 'pausing') return zh.value ? '正在等待当前操作安全结束。' : 'Waiting for the current operation to reach a safe stopping point.';
   if (run.value?.status === 'failed') return failureText.value || (zh.value ? '任务未完成，已有成果和记录保留在这里。' : 'The task did not complete. Saved results and records remain available.');
   if (run.value?.status === 'cancelled') return zh.value ? '任务已停止，已有成果和记录保留在这里。' : 'The task stopped. Saved results and records remain available.';
   if (run.value?.status === 'succeeded') return zh.value ? '任务已完成，可以查看下方成果与本次结算。' : 'The task completed. Review the results and settlement below.';
@@ -583,8 +683,7 @@ const runSummary = computed(() => {
   if (run.value?.status === 'waiting_user') return run.value.progress.clarificationRequired
     ? (zh.value ? '需要你补充信息后才能继续。' : 'Your answer is needed before continuing.')
     : (zh.value ? '正在等待你的确认；请查看需要处理的事项。' : 'Your decision is needed. Review the pending action.');
-  if (run.value?.status === 'queued' || run.value?.status === 'provisioning') return currentAction.value;
-  return run.value?.progress.plan?.length ? (zh.value ? '正在执行已保存的计划，详细步骤可在右侧查看。' : 'Working through the saved plan. View detailed steps in the right panel.') : currentAction.value;
+  return run.value?.progress.plan?.length ? (zh.value ? '正在执行已保存的计划。展开当前动作或检查器可查看记录。' : 'Working through the saved plan. Expand the current action or inspector to review the record.') : currentAction.value;
 });
 const activeSubagents = computed(() => (run.value?.subagents || []).filter((child) => ['queued', 'running'].includes(child.status)).length);
 const filteredRuns = (search: string) => {
@@ -594,7 +693,7 @@ const filteredRuns = (search: string) => {
 };
 const desktopMessage = computed(() => {
   if (!run.value) return '';
-  if (run.value.status === 'queued') return displayStateLabel.value;
+  if (run.value.status === 'queued') return zh.value ? '等待可用容量' : 'Waiting for capacity';
   if (run.value.status === 'provisioning') return zh.value ? '正在创建隔离云电脑' : 'Provisioning isolated desktop';
   if (run.value.status === 'paused') return zh.value ? '云电脑已暂停并保存状态' : 'Desktop suspended with state saved';
   if (terminal.value) return zh.value ? '运行已结束，云电脑已销毁' : 'Run ended; desktop destroyed';
@@ -644,21 +743,9 @@ const errorText = (error: unknown) => {
     AGENT_BETA_ACCESS_DENIED: ['Agent 目前仅对 Beta 所有者账号开放。', 'Agent is currently limited to the Beta owner account.'],
     AGENT_RUN_LOAD_FAILED: ['暂时无法读取任务，请稍后重试。', 'Unable to load this run. Try again shortly.'],
     AGENT_CONTROL_FAILED: ['控制请求没有成功，请刷新后重试。', 'The control request failed. Refresh and try again.'],
-    AGENT_INPUT_FINALIZING: ['本轮已进入最终验证，请等交付后在设计对话中继续修改。', 'Final verification has started. Continue in the design conversation after delivery.'],
-    UNSUPPORTED_FILE_TYPE: ['不支持这种文件类型，请添加图片、PDF、Office 文档、ZIP 或文本文件。', 'Use an image, PDF, Office document, ZIP or text file.'],
-    FILE_TOO_LARGE: ['单个附件不能超过 40 MB，请缩小后重试。', 'Each attachment must be 40 MB or smaller.'],
-    TOO_MANY_FILES: ['每条消息最多添加 10 个附件。', 'Add up to 10 attachments per message.'],
-    AGENT_ASSET_UPLOAD_INCOMPLETE: ['附件未全部上传成功，请重试。', 'Some files could not upload. Try again.'],
-    AGENT_ASSET_NOT_FOUND: ['附件已过期或无法访问，请移除后重新添加。', 'An attachment expired or is inaccessible. Remove it and add it again.'],
-    AGENT_INPUT_ASSET_NOT_FOUND: ['附件已过期或无法访问，请移除后重新添加。', 'An attachment expired or is inaccessible. Remove it and add it again.'],
-    AGENT_INPUT_ATTACHMENTS_UNSUPPORTED: ['当前任务的执行器不支持追加附件。草稿已保留；可移除附件后发送文字，或在新任务中添加文件。', 'This task cannot receive more files. Your draft is kept; send text without the attachments or add them to a new task.'],
-    AGENT_INPUT_ASSET_TYPE_INVALID: ['当前文件类型不受支持，请移除该附件后重试。', 'This file type is unsupported. Remove the attachment and retry.'],
-    AGENT_INPUT_ASSET_TOO_LARGE: ['单个附件不能超过 40 MiB，请移除过大的文件后重试。', 'Each attachment must be 40 MiB or smaller. Remove the oversized file and retry.'],
-    AGENT_RUN_INPUT_ASSET_LIMIT: ['当前任务累计最多接收 40 个附件。请减少附件，或在新任务中继续。', 'This task can receive up to 40 attachments in total. Remove files or continue in a new task.'],
-    AGENT_INPUT_ASSET_INTEGRITY_FAILED: ['附件完整性校验未通过，请检查文件后重新上传。', 'An attachment failed its integrity check. Check the file and upload it again.'],
-    AGENT_INPUT_ASSET_SCAN_FAILED: ['附件未通过安全检查，无法交给任务处理。请检查文件后重新上传。', 'An attachment failed its safety check and cannot be processed. Check the file before uploading it again.'],
-    IDEMPOTENCY_CONFLICT: ['这次提交与之前的请求不一致。请刷新核对任务记录，再决定是否重新发送；草稿已保留。', 'This submission differs from an earlier request. Refresh and check the task history before sending again. Your draft is kept.'],
     AGENT_INPUT_FAILED: ['补充信息没有发送成功，请重试。', 'Your update was not sent. Try again.'],
+    AGENT_ASSET_UPLOAD_INCOMPLETE: ['未全部上传成功，已保留你的草稿和附件，请重试。', 'Not all files uploaded. Your draft and attachments were kept; try again.'],
+    AGENT_ASSET_UPLOAD_PARTIAL: ['未全部上传成功，已保留你的草稿和附件，请重试。', 'Not all files uploaded. Your draft and attachments were kept; try again.'],
     AGENT_APPROVAL_FAILED: ['这项审批已经失效或被处理，请刷新任务。', 'This approval expired or was already handled. Refresh the run.'],
     AGENT_APPROVAL_NOT_AVAILABLE: ['这项审批已经失效或被处理，请刷新任务。', 'This approval expired or was already handled. Refresh the run.'],
     AGENT_APPROVAL_EXPIRED: ['关键操作未在时限内确认，任务已停止。', 'A critical action was not confirmed in time. The run stopped.'],
@@ -689,15 +776,12 @@ const errorText = (error: unknown) => {
 };
 
 const load = (targetRunId = runId.value) => {
-  const selection = currentSelection(targetRunId);
-  if (!selectionIsCurrent(selection)) return Promise.resolve();
-  if (loadInFlight?.selection.runId === targetRunId &&
-    loadInFlight.selection.owner === selection.owner &&
-    loadInFlight.selection.revision === selection.revision) return loadInFlight.promise;
+  if (loadInFlight?.runId === targetRunId) return loadInFlight.promise;
   const revision = ++loadRevision;
+  const owner = getCurrentUserId();
   loadingRun.value = true;
-  const request: { selection: RunSelection; promise: Promise<void> } = {
-    selection,
+  const request: { runId: string; promise: Promise<void> } = {
+    runId: targetRunId,
     promise: Promise.resolve()
   };
   loadInFlight = request;
@@ -707,15 +791,15 @@ const load = (targetRunId = runId.value) => {
         getAgentRun(targetRunId),
         listAgentRuns()
       ]);
-      if (!selectionIsCurrent(selection) || revision !== loadRevision) return;
+      if (disposed || revision !== loadRevision || targetRunId !== runId.value || owner !== getCurrentUserId()) return;
       if (loadedRun.status === 'rejected') throw loadedRun.reason;
       run.value = loadedRun.value;
+      void activity.refresh(targetRunId);
       loadError.value = '';
       loadErrorKind.value = null;
       if (loadedRuns.status === 'fulfilled') runs.value = loadedRuns.value;
-      await activity.refresh(targetRunId);
     } catch (error) {
-      if (selectionIsCurrent(selection) && revision === loadRevision) {
+      if (!disposed && revision === loadRevision && targetRunId === runId.value && owner === getCurrentUserId()) {
         const failed = error as { status?: number; code?: string };
         loadErrorKind.value = failed.status === 401 || failed.code === 'LOGIN_REQUIRED' ? 'auth'
           : failed.status === 404 || failed.code === 'AGENT_RUN_NOT_FOUND' ? 'not-found' : 'unavailable';
@@ -726,60 +810,47 @@ const load = (targetRunId = runId.value) => {
             : (zh.value ? '暂时无法读取任务，请重试。已有任务不会因此重新创建。' : 'The task could not load. Retry without creating another task.');
       }
     } finally {
-      if (selectionIsCurrent(selection) && revision === loadRevision) loadingRun.value = false;
+      if (!disposed && revision === loadRevision && targetRunId === runId.value && owner === getCurrentUserId()) loadingRun.value = false;
       if (loadInFlight === request) loadInFlight = null;
     }
   })();
   return request.promise;
 };
 
-const refreshAfterMutation = (selection: RunSelection) => {
-  if (!selectionIsCurrent(selection)) return Promise.resolve();
-  // A read started before the mutation must not restore its older run state.
-  loadInFlight = null;
-  return load(selection.runId);
-};
-
-watch(() => run.value ? [run.value.budget.used, run.value.budget.charged, run.value.budget.frozen, run.value.status].join(':') : '', () => { if (run.value) void refreshCredits(true); });
-
 const cancelChild = async (subagentId: string) => {
-  if (subagentBusyId.value) return;
-  const selection = currentSelection();
-  const targetRunId = selection.runId;
+  const targetRunId = runId.value;
   subagentBusyId.value = subagentId;
   try {
     await cancelAgentSubagent(targetRunId, subagentId);
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value) return;
     notice.value = '';
-    await refreshAfterMutation(selection);
+    await load(targetRunId);
   } catch (error) {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value) {
       notice.value = errorText(error || 'AGENT_SUBAGENT_CANCEL_FAILED');
     }
   } finally {
-    if (selectionIsCurrent(selection)) subagentBusyId.value = '';
+    if (targetRunId === runId.value) subagentBusyId.value = '';
   }
 };
 
 const control = async (action: 'pause' | 'resume' | 'cancel') => {
   if (controlBusy.value) return;
-  const selection = currentSelection();
-  const targetRunId = selection.runId;
+  const targetRunId = runId.value;
+  const owner = getCurrentUserId();
   controlBusy.value = true;
   try {
     const updatedRun = await controlAgentRun(targetRunId, action);
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value || owner !== getCurrentUserId()) return;
     run.value = updatedRun;
-    if (action === 'cancel') closeRunMenu();
-    void refreshCredits(true);
     notice.value = '';
-    await refreshAfterMutation(selection);
+    await load(targetRunId);
   } catch (error) {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value && owner === getCurrentUserId()) {
       notice.value = errorText(error || 'AGENT_CONTROL_FAILED');
     }
   } finally {
-    if (selectionIsCurrent(selection)) controlBusy.value = false;
+    if (targetRunId === runId.value && owner === getCurrentUserId()) controlBusy.value = false;
   }
 };
 
@@ -787,7 +858,7 @@ const requestCancel = async () => {
   if (!stopArmed.value) {
     stopArmed.value = true;
     notice.value = zh.value
-      ? '停止后不会继续产生费用；已实际使用的费用保留，未使用冻结点数会释放。再次点击确认结束并结算。'
+      ? '停止后不会继续产生费用；已实际使用的费用保留，未使用冻结点数会释放。再次点击确认停止。'
       : 'Stopping prevents new charges. Used costs remain and unused held credits are released. Click again to confirm.';
     if (stopArmTimer !== null) window.clearTimeout(stopArmTimer);
     stopArmTimer = window.setTimeout(() => {
@@ -804,8 +875,8 @@ const requestCancel = async () => {
 
 const sendInput = async () => {
   if ((!message.value.trim() && !selectedFiles.value.length) || sending.value || terminal.value || !run.value) return;
-  const selection = currentSelection();
-  const { runId: targetRunId, owner } = selection;
+  const targetRunId = runId.value;
+  const owner = getCurrentUserId();
   const submittedDraft = message.value;
   const submittedMessage = submittedDraft.trim();
   const submittedFiles = [...selectedFiles.value];
@@ -820,7 +891,7 @@ const sendInput = async () => {
       uploading.value = submittedFiles.length > 0;
       request.assetIds = await uploadAgentAssets(submittedFiles);
     }
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value || owner !== getCurrentUserId()) return;
     uploading.value = false;
     await submitAgentInput(targetRunId, {
       message: submittedMessage,
@@ -829,19 +900,20 @@ const sendInput = async () => {
       assetNames: Object.fromEntries(request.assetIds.map((id, index) => [id, submittedFiles[index].name]))
     });
     discardSaved(owner, `run:${targetRunId}`, submittedDraft);
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value || owner !== getCurrentUserId()) return;
     if (pendingInput === request) pendingInput = null;
     if (message.value === submittedDraft) message.value = '';
     const sentKeys = new Set(submittedFiles.map(referenceFileKey));
     selectedFiles.value = selectedFiles.value.filter(file => !sentKeys.has(referenceFileKey(file)));
-    await refreshAfterMutation(selection);
-    if (selectionIsCurrent(selection)) await scrollToLatest();
+    conversationRefreshToken.value++;
+    await load(targetRunId);
+    await scrollToLatest();
   } catch (error) {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value && owner === getCurrentUserId()) {
       notice.value = errorText(error || 'AGENT_INPUT_FAILED');
     }
   } finally {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value && owner === getCurrentUserId()) {
       sending.value = false;
       uploading.value = false;
     }
@@ -849,6 +921,7 @@ const sendInput = async () => {
 };
 
 const submitClarification = async (answer: string) => {
+  if (sending.value || terminal.value) return;
   message.value = answer;
   await sendInput();
 };
@@ -859,8 +932,7 @@ const decide = async (approvalId: string, decision: 'approved' | 'denied') => {
     notice.value = errorText('AGENT_APPROVAL_NOT_AVAILABLE');
     return;
   }
-  const selection = currentSelection();
-  const targetRunId = selection.runId;
+  const targetRunId = runId.value;
   const decisionReason = approvalReasons.value[approvalId]?.trim();
   approvalBusyId.value = approvalId;
   try {
@@ -869,16 +941,16 @@ const decide = async (approvalId: string, decision: 'approved' | 'denied') => {
       decision,
       decisionReason: decision === 'denied' ? decisionReason : undefined
     });
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value) return;
     delete approvalReasons.value[approvalId];
     notice.value = '';
-    await refreshAfterMutation(selection);
+    await load(targetRunId);
   } catch (error) {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value) {
       notice.value = errorText(error || 'AGENT_APPROVAL_FAILED');
     }
   } finally {
-    if (selectionIsCurrent(selection)) approvalBusyId.value = '';
+    if (targetRunId === runId.value) approvalBusyId.value = '';
   }
 };
 
@@ -893,8 +965,7 @@ const disconnectDesktop = () => {
 const beginTakeover = async (approvalId?: string) => {
   if (approvalBusyId.value) return;
   if (!run.value?.sandbox.takeoverAvailable) return;
-  const selection = currentSelection();
-  const targetRunId = selection.runId;
+  const targetRunId = runId.value;
   const target = approvalId || pendingApprovals.value.find(
     (approval) => approval.riskLevel === 'blocked'
   )?.approvalId;
@@ -907,11 +978,11 @@ const beginTakeover = async (approvalId?: string) => {
   try {
     disconnectDesktop();
     const ticket = await createAgentDesktopTicket(targetRunId, target);
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value) return;
     activeTakeoverApprovalId.value = target;
     takingOver.value = true;
     await nextTick();
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value) return;
     if (!desktopScreen.value) throw new Error('AGENT_DESKTOP_CONNECTION_FAILED');
     const client = new RFB(desktopScreen.value, ticket.websocketUrl, {
       shared: true,
@@ -921,17 +992,15 @@ const beginTakeover = async (approvalId?: string) => {
     client.scaleViewport = true;
     client.resizeSession = false;
     client.viewOnly = false;
-    client.addEventListener('connect', () => {
-      if (desktopClient === client && selectionIsCurrent(selection)) client.focus();
-    }, { once: true });
+    client.addEventListener('connect', () => client.focus(), { once: true });
     client.addEventListener('securityfailure', () => {
-      if (desktopClient === client && selectionIsCurrent(selection)) {
+      if (desktopClient === client && targetRunId === runId.value) {
         disconnectDesktop();
         notice.value = errorText('AGENT_DESKTOP_CONNECTION_FAILED');
       }
     }, { once: true });
     client.addEventListener('disconnect', () => {
-      if (desktopClient === client && selectionIsCurrent(selection)) {
+      if (desktopClient === client && targetRunId === runId.value) {
         desktopClient = null;
         takingOver.value = false;
         notice.value = errorText('AGENT_DESKTOP_CONNECTION_FAILED');
@@ -939,47 +1008,44 @@ const beginTakeover = async (approvalId?: string) => {
     }, { once: true });
     notice.value = '';
   } catch (error) {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value) {
       disconnectDesktop();
       activeTakeoverApprovalId.value = '';
       notice.value = errorText(error || 'AGENT_DESKTOP_CONNECTION_FAILED');
     }
   } finally {
-    if (selectionIsCurrent(selection)) approvalBusyId.value = '';
+    if (targetRunId === runId.value) approvalBusyId.value = '';
   }
 };
 
 const finishTakeover = async () => {
-  if (sending.value) return;
-  const selection = currentSelection();
-  const targetRunId = selection.runId;
+  const targetRunId = runId.value;
   const takeoverApprovalId = activeTakeoverApprovalId.value;
   sending.value = true;
   try {
     if (!takeoverApprovalId) {
       throw new Error('AGENT_TAKEOVER_APPROVAL_REQUIRED');
     }
-    uploading.value = false;
     await submitAgentInput(targetRunId, {
       takeoverEnded: true,
       takeoverApprovalId
     });
-    if (!selectionIsCurrent(selection)) return;
+    if (targetRunId !== runId.value) return;
     disconnectDesktop();
     activeTakeoverApprovalId.value = '';
-    await refreshAfterMutation(selection);
+    await load(targetRunId);
   } catch (error) {
-    if (selectionIsCurrent(selection)) {
+    if (targetRunId === runId.value) {
       notice.value = errorText(error || 'AGENT_TAKEOVER_END_FAILED');
     }
   } finally {
-    if (selectionIsCurrent(selection)) sending.value = false;
+    if (targetRunId === runId.value) sending.value = false;
   }
 };
 
 const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
-  const selection = currentSelection();
-  const revision = ++previewRevision;
+  const targetRunId = runId.value;
+  const ticket = ++previewRevision;
   previewReturnFocus = event?.currentTarget instanceof HTMLElement
     ? event.currentTarget
     : document.activeElement instanceof HTMLElement
@@ -987,59 +1053,35 @@ const previewWebsite = async (artifact: AgentArtifact, event?: MouseEvent) => {
       : null;
   try {
     const html = await loadAgentWebsitePreview(artifact);
-    if (!selectionIsCurrent(selection) || revision !== previewRevision) return;
+    if (targetRunId !== runId.value || ticket !== previewRevision) return;
     previewHtml.value = html;
     previewName.value = artifact.filename;
     await nextTick();
-    if (selectionIsCurrent(selection) && revision === previewRevision) {
-      previewCloseButton.value?.focus({ preventScroll: true });
-    }
+    await workspaceShell.value?.openResources('website');
+    previewCloseButton.value?.focus({ preventScroll: true });
   } catch (error) {
-    if (selectionIsCurrent(selection) && revision === previewRevision) {
+    if (targetRunId === runId.value && ticket === previewRevision) {
       notice.value = errorText(error || 'AGENT_WEBSITE_PREVIEW_FAILED');
     }
   }
 };
 const closePreview = () => {
-  const selection = currentSelection();
-  const revision = ++previewRevision;
+  previewRevision++;
+  void workspaceShell.value?.openResources('task');
   previewHtml.value = '';
   previewName.value = '';
   const target = previewReturnFocus;
   previewReturnFocus = null;
-  if (target?.isConnected) void nextTick(() => {
-    if (selectionIsCurrent(selection) && revision === previewRevision) target.focus({ preventScroll: true });
-  });
-};
-const previewFocusable = () => Array.from(
-  previewModal.value?.querySelectorAll<HTMLElement>('button:not([disabled]),a[href],iframe,[tabindex]:not([tabindex="-1"])') || []
-).filter((item) => item.offsetParent !== null);
-const onPreviewKeydown = (event: KeyboardEvent) => {
-  if (!previewModal.value) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closePreview();
-    return;
-  }
-  if (event.key !== 'Tab') return;
-  const focusable = previewFocusable();
-  if (!focusable.length) return;
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
-};
-const onPreviewWindowKeydown = (event: KeyboardEvent) => {
-  if (previewHtml.value && event.key === 'Escape') onPreviewKeydown(event);
+  if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
 };
 
 const onEvent = (event: AgentEvent) => {
   if (event.runId !== runId.value) return;
+  if (!eventIds.has(event.eventId)) {
+    eventIds.add(event.eventId);
+    events.value.push(event);
+    events.value.sort((a, b) => Number(a.eventId) - Number(b.eventId));
+  }
   activity.receive(event);
   if (eventRefreshTimer === null) {
     eventRefreshTimer = window.setTimeout(() => {
@@ -1057,47 +1099,44 @@ const onConversationScroll = () => {
 };
 const scrollToLatest = async (force = false) => {
   if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
-  const selection = currentSelection();
+  const id = runId.value;
+  const owner = getCurrentUserId();
   await nextTick();
-  if (!selectionIsCurrent(selection)) return;
+  if (disposed || id !== runId.value || owner !== getCurrentUserId()) return;
   if (!force && !nearBottom.value) { hasUnreadUpdates.value = true; return; }
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight, behavior: 'auto' });
   nearBottom.value = true;
   hasUnreadUpdates.value = false;
 };
+const jumpToLatest = async (event: MouseEvent) => {
+  const button = event.currentTarget as HTMLButtonElement;
+  const target = button.parentElement?.querySelector<HTMLElement>('textarea:not(:disabled), .run-ended-action');
+  const restoreFocus = event.detail === 0 && document.activeElement === button;
+  await scrollToLatest(true);
+  await nextTick();
+  if (restoreFocus && target?.isConnected && document.activeElement === document.body) target.focus({ preventScroll: true });
+};
 watch(() => events.value.length, (next, previous) => {
   if (next > previous) void scrollToLatest();
 });
-
-const connectRunStream = (id: string) => {
-  const selection = currentSelection(id);
-  return openAgentEventStream(id, { onEvent: event => {
-    if (selectionIsCurrent(selection)) onEvent(event);
-  }, onOpen: () => {
-    if (selectionIsCurrent(selection)) streamDisconnected.value = false;
-  }, onError: () => {
-    if (selectionIsCurrent(selection)) streamDisconnected.value = true;
-  } });
-};
 
 const resetSelectedRun = () => {
   const nextRunId = runId.value;
   auxiliaryRevision++;
   loadRevision++;
-  loadInFlight = null;
-  previewRevision++;
   closeStream?.();
   closeStream = null;
   disconnectDesktop();
   activeTakeoverApprovalId.value = '';
   previewHtml.value = '';
+  previewRevision++;
   previewName.value = '';
   previewReturnFocus = null;
-  activity.clear();
+  eventIds.clear();
+  events.value = [];
   nearBottom.value = true;
   hasUnreadUpdates.value = false;
   run.value = null;
-  runs.value = [];
   loadError.value = '';
   loadErrorKind.value = null;
   notice.value = '';
@@ -1107,7 +1146,6 @@ const resetSelectedRun = () => {
   controlBusy.value = false;
   sending.value = false;
   pendingInput = null;
-  stopArmed.value = false;
   selectedFiles.value = [];
   uploading.value = false;
   creditsRequest = null;
@@ -1119,8 +1157,8 @@ const resetSelectedRun = () => {
   serviceError.value = false;
   streamDisconnected.value = false;
   refreshingStatus.value = false;
-  void refreshCredits();
-  void loadServiceStatus();
+  activity.clear();
+  stopArmed.value = false;
   if (eventRefreshTimer !== null) {
     window.clearTimeout(eventRefreshTimer);
     eventRefreshTimer = null;
@@ -1129,15 +1167,14 @@ const resetSelectedRun = () => {
     window.clearTimeout(stopArmTimer);
     stopArmTimer = null;
   }
-  const selection = currentSelection(nextRunId);
   void load(nextRunId).then(() => {
-    if (selectionIsCurrent(selection)) {
-      closeStream?.();
-      closeStream = connectRunStream(nextRunId);
+    if (!disposed && nextRunId === runId.value) {
+      closeStream = openAgentEventStream(nextRunId, { onEvent });
     }
   });
 };
 watch(runId, resetSelectedRun, { flush: 'sync' });
+watch(() => run.value ? [run.value.budget.used, run.value.budget.charged, run.value.budget.frozen, run.value.status].join(':') : '', () => { if (run.value) void refreshCredits(true); });
 
 const statusLabel = (status: AgentRunStatus) => {
   const labels: Record<AgentRunStatus, [string, string]> = {
@@ -1156,6 +1193,14 @@ const subagentStatusLabel = (status: AgentSubagentStatus) => {
     cancelled: ['已取消', 'Cancelled']
   };
   return labels[status][zh.value ? 0 : 1];
+};
+const artifactVerificationLabel = (status: AgentArtifact['verificationStatus']) => {
+  const labels: Record<AgentArtifact['verificationStatus'], [string, string]> = {
+    pending: ['待验证', 'Pending verification'],
+    passed: ['验证通过', 'Verified'],
+    failed: ['验证失败', 'Verification failed']
+  };
+  return labels[status]?.[zh.value ? 0 : 1] || (zh.value ? '状态未知' : 'Status unavailable');
 };
 const capabilityLabel = (capability: string) => {
   const labels: Record<string, [string, string]> = {
@@ -1209,7 +1254,6 @@ const eventLabel = (type: string) => {
     'run.cancelled': ['任务已停止', 'Run stopped'],
     'run.input_received': ['收到你的补充', 'User input received'],
     'takeover.ended': ['接管已结束', 'Takeover ended'],
-    'plan.update.ignored': ['无效计划更新已忽略', 'Invalid plan update ignored'],
     'subagent.created': ['子 Agent 已创建', 'Subagent created'],
     'subagent.started': ['子 Agent 已启动', 'Subagent started'],
     'subagent.progress': ['子 Agent 有新进展', 'Subagent progress'],
@@ -1232,11 +1276,11 @@ const eventLabel = (type: string) => {
 const eventSummary = (event: AgentEvent) => agentEventSummary(event, zh.value);
 const formatTime = (value: string) => new Intl.DateTimeFormat(
   zh.value ? 'zh-CN' : 'en-US',
-  { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+  { hour: '2-digit', minute: '2-digit', second: '2-digit', ...(zh.value ? { timeZone: 'Asia/Shanghai' } : {}) }
 ).format(new Date(value));
 const formatHistoryDate = (value: string) => new Intl.DateTimeFormat(
   zh.value ? 'zh-CN' : 'en-US',
-  { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+  { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(zh.value ? { timeZone: 'Asia/Shanghai' } : {}) }
 ).format(new Date(value));
 const formatBytes = (value: number) => {
   if (value < 1024) return `${value} B`;
@@ -1245,23 +1289,23 @@ const formatBytes = (value: number) => {
 };
 const fileCode = (mime: string) => {
   if (mime.includes('pdf')) return 'PDF';
+  if (mime.includes('csv')) return 'CSV';
   if (mime.includes('spreadsheet')) return 'XLSX';
   if (mime.includes('presentation')) return 'PPTX';
   if (mime.includes('zip')) return 'ZIP';
   if (mime.startsWith('image/')) return 'IMG';
+  if (mime.includes('markdown')) return 'MD';
+  if (mime.startsWith('text/')) return 'TXT';
   return 'FILE';
 };
 onMounted(async () => {
-  window.addEventListener('keydown', onPreviewWindowKeydown);
-  document.addEventListener('pointerdown', onOutsideRunMenu);
   void refreshCredits();
   void loadServiceStatus();
   window.addEventListener('app-auth-changed', resetSelectedRun);
-  const selection = currentSelection();
-  await load(selection.runId);
-  if (selectionIsCurrent(selection)) {
-    closeStream?.();
-    closeStream = connectRunStream(selection.runId);
+  const initialRunId = runId.value;
+  await load(initialRunId);
+  if (!disposed && initialRunId === runId.value) {
+    closeStream = openAgentEventStream(initialRunId, { onEvent });
   }
   if (disposed) return;
   pollTimer = window.setInterval(() => {
@@ -1273,11 +1317,10 @@ onMounted(async () => {
   }, 5000);
 });
 onBeforeUnmount(() => {
+  objectiveObserver?.disconnect();
   disposed = true;
   auxiliaryRevision++;
-  document.removeEventListener('pointerdown', onOutsideRunMenu);
   loadRevision += 1;
-  window.removeEventListener('keydown', onPreviewWindowKeydown);
   window.removeEventListener('app-auth-changed', resetSelectedRun);
   disconnectDesktop();
   closeStream?.();
@@ -1289,62 +1332,111 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .conversation-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.conversation-scroll { flex: 1; min-height: 0; width: min(calc(var(--conversation-max) + 24px), calc(100% - var(--conversation-gutter) * 2 + 24px)); margin: 0 auto; padding: 28px 12px 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--scrollbar-thumb) transparent; }
-.clarification-card { display: grid; gap: 10px; margin: 0 0 26px; padding: 16px; border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border)); border-radius: 14px; background: color-mix(in srgb, var(--warning) 8%, var(--surface)); }
-.clarification-card h2 { margin: 0; color: var(--text); font-size: 15px; line-height: 1.45; }
-.quick-answers { display: flex; flex-wrap: wrap; gap: 7px; }
-.quick-answers button { min-height: 34px; padding: 0 11px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; cursor: pointer; }
-.quick-answers button:hover, .quick-answers button:focus-visible { border-color: var(--acid); }
+.run-file-input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; pointer-events: none; }
+.conversation-scroll { flex: 1; min-height: 0; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto; padding: 28px 0 40px; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border) transparent; }
+.run-progress-panel { margin-bottom: 26px; padding: 0; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.run-progress-header { display: flex; min-height: 48px; align-items: center; padding: 12px 14px; list-style: none; cursor: pointer; justify-content: space-between; gap: 12px; }
+.run-progress-header div { display: grid; gap: 4px; }
+.progress-kicker { color:var(--muted); font-size:12px; font-weight:500; }
+.run-progress-header strong { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.run-progress-header > span { color: var(--muted); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.phase-track { display: grid; gap: 12px; padding: 6px 14px 14px; }
+.phase-track span { display: grid; grid-template-columns: 6px 1fr; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.phase-track i { display: block; width: 6px; height: 6px; border-radius: 99px; background: var(--border); }
+.phase-track span.active { color: var(--text); }
+.phase-track span.active i { background: var(--acid); box-shadow: 0 0 12px color-mix(in srgb, var(--acid) 44%, transparent); animation: progress-flow 1.6s ease-in-out infinite; }
+.phase-track span.done i { background: var(--success); }
+.clarification-card { display:grid; gap:10px; margin:0 0 26px; padding:16px; border:0; border-radius:10px; background:var(--surface); }
+.clarification-card h2 { margin:0; color:var(--text); font-size:15px; font-weight:600; line-height:1.6; }
+.clarification-hint { margin:0; color:var(--muted); font-size:12px; line-height:1.6; }
+.quick-answers { display:grid; gap:4px; }
+.quick-answers button { display:grid; grid-template-columns:minmax(0,1fr) 16px; align-items:center; gap:12px; min-width:0; min-height:40px; padding:10px 12px; color:var(--text); border:0; border-radius:7px; background:var(--surface-raised); font:inherit; font-size:13px; line-height:1.6; text-align:left; overflow-wrap:anywhere; cursor:pointer; }
+.quick-answers button > svg { color:var(--muted); }
+.quick-answers button:disabled { opacity:.5; cursor:progress; }
+@media (hover:hover) and (pointer:fine) {
+  .quick-answers button:hover:not(:disabled) { background:var(--surface-hover); }
+}
 @keyframes progress-flow { 50% { opacity: .45; } }
 .message { margin-bottom: 26px; color: var(--text); }
 .message header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
 .message header span { font-size: 12px; font-weight: 700; }
-.message header time, .message header small { color: var(--muted-2); font-size: 12px; }
+.event-message header time, .message header small { color: var(--muted-2); font-size: 12px; }
 .message p { margin: 0; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.72; white-space: pre-wrap; }
-.user-message { max-width: 74%; margin-left: auto; padding: 13px 15px; border: 0; border-radius: 12px 12px 3px 12px; background: var(--surface); }
+.user-message { margin-left: auto; }
 .user-message header { justify-content: flex-end; }
 .user-message p { color: var(--text); }
+.objective-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--objective-preview-lines); overflow: hidden; }
+.objective-text.objective-expanded { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.objective-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; margin-top: 8px; padding: 6px 8px; border: 0; border-radius: 6px; color: var(--text); background: transparent; font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
+.objective-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.objective-toggle[aria-expanded="true"] .workspace-icon { transform: rotate(180deg); }
+@media (hover: hover) and (pointer: fine) { .objective-toggle:hover { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .objective-toggle { min-height: 44px; } }
+
 .agent-message, .event-message { display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
 .agent-avatar { display: grid; width: 30px; height: 30px; place-items: center; color: var(--text); border: 0; border-radius: 9px; background: var(--surface-raised); font-size: 12px; font-weight: 720; }
+.run-state { display: inline-flex; align-items: center; gap: 7px; min-height: 24px; margin: 7px 0 1px; color: var(--muted); font-size: 12px; line-height: 20px; }
+.run-state.running,.run-state.provisioning,.run-state.pausing,.run-state.waiting_user { color: var(--acid-text); }
+.run-state.succeeded { color: var(--success); }
+.run-state.failed,.run-state.unavailable,.run-state.disconnected { color: var(--danger); }
+.run-state button { min-height: 28px; margin-left: 3px; padding: 3px 8px; border: 0; border-radius: 6px; color: inherit; background: var(--surface); font: inherit; cursor: pointer; }
+.run-state button:hover { background: var(--surface-hover); }
+.run-state .spinning { animation: none; }
+.landscape-refresh-control { display: none !important; }
 .event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }
 .event-message p { color: var(--muted); font-size: 12px; }
-.approval-card { margin: 26px 0; padding: 16px 16px 16px 19px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface));  }
+.approval-card { margin: 26px 0; padding: 16px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
 .approval-card > header { display: flex; align-items: center; justify-content: space-between; color: var(--warning); font-size: 12px; font-weight: 720; }
 .approval-card code { color: var(--muted); font-size: 12px; }
 .approval-card h2 { margin: 12px 0 6px; font-size: 14px; }
 .approval-card > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.approval-card dl { display: grid; gap: 7px; margin: 12px 0; }
-.approval-card dl div { display: grid; gap: 3px; padding: 8px 10px; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
-.approval-card dt { color: var(--warning); font-size: 12px; font-weight: 700; }
-.approval-card dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.approval-card dl { display: grid; gap: 0; margin: 12px 0 10px; }
+.approval-card dl div { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 4px 0; }
+.approval-card dt { color: var(--muted); font-size: 12px; font-weight: 620; }
+.approval-card dd { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .denial-reason { display: block; margin-bottom: 6px; color: var(--text); font-size: 12px; font-weight: 620; }
 .approval-card > input { width: 100%; min-height: 38px; box-sizing: border-box; padding: 0 10px; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12px; }
 .approval-card footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .approval-card button { min-height: 36px; padding: 0 12px; color: var(--text); border: 0; border-radius: 8px; background: var(--surface); font-size: 12px; }
 .approval-card .approval-primary { color: var(--acid-ink); background: var(--acid); font-weight: 720; }
-.retry-required { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 26px 0; padding: 15px 16px 15px 19px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface));  }
-.retry-required div { display: grid; gap: 5px; }
-.retry-required b { color: var(--text); font-size: 13px; }
-.retry-required p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
-.retry-required button { min-height: 36px; flex: 0 0 auto; padding: 0 12px; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font-size: 12px; font-weight: 720; }
-.delivery-summary { padding: 14px 14px 14px 17px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--success) 6%, var(--surface));  }
-.delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--success); font-size: 12px; font-weight: 720; }
-.delivery-summary > header b { font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.delivery-summary a { display: grid; grid-template-columns: 36px 1fr 18px; gap: 10px; align-items: center; padding: 9px; color: inherit; border-radius: 8px; text-decoration: none; }
-.delivery-summary a:hover { background: var(--surface-raised); }
-.delivery-summary a > span { color: var(--acid-text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.delivery-summary a div { display: grid; gap: 2px; min-width: 0; }
-.delivery-summary a b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.delivery-summary a small { color: var(--muted); font-size: 12px; }
-.delivery-summary svg { width: 16px; height: 16px; }
+.retry-required { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 10px; margin: 26px 0; padding: 14px; border-radius: 8px; background: var(--surface); }
+.retry-required > .workspace-icon { margin-top: 2px; color: var(--muted); }
+.retry-required > div { display: grid; min-width: 0; gap: 6px; }
+.retry-required b { color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.retry-required p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.retry-required button { display: inline-flex; justify-self: start; align-items: center; gap: 6px; max-width: calc(100% + 10px); min-height: 32px; margin: 4px 0 0 -10px; padding: 6px 10px; color: var(--text); border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer; }
+.retry-required button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.retry-required button:disabled { color: var(--muted); cursor: progress; }
+.retry-required button:active:not(:disabled) { background: var(--surface-hover); }
+@media (hover: hover) and (pointer: fine) { .retry-required button:hover:not(:disabled) { background: var(--surface-hover); } }
+@media (max-width: 799px), (pointer: coarse) { .retry-required button { min-width: 44px; min-height: 44px; } }
+.delivery-summary { padding: 14px; border: 0; border-radius: 10px; background: var(--surface); }
+.delivery-summary > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: var(--text); font-size: 12px; font-weight: 600; }
+.delivery-summary > header b { color: var(--muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+:is(.delivery-summary, .file-list) a { display: grid; min-width: 0; grid-template-columns: 36px minmax(0, 1fr) 20px; gap: 10px; align-items: center; padding: 10px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
+:is(.delivery-summary, .file-list) a:hover { background: var(--surface-hover); }
+:is(.delivery-summary, .file-list) a > span { display: grid; width: 32px; height: 36px; place-items: center; border-radius: 6px; color: var(--muted); background: var(--surface-raised); font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+:is(.delivery-summary, .file-list) a > div { display: grid; min-width: 0; justify-items: start; gap: 3px; }
+:is(.delivery-summary, .file-list) a b { display: block; min-width: 0; width: 100%; max-width: 100%; overflow: hidden; font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+:is(.delivery-summary, .file-list) a small { color: var(--muted); font-size: 12px; }
+:is(.delivery-summary, .file-list) a > svg { width: 16px; height: 16px; justify-self: end; color: var(--muted); }
 .run-notice { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 10px; padding: 10px 12px; color: var(--danger); border: 0; border-radius: 9px; background: color-mix(in srgb, var(--danger) 7%, var(--surface)); font-size: 12px; }
-.run-controls svg, .file-list svg { width: 16px; height: 16px; }
-.preview-modal svg { width: 18px; height: 18px; }
+.run-controls svg { width: 16px; height: 16px; }
+.website-preview svg { width: 18px; height: 18px; }
 .run-controls { display: flex; gap: 5px; }
+.run-menu { position: relative; }
+.run-menu > summary { list-style: none; cursor: pointer; }
+.run-menu > summary::-webkit-details-marker { display: none; }
+.run-menu-content { position: fixed; top: 72px; right: max(12px, env(safe-area-inset-right)); z-index: 120; display: grid; min-width: 224px; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 18px 48px rgb(0 0 0 / 30%); }
+.run-menu-content .danger-control { display: flex; width: 100%; min-height: 36px; align-items: center; gap: 8px; padding: 0 10px; border: 0; border-radius: 7px; color: var(--danger); background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.run-menu-content .danger-control:hover:not(:disabled) { background: var(--surface-hover); }
+.run-menu-content .danger-control:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.run-menu-content p { margin: 0 4px 2px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .run-controls button { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; padding: 0 8px; color: var(--muted); border: 0; border-radius: 7px; background: var(--surface); font-size: 12px; }
 .run-controls .primary-control { color: var(--acid-ink); background: var(--acid); }
 .run-controls .danger-control { color: var(--danger); }
-.run-controls .danger-control.armed { color: #fff; background: var(--danger); }
+.run-controls .danger-control.armed { width: auto; min-width: 44px; gap: 6px; padding: 0 10px; color: var(--bg); background: var(--danger); font-size: 12px; white-space: nowrap; }
+.run-controls .danger-control.armed span { display: inline; }
 .history-group { padding: 4px 8px 16px; }
 .history-label { padding: 5px 8px 8px; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .history-run { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: start; padding: 9px 8px; color: inherit; border-radius: 8px; text-decoration: none; }
@@ -1368,48 +1460,64 @@ onBeforeUnmount(() => {
 .inspector-card dl div { display: flex; justify-content: space-between; gap: 10px; }
 .inspector-card dt, .inspector-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .inspector-card dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
-.grant-list { display: flex; flex-wrap: wrap; gap: 5px; }
-.grant-list span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; color: var(--muted-2); border: 0; border-radius: 6px; background: var(--surface-raised); font-size: 12px; }
-.grant-list i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted-2); }
-.grant-list span.enabled { color: var(--text); }
-.grant-list span.enabled i { background: var(--acid); }
-.execution-spine { position: relative; display: grid; }
-.execution-spine::before { position: absolute; top: 16px; bottom: 16px; left: 8px; width: 1px; content: ''; background: var(--border); }
-.execution-spine article { position: relative; display: grid; grid-template-columns: 17px 1fr; gap: 10px; min-height: 62px; }
-.execution-spine i { z-index: 1; width: 9px; height: 9px; margin: 5px 0 0 4px; border: 2px solid var(--border); border-radius: 50%; background: var(--sidebar); }
-.execution-spine article.complete i { border-color: var(--acid); background: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
-.execution-spine article.active i { border-color: var(--acid); box-shadow: 0 0 0 4px color-mix(in srgb, var(--acid) 10%, transparent); }
-.execution-spine div { display: grid; align-content: start; gap: 4px; }
-.execution-spine b { color: var(--text); font-size: 12px; }
-.execution-spine span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.inspector-card .grant-list { gap:0; }
+.inspector-card .grant-list > div { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:12px; min-height:34px; padding:5px 0; }
+.grant-list dt { min-width:0; color:var(--text); font-size:13px; line-height:20px; overflow-wrap:anywhere; }
+.grant-list dd { display:flex; flex:none; align-items:center; gap:5px; max-width:none; color:var(--muted); font:inherit; font-size:12px; line-height:20px; white-space:nowrap; }
+
+.execution-plan > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 10px 12px; }
+.execution-plan > header b { color: var(--text); font-size: 13px; font-weight: 600; }
+.execution-plan > header span { flex: none; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.execution-plan ol { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.execution-plan li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: start; gap: 10px; padding: 10px; border-radius: 8px; }
+.execution-plan li.active { background: var(--surface); }
+.plan-marker { display: grid; place-items: center; width: 22px; height: 22px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.execution-plan li.complete .plan-marker { color: var(--success); }
+.execution-plan li.active .plan-marker { color: var(--acid-text); }
+.execution-plan li > div { display: grid; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
+.execution-plan li b { color: var(--text); font-size: 13px; font-weight: 500; line-height: 22px; }
+.execution-plan li.active b { font-weight: 600; }
+.execution-plan li.complete b { color: var(--muted); }
+.plan-state { color: var(--muted); font-size: 12px; line-height: 18px; }
+.execution-plan li.active .plan-state { color: var(--acid-text); }
 .audit-details { margin-top: 10px; }
-.audit-details :deep(.technical-details-content) { max-height: 300px; overflow: auto; }
-.audit-details :deep(.technical-details-content) > div { display: grid; gap: 9px; }
-.audit-details article { display: grid; grid-template-columns: 52px 1fr; gap: 8px; }
-.audit-details time { color: var(--muted-2); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.audit-details article span { display: grid; gap: 2px; }
-.audit-details b { font-size: 12px; }
-.audit-details small { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.parent-agent-card, .subagent-card { display: grid; grid-template-columns: 34px 1fr; gap: 9px; align-items: start; padding: 11px; border: 0; border-radius: 9px; background: var(--surface); }
-.agent-node { display: grid; width: 30px; height: 30px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.audit-entries { display: grid; min-width: 0; max-height: 300px; gap: 12px; padding: 2px 4px 2px 0; overflow: auto; scrollbar-gutter: stable; }
+.audit-entries:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.audit-details article { display: grid; min-width: 0; gap: 4px; }
+.audit-details article header { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: baseline; gap: 12px; }
+.audit-details time { color: var(--muted); font: 12px/20px ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.audit-details b { min-width: 0; color: var(--text); font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.audit-details small { min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.parent-agent-card, .subagent-card { display: grid; min-width: 0; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 12px; border: 0; border-radius: 9px; background: var(--surface); }
+.agent-node { display: grid; width: 28px; height: 28px; place-items: center; color: var(--acid-ink); border: 0; border-radius: 8px; background: var(--acid); font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .parent-agent-card div { display: grid; gap: 3px; }
 .parent-agent-card b, .subagent-card b { color: var(--text); font-size: 12px; }
 .parent-agent-card small, .subagent-card small { color: var(--muted); font-size: 12px; }
-.subagent-rail { position: relative; display: grid; gap: 7px; padding-left: 13px; }
-.subagent-rail::before { position: absolute; top: 0; bottom: 0; left: 0; width: 1px; content: ''; background: var(--border); }
-.subagent-card { grid-template-columns: 32px 1fr; }
+.subagent-rail { display: grid; min-width: 0; gap: 8px; }
 .subagent-card > div { display: grid; min-width: 0; justify-items: start; gap: 5px; }
-.subagent-card .agent-node { width: 28px; height: 28px; color: var(--text); background: var(--surface-raised); }
-.subagent-card header { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.subagent-card .agent-node { color: var(--text); background: var(--surface-raised); }
+.subagent-card header { display: flex; width: 100%; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
 .subagent-card header b { min-width: 0; overflow-wrap: anywhere; }
-.subagent-card header i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
-.subagent-card header i.running { background: var(--acid); }
-.subagent-card header i.succeeded { background: var(--success); }
-.subagent-card header i.failed, .subagent-card header i.cancelled { background: var(--danger); }
+.subagent-status { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.4; white-space: nowrap; }
+.subagent-status i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--muted); }
+.subagent-status[data-status="running"] { color: var(--acid-text); }
+.subagent-status[data-status="running"] i { background: var(--acid); }
+.subagent-status[data-status="succeeded"] { color: var(--success); }
+.subagent-status[data-status="succeeded"] i { background: var(--success); }
+.subagent-status[data-status="failed"] { color: var(--danger); }
+.subagent-status[data-status="failed"] i { background: var(--danger); }
+.subagent-status[data-status="cancelled"] { color: var(--danger); }
+.subagent-status[data-status="cancelled"] i { background: var(--danger); }
 .subagent-card p { max-height: 46px; margin: 1px 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.4; }
 .subagent-card small { line-height: 1.45; overflow-wrap: anywhere; }
+.subagent-card .subagent-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
 .subagent-card button { min-height: 32px; margin-top: 2px; padding: 0 4px; color: var(--danger); border: 0; background: transparent; font-size: 12px; }
+@media (pointer: coarse) { .subagent-card button { min-width: 44px; min-height: 44px; } }
 .inspector-empty { padding: 20px 8px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5; }
+.deliverables-empty { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: start; gap: 12px; padding: 20px 0; text-align: left; }
+.deliverables-empty > svg { margin-top: 2px; color: var(--muted); }
+.deliverables-empty h3 { margin: 0; color: var(--text); font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
+.inspector-card .deliverables-empty p { margin: 6px 0 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .computer-panel { display: grid; gap: 10px; }
 .computer-panel > header { margin: 0; }
 .computer-panel header div { display: grid; gap: 2px; }
@@ -1428,80 +1536,80 @@ onBeforeUnmount(() => {
 .technical-list dt { color: var(--muted); font-size: 12px; }
 .technical-list dd { min-width: 0; max-width: 66%; margin: 0; overflow-wrap: anywhere; color: var(--text); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .file-list { display: grid; gap: 4px; }
-.file-list a { display: grid; grid-template-columns: 34px 1fr 16px; gap: 8px; align-items: center; padding: 8px; color: inherit; border-radius: 8px; text-decoration: none; }
-.file-list a:hover { background: var(--surface-raised); }
-.file-list a > span { color: var(--acid-text); font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.file-list a div { display: grid; min-width: 0; gap: 2px; }
-.file-list b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.file-list small, .file-list em { color: var(--muted); font-size: 12px; font-style: normal; }
-.file-list em.passed { color: var(--success); }
-.preview-control { width: 100%; }
-.preview-modal { position: fixed; z-index: 500; inset: 16px; display: grid; grid-template-rows: auto 1fr; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); box-shadow: 0 24px 100px color-mix(in srgb, var(--bg) 70%, transparent); }
-.preview-modal header { display: flex; min-height: 50px; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
-.preview-modal header button { display: grid; width: 34px; height: 34px; place-items: center; color: var(--text); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.preview-modal iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.artifact-verification { display: inline-flex; width: max-content; max-width: 100%; align-items: center; justify-self: start; box-sizing: border-box; padding: 2px 7px; border-radius: 999px; color: var(--muted); background: color-mix(in srgb,var(--muted) 12%,transparent); font-size: 11px; font-style: normal; font-weight: 620; line-height: 1.4; }
+.artifact-verification.passed { color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
+.artifact-verification.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
+.preview-control { width: 100%; min-width: 0; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.website-preview { display:flex; flex:1; min-height:0; min-width:0; flex-direction:column; overflow:hidden; background:var(--bg); }
+.website-preview header { display:flex; box-sizing:border-box; min-width:0; min-height:44px; align-items:center; gap:10px; margin-inline:12px; padding:4px 0; border-bottom:1px solid var(--border); }
+.website-preview header strong { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:600; }
+.website-preview header :deep(.close-btn) { width:32px; height:32px; }
+.website-preview iframe { width:100%; height:100%; flex:1; min-height:0; border:0; background:#fff; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 
-.run-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 16px; }
-.run-load-state h1 { margin: 0; font-size: 24px; }
-.run-load-state p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
-.load-actions { display: flex; flex-wrap: wrap; gap: 10px; }
-.load-actions :is(button,a) { display: inline-flex; align-items: center; min-height: 44px; padding: 10px 14px; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }
-.settlement-summary { display: flex; flex-wrap: wrap; gap: 16px; margin: 14px 0 0; }
-.settlement-summary div { display: grid; gap: 4px; }
-.settlement-summary dt { color: var(--muted); font-size: 12px; }
-.settlement-summary dd { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
-.approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
-.draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; color: var(--muted); font-size: 12px; }
+.run-load-state { display: grid; width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); height: 100%; margin: 0 auto; align-content: center; justify-items: start; gap: 12px; }
+.run-load-state > .workspace-icon { color: var(--muted); }
+.run-load-state h1 { margin: 0; font-size: 20px; font-weight: 600; line-height: 1.4; }
+.run-load-state p { max-width: 48ch; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.load-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.load-actions :is(button,a) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 8px 12px; border: 0; border-radius: 7px; color: var(--text); font: inherit; font-size: 13px; line-height: 20px; text-decoration: none; background: var(--surface-raised); cursor: pointer; }
+.load-actions .load-primary { font-weight: 500; }
+.load-actions .load-secondary { color: var(--muted); background: transparent; }
+.load-actions :is(button,a):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.load-actions button:disabled { opacity: .5; cursor: progress; }
+@media (hover: hover) and (pointer: fine) {
+  .load-actions :is(button,a):hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .load-actions :is(button,a) { min-height: 44px; }
+}
+.run-progress-header::-webkit-details-marker { display: none; }
+.run-progress-header > span { margin-left: auto; white-space: nowrap; }
+.settlement-summary { display:grid; width:min(100%,360px); gap:6px; margin:14px 0 0; }
+.settlement-summary > div { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 12px; min-width:0; }
+.settlement-summary dt { flex:1 0 auto; color:var(--muted); font-size:12px; line-height:20px; }
+.settlement-summary dd { min-width:0; max-width:100%; margin:0; margin-inline-start:auto; font-size:13px; font-weight:500; line-height:20px; font-variant-numeric:tabular-nums; text-align:right; overflow-wrap:anywhere; }
+
+.draft-restored { width: min(var(--conversation-max),calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto 8px; }
 .run-notice,.run-composer,.draft-restored { flex: 0 0 auto; }
 @media (max-width: 800px) {
-  .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
+  .conversation-scroll, .run-notice, .run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); }
   .conversation-scroll { padding-top: 24px; }
-  .user-message { max-width: 88%; }
   .approval-card > input { min-height: 44px; font-size: 16px; }
-  .retry-required { align-items: stretch; flex-direction: column; }
-  .retry-required button { min-height: 44px; }
-  .run-controls .run-icon-control { width: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .run-controls button { width: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 18px; }
-  .preview-modal { inset: 0; border: 0; border-radius: 0; }
+  .run-controls button span { display: none; }
 }
 @media (max-width: 960px) {
-  .run-controls .run-icon-control { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
+  .run-controls button { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 16px; }
+  .run-controls .run-menu-content .danger-control { width: 100%; min-height: 44px; justify-content: flex-start; padding-inline: 10px; font-size: 12px; }
+}
+@media (max-height: 480px) {
+  .conversation-scroll { padding-bottom: 96px; }
+  .run-inline-refresh { display: none; }
+  .landscape-refresh-control { display: inline-flex !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
+  .phase-track span.active i { animation: none; }
 }
 
-.run-composer { width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
-.run-new-updates { display: block; min-height: 44px; margin: 0 auto 10px; padding: 9px 14px; color: var(--acid-text); border: 0; border-radius: 9px; font-size: 13px; background: var(--surface-raised); cursor: pointer; }
-.run-new-updates:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.run-composer { position: relative; width: min(var(--conversation-max), calc(100% - var(--conversation-gutter) * 2)); margin: 0 auto max(20px,env(safe-area-inset-bottom)); }
+.run-ended-bar { display: flex; min-height: 68px; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; background: var(--surface); }
+.run-ended-status { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: var(--success); background: color-mix(in srgb,var(--success) 12%,transparent); }
+.run-ended-status.failed { color: var(--danger); background: color-mix(in srgb,var(--danger) 12%,transparent); }
+.run-ended-status.cancelled { color: var(--muted); background: var(--surface-raised); }
+.run-ended-copy { display: grid; flex: 1 1 auto; min-width: 0; gap: 3px; }
+.run-ended-copy strong { font-size: 13px; font-weight: 620; line-height: 1.35; }
+.run-ended-copy small { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.run-ended-action { display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 8px; padding: 0 13px; border: 0; border-radius: 10px; color: var(--acid-ink); font-size: 13px; font-weight: 620; text-decoration: none; background: var(--acid); }
+.run-ended-action:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 @media (max-width: 799px) {
   .run-composer { margin-bottom: max(10px,env(safe-area-inset-bottom)); }
-  .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .preview-modal header button { min-width: 44px; min-height: 44px; }
+  .approval-card button, .computer-panel > button, .preview-control, .subagent-card button, .quick-answers button, .website-preview header button { min-width: 44px; min-height: 44px; }
+  .run-ended-bar { gap: 9px; padding: 9px; }
+  .run-ended-action { gap: 5px; padding: 0 10px; }
 }
-.run-file-input { display: none; }
-.run-controls .run-icon-control { position: relative; display: grid; place-items: center; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; color: var(--text); background: transparent; cursor: pointer; list-style: none; }
-.run-controls .run-icon-control:hover { background: var(--surface-hover); }
-.run-icon-control::-webkit-details-marker { display: none; }
-.run-icon-control:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.run-icon-control[data-tooltip]::after { content: attr(data-tooltip); position: absolute; z-index: 30; top: calc(100% + 8px); right: 0; width: max-content; padding: 7px 10px; border-radius: 6px; color: var(--text); background: var(--surface-raised); font-size: 12px; opacity: 0; pointer-events: none; }
-.run-icon-control[data-tooltip]:hover::after,.run-icon-control[data-tooltip]:focus-visible::after { opacity: 1; }
-.run-menu { position: relative; }
-.run-menu-content { position: absolute; z-index: 40; right: 0; top: calc(100% + 8px); width: min(260px, calc(100vw - 32px)); padding: 8px; background: var(--surface-raised); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / 24%); }
-.run-menu-content button { width: 100%; justify-content: flex-start; min-height: 40px; }
-.run-menu-content p { padding: 4px 8px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.run-state { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
-.run-state.running,.run-state.provisioning,.run-state.verifying { color: var(--acid-text); }
-.run-state.unavailable,.run-state.disconnected,.run-state.waiting_user { color: var(--warning); }
-.run-state.failed { color: var(--danger); }
-.run-state.succeeded { color: var(--success); }
-.run-state button { margin-left: 4px; padding: 5px 8px; color: var(--text); border: 0; border-radius: 6px; background: var(--surface); cursor: pointer; font-size: 12px; }
-.run-state button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.connection-note { display: block; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
-.spinning { animation: run-state-spin 1.3s linear infinite; }
-@keyframes run-state-spin { to { transform: rotate(360deg); } }
-@media (pointer: coarse), (max-width: 799px) { .run-controls .run-icon-control,.run-menu-content button,.run-state button { min-width: 44px; min-height: 44px; } }
-@media (prefers-reduced-motion: reduce) { .spinning { animation: none; } }
-
+@media (max-width: 799px), (pointer: coarse) { .website-preview header { min-height:52px; } .website-preview header :deep(.close-btn) { width:44px; height:44px; } }
 </style>

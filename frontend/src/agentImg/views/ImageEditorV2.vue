@@ -1503,7 +1503,6 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   padding: 32px;
-  border: 1px dashed rgba(200, 255, 61, 0.55);
   border-radius: 18px;
   text-align: center;
   background: rgba(11, 13, 14, 0.9);

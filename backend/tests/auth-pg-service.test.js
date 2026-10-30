@@ -4,7 +4,6 @@ const test = require('node:test');
 const { resolveAuthUser } = require('../lib/auth-utils');
 const { createSessionMiddleware } = require('../middleware/session-auth');
 const { createAuthService } = require('../services/auth-service');
-const { buildReleaseMetadata } = require('../services/release-metadata');
 const { resolveUserId: resolveBillingUserId } = require('../services/billing-service');
 
 const compact = (sql) => String(sql || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -193,7 +192,6 @@ test('PostgreSQL login creates one wallet and restart-safe hashed sessions', asy
   });
 
   assert.equal(registered.wallet.available, 125);
-  assert.equal(buildReleaseMetadata({ env }).signupOffer.credits, registered.wallet.available);
   assert.equal(pool.state.wallets.size, 1);
   assert.equal(pool.state.ledger.length, 1);
   assert.equal(pool.state.ledger[0].referenceId, registered.user.dbUserId);

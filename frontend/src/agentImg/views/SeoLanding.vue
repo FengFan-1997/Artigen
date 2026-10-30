@@ -109,7 +109,12 @@
         <p>{{ ui.featuresDesc }}</p>
       </div>
       <div class="features-grid">
-        <div class="feature-card" @click="goFormatFactory">
+        <RouterLink
+          to="/artigen/tools"
+          class="feature-card"
+          tabindex="0"
+          @click="trackToolNavigation('conversion', 'format_factory')"
+        >
           <div class="card-icon">
             <svg
               viewBox="0 0 24 24"
@@ -129,8 +134,13 @@
           <h3>{{ ui.featFormatTitle }}</h3>
           <p>{{ ui.featFormatDesc }}</p>
           <div class="card-link">{{ ui.tryNow }} →</div>
-        </div>
-        <div class="feature-card" @click="goAiWorkshop">
+        </RouterLink>
+        <RouterLink
+          to="/artigen/ai"
+          class="feature-card"
+          tabindex="0"
+          @click="trackToolNavigation('conversion', 'ai_workshop')"
+        >
           <div class="card-icon">
             <svg
               width="24"
@@ -151,13 +161,33 @@
           <h3>{{ ui.featAiTitle }}</h3>
           <p>{{ ui.featAiDesc }}</p>
           <div class="card-link">{{ ui.tryNow }} →</div>
-        </div>
-        <div class="feature-card" @click="goMarket">
-          <div class="card-icon">🔋</div>
+        </RouterLink>
+        <RouterLink
+          to="/artigen/market"
+          class="feature-card"
+          tabindex="0"
+          @click="trackToolNavigation('click', 'market')"
+        >
+          <div class="card-icon" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              width="32"
+              height="32"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              focusable="false"
+            >
+              <rect x="3" y="7" width="16" height="10" rx="2"></rect>
+              <path d="M21 10v4M11 8l-2 4h4l-2 4"></path>
+            </svg>
+          </div>
           <h3>{{ ui.featMarketTitle }}</h3>
           <p>{{ ui.featMarketDesc }}</p>
           <div class="card-link">{{ ui.viewPlans }} →</div>
-        </div>
+        </RouterLink>
       </div>
     </div>
 
@@ -278,18 +308,21 @@ onMounted(() => {
 });
 
 const trackAndNavigate = (target: string, type: 'click' | 'conversion', name: string) => {
+  trackToolNavigation(type, name);
+  router.push(target);
+};
+
+const trackToolNavigation = (type: 'click' | 'conversion', name: string) => {
   consoleStore.recordTraffic({
     type,
     page: '/artigen/tools',
     target: name
   });
   trackEvent(type === 'conversion' ? 'tools_conversion' : 'tools_click', { target: name });
-  router.push(target);
 };
 
 const goFormatFactory = () => trackAndNavigate('/artigen/tools', 'conversion', 'format_factory');
 const goAiWorkshop = () => trackAndNavigate('/artigen/ai', 'conversion', 'ai_workshop');
-const goMarket = () => trackAndNavigate('/artigen/market', 'click', 'market');
 
 const handleChipClick = (chip: string) => {
   consoleStore.recordTraffic({
@@ -627,12 +660,15 @@ const ui = computed(() => {
 }
 
 .feature-card {
+  display: block;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 16px;
   padding: 32px;
   transition: all 0.3s ease;
   cursor: pointer;
+  color: inherit;
+  text-decoration: none;
 }
 
 .feature-card:hover {
@@ -641,7 +677,22 @@ const ui = computed(() => {
   border-color: rgba(139, 92, 246, 0.3);
 }
 
+.feature-card:focus-visible {
+  outline: 3px solid #a78bfa;
+  outline-offset: 3px;
+}
+
+@media (forced-colors: active) {
+  .feature-card:focus-visible {
+    outline-color: Highlight;
+  }
+}
+
 .card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
   font-size: 32px;
   margin-bottom: 20px;
 }

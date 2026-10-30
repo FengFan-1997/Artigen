@@ -363,4 +363,32 @@ const ui = computed(() => {
   border-color: rgba(239, 68, 68, 0.35);
   color: rgba(239, 68, 68, 0.95);
 }
+
+@media (max-width: 640px) {
+  .orders-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .orders-title {
+    font-size: 24px;
+    line-height: 1.25;
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .orders-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .orders-actions > * {
+    box-sizing: border-box;
+    min-height: 44px;
+    white-space: nowrap;
+  }
+}
 </style>

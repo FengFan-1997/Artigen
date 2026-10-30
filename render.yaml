@@ -2,7 +2,7 @@ services:
   - type: web
     name: artigen-app-fengfan
     runtime: node
-    plan: starter
+    plan: free
     region: virginia
     # Render serves frontend and API from one origin. Override any dashboard-level
     # legacy API base during Vite compilation so cookies and CSRF remain same-origin.
@@ -28,7 +28,7 @@ services:
       - key: PG_POOL_MAX
         value: "5"
       - key: PAYMENTS_ENABLED
-        sync: false
+        value: "false"
       - key: PAID_FEATURES_ENABLED
         value: "false"
       - key: AI_DESIGN_TASK_V2_ENABLED

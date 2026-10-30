@@ -1126,10 +1126,6 @@ onBeforeUnmount(() => {
   -webkit-text-fill-color: transparent;
 }
 
-.headline--zh .headline-tail {
-  white-space: nowrap;
-}
-
 .description {
   font-size: 16px;
   line-height: 1.6;

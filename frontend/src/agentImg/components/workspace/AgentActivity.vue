@@ -68,7 +68,10 @@ const eventLabel = (type: string) => {
 };
 const formatTime = (value: string) => {
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(props.zh ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date) : '—';
+  return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(props.zh ? 'zh-CN' : 'en-US', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    ...(props.zh ? { timeZone: 'Asia/Shanghai' } : {})
+  }).format(date) : '—';
 };
 </script>
 
@@ -97,7 +100,9 @@ details[open] > summary > .disclosure-icon { transform: rotate(180deg); }
 .call-id { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 0; }
 .call-id b { color: var(--muted); font-size: 12px; }
 code { font-size: 12px; overflow-wrap: anywhere; }
-.call-event { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; font-size: 12px; overflow-wrap: anywhere; }
+.call-event { display: grid; grid-template-columns: 68px minmax(0,1fr) auto; align-items: start; gap: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.call-event > time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.call-event > small { justify-self: end; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .missing-receipt,.audit-location { margin: 0; }
 .audit-location { padding: 12px 10px 0; }
 .context-update { display: flex; min-width: 0; gap: 10px; align-items: flex-start; padding: 13px 10px; }
@@ -110,7 +115,6 @@ code { font-size: 12px; overflow-wrap: anywhere; }
   .tool-call > summary { gap: 7px; }
   .duration { display: none; }
   .call-evidence { padding-left: 10px; }
-  .call-event { grid-template-columns: auto minmax(0,1fr); }
-  .call-event > small { grid-column: 2; }
+  .call-event { grid-template-columns: 56px minmax(0,1fr) auto; gap: 6px; font-size: 11px; }
 }
 </style>

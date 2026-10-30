@@ -2532,12 +2532,12 @@ const runTool = async () => {
   color: inherit;
   font: inherit;
   text-align: left;
-  background: rgba(20, 20, 20, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #111311;
+  border: 1px solid transparent;
   padding: 32px;
-  border-radius: 2px; /* Brutalist sharp corners */
+  border-radius: 10px;
   cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background-color 160ms ease;
   position: relative;
   overflow: hidden;
   height: 280px;
@@ -2548,7 +2548,6 @@ const runTool = async () => {
 .tool-card:has(.tool-card-open:focus-visible) {
   outline: 3px solid #ccff00;
   outline-offset: 4px;
-  border-color: #ccff00;
 }
 
 .tool-card-open {
@@ -2560,27 +2559,12 @@ const runTool = async () => {
   cursor: pointer;
 }
 
-.tool-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: radial-gradient(circle at top right, rgba(204, 255, 0, 0.1), transparent 60%);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
 .tool-card:hover {
-  background: rgba(30, 30, 30, 0.9);
-  border-color: #ccff00;
-  transform: translateY(-5px);
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.3);
+  background: #1b1e1b;
 }
 
 .tool-card:active {
-  transform: translateY(-2px) scale(0.98);
+  background: #232622;
 }
 
 .tool-card.disabled {
@@ -2589,23 +2573,12 @@ const runTool = async () => {
 }
 
 .tool-card.disabled:hover {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(20, 20, 20, 0.6);
-  transform: none;
-  box-shadow: none;
+  background: #111311;
 }
 
 .tool-card.disabled .arrow {
   opacity: 0;
   transform: translateX(-10px);
-}
-
-.tool-card:hover::before {
-  opacity: 1;
-}
-
-.tool-card:active {
-  transform: translateY(-2px) scale(0.98);
 }
 
 .card-status {
@@ -3337,8 +3310,9 @@ select.control {
   gap: 10px;
   margin-top: 10px;
   padding: 12px;
-  border-left: 2px solid #c8ff3d;
-  background: rgba(200, 255, 61, 0.045);
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .field-grid-three {

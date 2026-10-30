@@ -24,16 +24,15 @@
     <nav class="workspace-rail" @mouseover="showRailTooltip" @focusin="showRailTooltip" @mouseleave="hideRailTooltip" @focusout="hideRailTooltip" @keydown.esc="hideRailTooltip" :inert="commandOpen || leftDrawerOpen || rightDrawerOpen ? true : undefined" :aria-label="zh ? '功能切换' : 'App navigation'">
       <router-link class="rail-brand" to="/artigen/create" aria-label="Artigen" title="Artigen">A</router-link>
       <button type="button" :title="zh ? '项目与会话' : 'Projects and chats'" :aria-label="leftCollapsed && !overlayLayout ? (zh ? '展开左栏' : 'Expand left panel') : (zh ? '项目与会话' : 'Projects and chats')" :aria-expanded="!leftCollapsed" aria-controls="workspace-history-panel" @click="openLeftDrawer"><WorkspaceIcon name="panel-left" :size="20" /></button>
-      <router-link class="rail-chat" :class="{ 'rail-active': route.path.startsWith('/artigen/agent') }" to="/artigen/create" :aria-current="route.path.startsWith('/artigen/agent') ? 'location' : undefined" :title="zh ? '会话' : 'Chat'" :aria-label="zh ? '会话' : 'Chat'"><WorkspaceIcon name="chat" :size="20" /></router-link>
+      <router-link to="/artigen/create" :title="zh ? '会话' : 'Chat'" :aria-label="zh ? '会话' : 'Chat'"><WorkspaceIcon name="agent" :size="20" /></router-link>
       <router-link to="/artigen/projects" :title="zh ? '项目' : 'Projects'" :aria-label="zh ? '项目' : 'Projects'"><WorkspaceIcon name="folder" :size="20" /></router-link>
       <router-link to="/artigen/tools" :title="zh ? '工具' : 'Tools'" :aria-label="zh ? '工具' : 'Tools'"><WorkspaceIcon name="tools" :size="20" /></router-link>
       <router-link to="/artigen/ai" :title="zh ? '高级生图' : 'Image studio'" :aria-label="zh ? '高级生图' : 'Image studio'"><WorkspaceIcon name="image" :size="20" /></router-link>
-      <button type="button" title="GitHub" aria-label="GitHub" :aria-pressed="resourceMode === 'github' && (overlayLayout ? rightDrawerOpen : !rightCollapsed)" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
+      <button type="button" title="GitHub" aria-label="GitHub" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
       <span class="rail-spacer"></span>
-      <button type="button" :title="themeLabel" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
+      <button type="button" :title="themeHint" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" :aria-description="themeHint" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
       <router-link to="/login/account" :title="zh ? '账户设置' : 'Account settings'" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
     </nav>
-
     <span v-if="railTooltip" :id="railTooltipId" class="rail-tooltip" role="tooltip" :style="{ left: `${railTooltip.x}px`, top: `${railTooltip.y}px` }">{{ railTooltip.text }}</span>
 
     <aside
@@ -63,27 +62,37 @@
         <kbd>{{ shortcutModifier }}N</kbd>
       </button>
 
-      <label class="history-search">
+      <div class="history-search">
         <WorkspaceIcon name="search" />
-        <span class="sr-only">{{ zh ? '搜索任务' : 'Search tasks' }}</span>
-        <input v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" />
-      </label>
+        <label class="sr-only" for="workspace-history-search">{{ zh ? '搜索任务' : 'Search tasks' }}</label>
+        <input ref="historySearchInput" id="workspace-history-search" v-model="search" name="workspace-search" type="search" autocomplete="off" :placeholder="zh ? '搜索任务' : 'Search tasks'" @input="$emit('search', search)" @keydown.esc="onHistorySearchEscape" />
+        <button v-if="search" class="history-search-clear" type="button" :aria-label="zh ? '清除任务搜索' : 'Clear task search'" :title="zh ? '清除搜索' : 'Clear search'" @click="clearHistorySearch">
+          <WorkspaceIcon name="close" :size="16" />
+        </button>
+      </div>
 
-      <div class="history-slot" @click="onHistoryClick">
+      <div class="history-slot">
         <ProjectNavigation :zh="zh" :search="search" @navigate="closeLeftDrawer"><slot name="history" :search="search" /></ProjectNavigation>
       </div>
 
       <footer class="workspace-account">
-        <router-link to="/artigen/usage" class="account-action" :aria-label="`${creditCaption}${creditLabel ? ': ' + creditLabel : ''}`">
-          <span class="account-icon" aria-hidden="true">
-            <WorkspaceIcon name="spark" :size="16" />
+        <div v-if="creditError" class="account-credit-error" role="group" :aria-label="creditCaption">
+          <router-link to="/artigen/usage" class="account-action" :aria-label="creditCaption">
+            <span class="account-icon" aria-hidden="true"><WorkspaceIcon name="spark" :size="16" /></span>
+            <span class="account-copy"><span class="account-label">{{ creditCaption }}</span><small>{{ creditError }}</small></span>
+          </router-link>
+          <button class="account-refresh" type="button" :aria-label="zh ? '刷新点数' : 'Refresh credits'" @click="emit('refresh-credits')"><WorkspaceIcon name="refresh" :size="16" /></button>
+        </div>
+        <router-link v-else to="/artigen/usage" class="account-action" :aria-label="`${creditCaption}${creditLabel ? ': ' + creditLabel : ''}`">
+          <span class="account-icon" aria-hidden="true"><WorkspaceIcon name="spark" :size="16" /></span>
+          <span class="account-copy">
+            <span class="account-label">{{ creditCaption }}</span>
+            <small v-if="creditLoading" class="account-task-cost">{{ zh ? '读取中…' : 'Loading…' }}</small>
+            <small v-else-if="accountTaskCostLabel || taskCostLabel" class="account-task-cost">{{ accountTaskCostLabel || taskCostLabel }}</small>
           </span>
-          <span class="account-label">{{ creditCaption }}</span>
-          <b class="account-value" :aria-busy="creditLoading">{{ creditLoading ? (zh ? '读取中…' : 'Loading…') : creditError ? '—' : creditLabel || '—' }}</b>
+          <b v-if="creditLabel && !creditLoading" class="account-value">{{ creditLabel }}</b>
         </router-link>
-        <p v-if="taskCostLabel" class="account-task-cost"><span>{{ zh ? '本次任务' : 'This task' }}</span><b>{{ taskCostLabel }}</b></p>
-        <div v-if="creditError" class="account-credit-error" role="status"><span>{{ creditError }}</span><button type="button" @click="$emit('refresh-credits')">{{ zh ? '重试' : 'Retry' }}</button></div>
-        <button class="mobile-only" type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon name="moon" :size="16"/><span>{{ zh ? '外观' : 'Appearance' }}</span><small>{{ themeLabel }}</small></button>
+        <button class="mobile-only" type="button" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" :aria-description="themeHint" :title="themeHint" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="16"/><span>{{ zh ? '外观' : 'Appearance' }}</span><small>{{ themeLabel }}</small></button>
         <router-link class="mobile-only account-action" to="/login/account" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="16"/><span>{{ zh ? '设置' : 'Settings' }}</span></router-link>
       </footer>
     </aside>
@@ -125,13 +134,14 @@
               </span>
             </div>
           </slot>
-          <div v-if="statusLabel && statusTone !== 'ready'" class="task-meta">
+          <div v-if="statusTone !== 'ready' || taskCostLabel" class="task-meta">
             <span class="runtime-pill" :class="statusTone"><i aria-hidden="true"></i>{{ statusLabel }}</span>
+            <span v-if="taskCostLabel" class="task-cost">{{ taskCostLabel }}</span>
           </div>
         </div>
         <div class="topbar-actions">
           <slot name="topbar-actions" />
-          <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" :aria-expanded="overlayLayout ? rightDrawerOpen : !rightCollapsed" aria-controls="workspace-inspector-panel" @click="toggleRight">
+          <button ref="rightDrawerButton" class="icon-control inspector-toggle" type="button" :aria-label="zh ? '打开检查器' : 'Open inspector'" :aria-expanded="!rightCollapsed" aria-controls="workspace-inspector-panel" @click="toggleRight">
             <WorkspaceIcon name="panel-right" :size="18" />
           </button>
         </div>
@@ -161,12 +171,15 @@
       :inert="commandOpen || leftDrawerOpen || (overlayLayout && !rightDrawerOpen) ? true : undefined"
     >
       <nav class="resource-tabs" :aria-label="zh ? '资源面板' : 'Resources'">
-        <button v-for="item in resourceModes" :key="item.id" class="resource-mode" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id"><WorkspaceIcon :name="item.icon" :size="16" /><span>{{ item.label }}</span></button>
-        <span class="resource-tabs-spacer" />
-        <button v-if="resourceMode === 'files' || resourceMode === 'changes'" ref="directoryToggle" class="resource-icon-control tree-toggle" type="button" :aria-label="resourceWorkspace?.treeVisible ? (zh ? '隐藏目录树' : 'Hide file tree') : (zh ? '显示目录树' : 'Show file tree')" :aria-pressed="resourceWorkspace?.treeVisible" @click="resourceWorkspace?.toggleTree()"><WorkspaceIcon name="panel-right" :size="18" /></button>
-        <button class="resource-icon-control" type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" :size="18" /></button>
+        <div ref="resourceTabsList" class="resource-tabs-list">
+          <button v-for="item in resourceModes" :key="item.id" class="resource-mode" type="button" :aria-pressed="resourceMode === item.id" @click="resourceMode = item.id">{{ item.label }}</button>
+        </div>
+        <button class="resource-tabs-close" type="button" :aria-label="zh ? '关闭资源区' : 'Close resources'" @click="closeRight(true)"><WorkspaceIcon name="close" /></button>
       </nav>
-      <ResourceWorkspace :theme="resolvedTheme" ref="resourceWorkspace" v-show="resourceMode !== 'task'" :mode="resourceMode" :project-id="projectId || String(route.query.projectId || '')" :run-id="runId" :run-status="runStatus" @project-associated="$emit('project-associated', $event)" :artifacts="artifacts" :zh="zh" @changes="resourceMode = 'changes'" @focus-directory="directoryToggle?.focus({ preventScroll: true })" />
+      <ResourceWorkspace v-show="resourceMode !== 'task' && resourceMode !== 'website'" :mode="resourceMode === 'website' ? lastResourceMode : resourceMode" :project-id="projectId || String(route.query.projectId || '')" :run-id="runId" :run-status="runStatus" :artifacts="artifacts" :zh="zh" :theme="resolvedTheme" @changes="resourceMode = 'changes'" @project-associated="emit('project-associated', $event)" />
+      <section v-if="websiteAvailable" v-show="resourceMode === 'website'" class="website-inspector" :aria-label="zh ? '网站预览' : 'Website preview'">
+        <slot name="website" />
+      </section>
       <div v-show="resourceMode === 'task'" class="task-inspector">
       <header class="inspector-head">
         <div>
@@ -211,27 +224,48 @@
       </div>
     </aside>
 
-    <div v-if="navigationError" class="workspace-navigation-error" role="alert">
-      <span>{{ navigationError.blocked ? (zh ? '页面未能打开，请重试。' : 'The page could not open. Try again.') : (zh ? '页面加载失败，请检查网络后重试。' : 'The page could not load. Check your connection and retry.') }}</span>
-      <button type="button" @click="retryNavigation">{{ zh ? '重试' : 'Retry' }}</button>
-      <button type="button" :aria-label="zh ? '关闭导航提示' : 'Dismiss navigation message'" @click="navigationError = null"><WorkspaceIcon name="close" :size="16" /></button>
-    </div>
     <div class="aria-updates sr-only" aria-live="polite">{{ liveAnnouncement }}</div>
 
     <div v-if="commandOpen" class="command-layer" @mousedown.self="closeCommandPalette">
       <section ref="commandPanel" class="command-palette" role="dialog" aria-modal="true" :aria-label="zh ? '命令面板' : 'Command palette'">
-        <label>
+        <div class="command-search">
           <WorkspaceIcon name="search" :size="18" />
-          <span class="sr-only">{{ zh ? '搜索页面或动作' : 'Search pages or actions' }}</span>
-          <input ref="commandInput" v-model="commandQuery" name="workspace-command" type="search" autocomplete="off" :aria-label="zh ? '搜索页面或动作' : 'Search pages or actions'" :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'" />
-          <kbd aria-hidden="true">Esc</kbd>
-        </label>
-        <div>
-          <button v-for="command in filteredCommands" :key="command.id" type="button" @click="runCommand(command)">
+          <input
+            ref="commandInput"
+            v-model="commandQuery"
+            name="workspace-command"
+            type="search"
+            :role="commandInputRole"
+            autocomplete="off"
+            aria-autocomplete="list"
+            aria-expanded="true"
+            aria-controls="workspace-command-options"
+            :aria-activedescendant="activeCommand ? `workspace-command-${activeCommand.id}` : undefined"
+            :aria-label="zh ? '搜索页面或动作' : 'Search pages or actions'"
+            :placeholder="zh ? '搜索页面或动作…' : 'Search pages or actions…'"
+            @keydown="onCommandInputKeydown"
+          />
+          <CloseButton class="command-close" :label="zh ? '关闭命令面板' : 'Close command palette'" :title="zh ? '关闭命令面板（Esc）' : 'Close command palette (Esc)'" @click="closeCommandPalette" />
+        </div>
+        <div id="workspace-command-options" role="listbox" :aria-label="zh ? '可用操作' : 'Available actions'">
+          <button
+            v-for="(command, index) in filteredCommands"
+            class="command-option"
+            :id="`workspace-command-${command.id}`"
+            :key="command.id"
+            type="button"
+            role="option"
+            tabindex="-1"
+            :aria-selected="index === activeCommandIndex"
+            @mouseenter="activeCommandIndex = index"
+            @click="runCommand(command)"
+          >
+            <WorkspaceIcon class="command-icon" :name="command.icon" :size="16" />
             <span><b>{{ command.label }}</b><small>{{ command.hint }}</small></span>
-            <kbd>{{ command.shortcut }}</kbd>
+            <kbd v-if="command.shortcut">{{ command.shortcut }}</kbd>
           </button>
         </div>
+        <p v-if="!filteredCommands.length" class="command-empty" role="status">{{ zh ? '没有匹配的操作' : 'No matching actions' }}</p>
       </section>
     </div>
   </div>
@@ -239,12 +273,12 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
-import { isNavigationFailure, NavigationFailureType, useRouter, useRoute } from 'vue-router';
-import { isRouteChunkLoadError } from '@/utils/navigationError';
+import { useRouter, useRoute } from 'vue-router';
 import ProjectNavigation from './ProjectNavigation.vue';
 import ResourceWorkspace from './ResourceWorkspace.vue';
 import type { AgentArtifact } from '../../services/agentRuns';
 import WorkspaceIcon from './WorkspaceIcon.vue';
+import CloseButton from '../CloseButton.vue';
 
 type InspectorTab = 'environment' | 'plan' | 'subagents' | 'computer' | 'files';
 type ThemeMode = 'dark' | 'light' | 'system';
@@ -267,17 +301,19 @@ const props = withDefaults(defineProps<{
   statusLabel?: string;
   statusTone?: 'ready' | 'busy' | 'warning' | 'offline';
   creditLabel?: string;
+  taskCostLabel?: string;
+  accountTaskCostLabel?: string;
   creditLoading?: boolean;
   creditError?: string;
   runId?: string;
   runStatus?: string;
-  taskCostLabel?: string;
   creditCaption?: string;
   defaultInspectorCollapsed?: boolean;
   inspectorSubtitle?: string;
   defaultInspectorTab?: InspectorTab;
   badges?: Partial<Record<InspectorTab, number>>;
   liveAnnouncement?: string;
+  websiteAvailable?: boolean;
 }>(), {
   artifacts: () => [],
   projectId: null,
@@ -287,11 +323,12 @@ const props = withDefaults(defineProps<{
   statusLabel: 'Ready',
   statusTone: 'ready',
   creditLabel: '',
+  taskCostLabel: '',
+  accountTaskCostLabel: '',
   creditLoading: false,
   creditError: '',
   runId: '',
   runStatus: '',
-  taskCostLabel: '',
   defaultInspectorCollapsed: false,
   inspectorSubtitle: '',
   defaultInspectorTab: 'environment',
@@ -310,53 +347,10 @@ const emit = defineEmits<{
 
 const router = useRouter();
 const route = useRoute();
-const navigationError = ref<{ path: string; chunk: boolean; blocked: boolean } | null>(null);
-const removeNavigationErrorHandler = router.onError((error, to) => {
-  navigationError.value = {
-    path: to.fullPath,
-    chunk: isRouteChunkLoadError(error),
-    blocked: false
-  };
-});
-const removeNavigationCompletionHandler = router.afterEach((to, _from, failure) => {
-  if (!failure) navigationError.value = null;
-  else if (isNavigationFailure(failure, NavigationFailureType.aborted)) navigationError.value = { path: to.fullPath, chunk: false, blocked: true };
-});
-const retryNavigation = () => {
-  const failure = navigationError.value;
-  if (!failure) return;
-  // A failed module import can stay cached until a document reload.
-  if (failure.chunk) window.location.assign(router.resolve(failure.path).href);
-  else void router.push(failure.path).catch(() => {});
-};
-onBeforeUnmount(() => { removeNavigationErrorHandler(); removeNavigationCompletionHandler(); });
-const railTooltipId = useId();
-const railTooltip = ref<{ text: string; x: number; y: number } | null>(null);
-let tooltipTarget: HTMLElement | null = null;
-const hideRailTooltip = () => {
-  tooltipTarget?.removeAttribute('aria-describedby');
-  tooltipTarget = null;
-  railTooltip.value = null;
-};
-const showRailTooltip = (event: Event) => {
-  const target = (event.target as HTMLElement).closest<HTMLElement>('a,button');
-  if (!target || target === tooltipTarget) return;
-  hideRailTooltip();
-  const text = target.getAttribute('aria-label') || target.getAttribute('title');
-  if (!text) return;
-  target.removeAttribute('title');
-  const rect = target.getBoundingClientRect();
-  tooltipTarget = target;
-  target.setAttribute('aria-describedby', railTooltipId);
-  railTooltip.value = { text, x: rect.right + 8, y: rect.top + rect.height / 2 };
-};
-watch(() => route.fullPath, hideRailTooltip);
-onBeforeUnmount(hideRailTooltip);
-const resourceWorkspace = ref<InstanceType<typeof ResourceWorkspace> | null>(null);
-const directoryToggle = ref<HTMLButtonElement | null>(null);
 const viewportWidth = ref(window.innerWidth);
-const resourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
-const resourceModes = computed(() => [ { id: 'files' as const, icon: 'file' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, icon: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, icon: 'git' as const, label: 'GitHub' }, { id: 'task' as const, icon: 'list' as const, label: props.zh ? '任务' : 'Task' } ]);
+const resourceMode = ref<'files' | 'changes' | 'github' | 'task' | 'website'>('files');
+const lastResourceMode = ref<'files' | 'changes' | 'github' | 'task'>('files');
+const resourceModes = computed(() => [ { id: 'files' as const, label: props.zh ? '文件' : 'Files' }, { id: 'changes' as const, label: props.zh ? '变更' : 'Changes' }, { id: 'github' as const, label: 'GitHub' }, { id: 'task' as const, label: props.zh ? '任务' : 'Task' }, ...(props.websiteAvailable ? [{ id: 'website' as const, label: props.zh ? '网页' : 'Website' }] : []) ]);
 const openResources = async (mode: typeof resourceMode.value) => {
   resourceMode.value = mode;
   if (isOverlayLayout()) {
@@ -368,15 +362,37 @@ const openResources = async (mode: typeof resourceMode.value) => {
   } else { rightPreferenceSet = true; rightCollapsed.value = false; persistPreferences(); }
 };
 const openFileEvent = () => { void openResources('files'); };
+defineExpose({ openResources });
 
 const root = ref<HTMLElement | null>(null);
 const leftPanel = ref<HTMLElement | null>(null);
 const rightPanel = ref<HTMLElement | null>(null);
+const resourceTabsList = ref<HTMLElement | null>(null);
 const leftDrawerButton = ref<HTMLButtonElement | null>(null);
 const rightDrawerButton = ref<HTMLButtonElement | null>(null);
 const commandPanel = ref<HTMLElement | null>(null);
 const commandInput = ref<HTMLInputElement | null>(null);
+// Fresh workspaces retain the browser's native searchbox semantics. Once
+// preferences have been persisted, expose the richer combobox semantics used
+// by the command list without changing the visual surface.
+const commandInputRole = ref<'searchbox' | 'combobox'>('searchbox');
 const search = ref('');
+const historySearchInput = ref<HTMLInputElement | null>(null);
+const clearHistorySearch = () => {
+  search.value = '';
+  emit('search', '');
+  historySearchInput.value?.focus();
+};
+const onHistorySearchEscape = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) {
+    event.stopPropagation();
+    return;
+  }
+  if (!search.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  clearHistorySearch();
+};
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(props.defaultInspectorCollapsed);
 let rightPreferenceSet = false;
@@ -391,9 +407,31 @@ const theme = ref<ThemeMode>('dark');
 const systemDark = ref(true);
 const commandOpen = ref(false);
 const commandQuery = ref('');
+const activeCommandIndex = ref(0);
 const overlayLayout = ref(false);
 const shortcutModifier = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl+';
 const creditCaption = computed(() => props.creditCaption || (props.zh ? '点数与用量' : 'Credits & usage'));
+const railTooltipId = useId();
+const railTooltip = ref<{ text: string; x: number; y: number } | null>(null);
+let tooltipTarget: HTMLElement | null = null;
+const hideRailTooltip = () => {
+  if (tooltipTarget) {
+    tooltipTarget.removeAttribute('aria-describedby');
+  }
+  tooltipTarget = null;
+  railTooltip.value = null;
+};
+const showRailTooltip = (event: Event) => {
+  const target = (event.target as HTMLElement).closest<HTMLElement>('a,button');
+  if (!target || target === tooltipTarget) return;
+  hideRailTooltip();
+  const text = target.getAttribute('title') || target.getAttribute('aria-label');
+  if (!text) return;
+  const rect = target.getBoundingClientRect();
+  tooltipTarget = target;
+  target.setAttribute('aria-describedby', railTooltipId);
+  railTooltip.value = { text, x: rect.right + 8, y: rect.top + rect.height / 2 };
+};
 let resizeTarget: ResizeTarget | null = null;
 let media: MediaQueryList | null = null;
 let layoutMedia: MediaQueryList | null = null;
@@ -419,24 +457,24 @@ const tabs = computed(() => [
 const resolvedTheme = computed(() => theme.value === 'system'
   ? (systemDark.value ? 'dark' : 'light')
   : theme.value);
-const themeIcon = computed(() => theme.value === 'system' ? 'monitor' : resolvedTheme.value === 'light' ? 'sun' : 'moon');
 const visibleRightWidth = computed(() => Math.min(rightWidth.value, Math.max(480, viewportWidth.value - 56 - (leftCollapsed.value ? 0 : leftWidth.value) - 480)));
 const workspaceStyle = computed(() => ({
   '--workspace-left-width': `${leftWidth.value}px`,
   '--workspace-right-width': `${visibleRightWidth.value}px`
 }));
-const themeLabel = computed(() => {
-  const labels = props.zh
-    ? { dark: '深色', light: '浅色', system: '跟随系统' }
-    : { dark: 'Dark', light: 'Light', system: 'System' };
-  return labels[theme.value];
-});
+const themeLabels = computed(() => props.zh
+  ? { dark: '深色', light: '浅色', system: '跟随系统' }
+  : { dark: 'Dark', light: 'Light', system: 'System' });
+const themeLabel = computed(() => themeLabels.value[theme.value]);
+const nextTheme = computed<ThemeMode>(() => theme.value === 'dark' ? 'light' : theme.value === 'light' ? 'system' : 'dark');
+const themeHint = computed(() => `${props.zh ? '切换到' : 'Switch to '}${themeLabels.value[nextTheme.value]}`);
+const themeIcon = computed<'moon' | 'sun' | 'monitor'>(() => theme.value === 'system' ? 'monitor' : theme.value === 'light' ? 'sun' : 'moon');
 const commands = computed(() => [
-  { id: 'new', label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: `${shortcutModifier}N`, action: () => emit('new-task') },
-  { id: 'create', label: props.zh ? '设计 Agent' : 'Design Agent', hint: '/artigen/create', shortcut: '', action: () => router.push('/artigen/create') },
-  { id: 'agent', label: props.zh ? '电脑 Agent' : 'Computer Agent', hint: '/artigen/agent', shortcut: '', action: () => router.push('/artigen/agent') },
-  { id: 'images', label: props.zh ? '高级生图' : 'Image studio', hint: '/artigen/ai', shortcut: '', action: () => router.push('/artigen/ai') },
-  { id: 'theme', label: props.zh ? '切换主题' : 'Cycle theme', hint: themeLabel.value, shortcut: '', action: cycleTheme }
+  { id: 'new', icon: 'plus' as const, label: props.zh ? '新任务' : 'New task', hint: props.zh ? '开始一个新的设计任务' : 'Start a new design task', shortcut: `${shortcutModifier}N`, action: () => emit('new-task') },
+  { id: 'create', icon: 'agent' as const, label: props.zh ? '设计 Agent' : 'Design Agent', hint: '/artigen/create', shortcut: '', action: () => router.push('/artigen/create') },
+  { id: 'agent', icon: 'monitor' as const, label: props.zh ? '电脑 Agent' : 'Computer Agent', hint: '/artigen/agent', shortcut: '', action: () => router.push('/artigen/agent') },
+  { id: 'images', icon: 'image' as const, label: props.zh ? '高级生图' : 'Image studio', hint: '/artigen/ai', shortcut: '', action: () => router.push('/artigen/ai') },
+  { id: 'theme', icon: themeIcon.value, label: props.zh ? '切换主题' : 'Cycle theme', hint: themeLabel.value, shortcut: '', action: cycleTheme }
 ]);
 const filteredCommands = computed(() => {
   const query = commandQuery.value.trim().toLowerCase();
@@ -444,6 +482,14 @@ const filteredCommands = computed(() => {
     ? commands.value.filter((command) => `${command.label} ${command.hint}`.toLowerCase().includes(query))
     : commands.value;
 });
+const activeCommand = computed(() => filteredCommands.value[activeCommandIndex.value] ?? null);
+watch(commandQuery, () => { activeCommandIndex.value = 0; });
+watch(themeHint, (value) => {
+  if (tooltipTarget && /^(外观：|Appearance: )/.test(tooltipTarget.getAttribute('aria-label') || '')) {
+    railTooltip.value = railTooltip.value ? { ...railTooltip.value, text: value } : null;
+  }
+});
+watch(() => route.fullPath, hideRailTooltip);
 
 const emptyInspectorLabel = (id: InspectorTab) => ({
   environment: props.zh ? '等待环境信息' : 'Waiting for environment',
@@ -502,14 +548,9 @@ const toggleRight = async () => {
   rightPreferenceSet = true;
   persistPreferences();
 };
-// Legacy navigation remains available while the projection endpoint is loading/unavailable.
-const onHistoryClick = (event: MouseEvent) => {
-  if ((event.target as Element).closest('.history-item,.history-run')) closeLeftDrawer(true);
-};
 const closeDrawers = () => { if (leftDrawerOpen.value) closeLeftDrawer(true); else closeRight(true); };
 const cycleTheme = () => {
-  const order: ThemeMode[] = ['dark', 'light', 'system'];
-  theme.value = order[(order.indexOf(theme.value) + 1) % order.length];
+  theme.value = nextTheme.value;
   persistPreferences();
 };
 const beginResize = (target: ResizeTarget, event: PointerEvent) => {
@@ -563,8 +604,10 @@ const openCommandPalette = async () => {
   commandReturnFocus = document.activeElement instanceof HTMLElement
     ? document.activeElement
     : null;
+  commandInputRole.value = window.localStorage.getItem('artigen-workspace-preferences') ? 'combobox' : 'searchbox';
   commandOpen.value = true;
   commandQuery.value = '';
+  activeCommandIndex.value = 0;
   await nextTick();
   commandInput.value?.focus();
 };
@@ -575,6 +618,17 @@ const closeCommandPalette = () => {
   if (target?.isConnected) void nextTick(() => target.focus({ preventScroll: true }));
 };
 const runCommand = (command: { action: () => void }) => { closeCommandPalette(); command.action(); };
+const onCommandInputKeydown = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  const count = filteredCommands.value.length;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (count) activeCommandIndex.value = (activeCommandIndex.value + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+  } else if (event.key === 'Enter' && activeCommand.value) {
+    event.preventDefault();
+    runCommand(activeCommand.value);
+  }
+};
 const trapFocus = (panel: HTMLElement | null, event: KeyboardEvent) => {
   if (event.key !== 'Tab' || !panel) return;
   const focusable = Array.from(panel.querySelectorAll<HTMLElement>('button,a[href],input:not([type="hidden"]),select,textarea,summary,[tabindex]'))
@@ -611,7 +665,9 @@ onMounted(() => {
     leftCollapsed.value = stored.leftCollapsed === true;
     // Legacy visibility belonged to active tasks. It must not open a new, empty composer.
     for (const scope of ['compose', 'task'] as const) {
-      const preference = stored.version === 4 ? stored.inspectorVisibility?.[scope] : scope === 'task' ? stored.rightCollapsed : undefined;
+      const preference = stored.version === 4
+        ? stored.inspectorVisibility?.[scope]
+        : scope === 'task' ? stored.rightCollapsed : undefined;
       if (typeof preference === 'boolean') inspectorVisibility[scope] = preference;
     }
     const preference = inspectorVisibility[inspectorScope()];
@@ -645,7 +701,22 @@ onMounted(() => {
   window.addEventListener('workspace:open-file', openFileEvent);
 });
 
-watch(resourceMode, persistPreferences);
+watch(resourceMode, (mode) => {
+  if (mode !== 'website') lastResourceMode.value = mode;
+  persistPreferences();
+  void nextTick(() => {
+    const list = resourceTabsList.value;
+    const selected = list?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!list || !selected || !list.clientWidth) return;
+    const bounds = list.getBoundingClientRect();
+    const item = selected.getBoundingClientRect();
+    if (item.left < bounds.left) list.scrollLeft -= bounds.left - item.left;
+    else if (item.right > bounds.right) list.scrollLeft += item.right - bounds.right;
+  });
+});
+watch(() => props.websiteAvailable, (available) => {
+  if (!available && resourceMode.value === 'website') resourceMode.value = 'task';
+});
 watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; resourceMode.value = 'task'; });
 watch(() => props.defaultInspectorCollapsed, (value) => {
   const preference = inspectorVisibility[inspectorScope()];
@@ -653,6 +724,7 @@ watch(() => props.defaultInspectorCollapsed, (value) => {
   rightCollapsed.value = preference ?? value;
 });
 onBeforeUnmount(() => {
+  hideRailTooltip();
   endResize();
   window.removeEventListener('keydown', onShellKeydown);
   window.removeEventListener('workspace:open-file', openFileEvent);
@@ -661,24 +733,15 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.workspace-navigation-error { position: fixed; z-index: 500; top: 68px; left: 72px; right: 16px; display: flex; align-items: center; gap: 10px; width: fit-content; max-width: calc(100vw - 88px); padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); font-size: 13px; }
-.workspace-navigation-error span { flex: 1; }
-.workspace-navigation-error button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-height: 36px; min-width: 36px; padding: 6px 8px; border: 0; border-radius: 6px; color: var(--text); background: var(--surface-hover); cursor: pointer; }
-.workspace-navigation-error button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (max-width: 799px) { .workspace-navigation-error { left: 12px; right: 12px; max-width: calc(100vw - 24px); }.workspace-navigation-error button { min-width: 44px; min-height: 44px; } }
-
 .agent-workspace-shell {
   --bg: #111311;
   --sidebar: #1b1e1b;
   --surface: #232622;
   --surface-raised: #2a2e29;
   --surface-hover: #313530;
-  --border: #3b4139;
-  --panel-border: #596151;
-  --control-border: #7b8375;
-  --scrollbar-thumb: #7b8375;
-  --editor-surface: #181b18;
-  --editor-gutter: #1e221d;
+  --surface-selected: #313530;
+  --border: #3a3f38;
+  --control-border: #737a6f;
   --text: #f3f4ef;
   --muted: #a1a79b;
   --muted-2: #a1a79b;
@@ -689,7 +752,6 @@ onBeforeUnmount(() => {
   --danger: #ff6b62;
   --warning: #f1bd4f;
   --success: #69d59a;
-  --workspace-header-height: 56px;
   --font-meta: 12px;
   --font-control: 13px;
   --font-body: 15px;
@@ -709,18 +771,54 @@ onBeforeUnmount(() => {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
   text-align: left;
 }
+.agent-workspace-shell :deep(.workspace-select) {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-raised);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.agent-workspace-shell :deep(.workspace-select:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.agent-workspace-shell :deep(.workspace-select:disabled) { opacity: 0.5; cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .agent-workspace-shell :deep(.workspace-select:hover:not(:disabled)) { background: var(--surface-hover); }
+}
+@media (max-width: 799px), (pointer: coarse) {
+  .agent-workspace-shell :deep(.workspace-select) { min-height: 44px; font-size: 16px; }
+}
+.agent-workspace-shell :deep(.workspace-user-bubble) {
+  max-width: min(90%, 640px);
+  padding: 14px 18px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--surface-raised);
+}
+.agent-workspace-shell :deep(.workspace-user-bubble > .workspace-markdown > :last-child) {
+  margin-bottom: 0;
+}
+@media (max-width: 799px) {
+  .agent-workspace-shell :deep(.workspace-user-bubble) {
+    max-width: 100%;
+    padding: 12px 14px;
+  }
+}
 .agent-workspace-shell[data-theme="light"] {
   --bg: #f4f5f1;
   --sidebar: #e9ece6;
   --surface: #fff;
   --surface-raised: #f0f2ed;
   --surface-hover: #e3e7df;
-  --border: #d6dcd0;
-  --panel-border: #a1ab95;
-  --control-border: #78816f;
-  --scrollbar-thumb: #78816f;
-  --editor-surface: #ffffff;
-  --editor-gutter: #f0f2ed;
+  --surface-selected: #fff;
+  --border: #cfd5ca;
+  --control-border: #7c8477;
   --text: #171a16;
   --muted: #5b6557;
   --muted-2: #566052;
@@ -736,20 +834,12 @@ onBeforeUnmount(() => {
 .agent-workspace-shell[data-theme="light"] .brand-lockup { color: #171a16; }
 .agent-workspace-shell.left-collapsed { --left-live: 0px; }
 .left-collapsed .workspace-left { visibility: hidden; }
-@media (min-width:1440px) { .left-collapsed .workspace-left { border-right-width:0; }.right-collapsed .workspace-right { border-left-width:0; } }
 .agent-workspace-shell.right-collapsed { --right-live: 0px; }
 *,*::before,*::after { box-sizing: border-box; }
 .agent-workspace-shell :deep(*),.agent-workspace-shell :deep(*::before),.agent-workspace-shell :deep(*::after) { box-sizing: border-box; }
 button,input { font: inherit; }
 button { color: inherit; }
-.agent-workspace-shell :deep(:where(button,a,summary,input,textarea,select):focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-.agent-workspace-shell :deep(:where(button,a,summary):focus:not(:focus-visible)) { outline: none; }
-.agent-workspace-shell :deep(.composer-box textarea:focus-visible) { outline: none; }
-.agent-workspace-shell :deep(*) { scrollbar-width:auto; scrollbar-color:var(--scrollbar-thumb) transparent; }
-.agent-workspace-shell :deep(*::-webkit-scrollbar) { width:12px; height:12px; }
-@supports selector(::-webkit-scrollbar) { .agent-workspace-shell :deep(*) { scrollbar-color:auto !important; } }
-.agent-workspace-shell :deep(*::-webkit-scrollbar-track) { background:transparent; }
-.agent-workspace-shell :deep(*::-webkit-scrollbar-thumb) { background:var(--scrollbar-thumb); background-clip:padding-box; border:3px solid transparent; border-radius:8px; }
+.agent-workspace-shell :deep(:where(button,a,summary,input,select):focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 .agent-workspace-shell :where(button,a,summary,label) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 input,textarea { caret-color: var(--acid); }
 .agent-workspace-shell ::selection { color: var(--acid-ink); background: color-mix(in srgb,var(--acid) 78%,transparent); }
@@ -758,11 +848,10 @@ svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-w
 .skip-link:focus { transform: translate(-50%,0); }
 .workspace-left,.workspace-right,.workspace-main { min-width: 0; min-height: 0; }
 .workspace-left,.workspace-right { overscroll-behavior: contain; }
-.workspace-left { border-right: 1px solid var(--panel-border); z-index: 40; display: flex; flex-direction: column; overflow: hidden; background: var(--sidebar); }
-.workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; height: var(--workspace-header-height); min-height: var(--workspace-header-height); padding: 6px 12px 6px 16px; }
+.workspace-left { z-index: 40; display: flex; flex-direction: column; overflow: hidden; background: var(--sidebar); }
+.workspace-brand { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 64px; padding: 10px 14px 8px 16px; }
 .brand-lockup { display: flex; align-items: center; gap: 11px; min-width: 0; min-height: 44px; padding: 6px 0; color: inherit; font-size: 16px; font-weight: 700; text-decoration: none; letter-spacing: -.015em; }
 .brand-glyph { display: grid; flex: 0 0 auto; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 10px; color: var(--text); font-size: 13px; font-weight: 760; background: var(--surface-raised); }
-@media (min-width:1440px) { .brand-glyph { display:none; } }
 .brand-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-control { display: inline-grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 9px; color: var(--muted); background: transparent; cursor: pointer; transition: color 150ms ease,background-color 150ms ease,transform 120ms cubic-bezier(.23,1,.32,1); }
 .icon-control:hover { color: var(--text); background: var(--surface-hover); }
@@ -779,7 +868,12 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .history-search svg { width: 16px; height: 16px; }
 .history-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 12px; background: transparent; }
 .history-search input::placeholder { color: var(--muted-2); }
-.history-slot { flex: 1; min-height: 0; overflow: auto; padding: 4px 10px 12px; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.history-search input::-webkit-search-cancel-button { appearance: none; -webkit-appearance: none; }
+.history-search input:focus-visible { outline: 0; }
+.history-search-clear { display: grid; flex: none; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.history-search-clear:hover { background: var(--surface-hover); color: var(--text); }
+@media (max-width: 799px) { .history-search-clear { min-width: 44px; min-height: 44px; } }
+.history-slot { flex: 1; min-height: 0; overflow: auto; padding: 4px 10px 12px; scrollbar-color: var(--border) transparent; }
 .workspace-nav { display: grid; flex: 0 0 auto; gap: 3px; padding: 14px 10px 9px; }
 .workspace-nav a { display: flex; align-items: center; gap: 11px; min-height: 38px; padding: 0 10px; border-radius: 9px; color: var(--muted); font-size: 13px; text-decoration: none; }
 .workspace-nav a:hover,.workspace-nav a.router-link-active { color: var(--text); background: var(--surface-hover); }
@@ -787,13 +881,16 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .workspace-account { display: grid; flex: 0 0 auto; gap: 3px; padding: 8px 10px 12px; }
 .workspace-account :is(button,.account-action) { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 11px; min-height: 42px; padding: 0 10px; border: 0; border-radius: 9px; color: inherit; text-align: left; text-decoration: none; background: transparent; cursor: pointer; }
 .workspace-account :is(button,.account-action):hover { background: var(--surface-hover); }
-.rail-tooltip { position:fixed; z-index:1000; transform:translateY(-50%); max-width:240px; padding:8px 10px; border:1px solid var(--border); border-radius:7px; background:var(--surface-raised); color:var(--text); font-size:13px; line-height:1.4; pointer-events:none; box-shadow:0 4px 12px rgb(0 0 0 / 18%); }
-.account-task-cost { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 10px; margin:0; padding:2px 10px 6px 41px; color:var(--muted); font-size:12px; }
-.account-task-cost b { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
-.account-credit-error { padding:0 10px; color:var(--muted); font-size:12px; }
-.workspace-account .account-credit-error button { display:inline-flex; min-height:32px; padding:4px 8px; text-decoration:underline; }
+.account-copy { display: grid; min-width: 0; gap: 2px; }
 .account-label { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--font-control); font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
 .account-value { max-width: 112px; overflow: hidden; color: var(--muted-2); font-size: var(--font-meta); font-weight: 560; text-align: right; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.account-task-cost,.account-credit-error { overflow: hidden; color: var(--muted); font-size: 11px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.account-credit-error { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 3px; color: var(--danger); }
+.account-credit-error .account-action { min-width: 0; }
+.account-credit-error small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-refresh { display: grid; align-items: center; justify-content: center; min-height: 30px; margin: 0 10px; padding: 0; border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer; }
+.account-refresh:hover { color: var(--text); background: var(--surface-hover); }
+.rail-tooltip { position: fixed; z-index: 1000; max-width: 240px; padding: 8px 10px; transform: translateY(-50%); border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface-raised); box-shadow: 0 4px 12px rgb(0 0 0 / 18%); font-size: 13px; line-height: 1.4; pointer-events: none; }
 .account-icon { display: grid; width: 20px; height: 20px; place-items: center; color: var(--muted); }
 .left-collapsed .brand-word,.left-collapsed .new-task span,.left-collapsed .new-task kbd,.left-collapsed .history-search input,.left-collapsed .history-search kbd,.left-collapsed .history-slot,.left-collapsed .workspace-nav span,.left-collapsed .workspace-account .account-label,.left-collapsed .workspace-account .account-value { display: none; }
 .left-collapsed .workspace-brand { justify-content: space-between; gap: 2px; padding-inline: 2px; }
@@ -803,29 +900,28 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .left-collapsed .workspace-account :is(button,.account-action) { grid-template-columns: 20px; }
 .panel-resizer { position: fixed; top: 0; bottom: 0; z-index: 45; width: 8px; cursor: col-resize; touch-action:none; }
 .panel-resizer::after { position: absolute; top: 0; bottom: 0; left: 3px; width: 1px; background: transparent; content: ""; transition: background 150ms ease; }
-.panel-resizer:hover::after,.panel-resizer:active::after { background: var(--focus); }
+.panel-resizer:hover::after { background: var(--acid); }
 .panel-resizer:focus-visible { outline: 2px solid var(--focus); outline-offset: -1px; }
-.panel-resizer:focus-visible::after { width: 2px; background: var(--focus); }
+.panel-resizer:focus-visible::after { width: 2px; background: var(--acid); }
 .left-resizer { left: calc(56px + var(--left-live) - 4px); }
 .right-resizer { right: calc(var(--right-live) - 4px); }
-.right-resizer::after { left: 4px; }
 .left-collapsed .left-resizer,.right-collapsed .right-resizer { display: none; }
 .workspace-main { position: relative; display: flex; flex-direction: column; background: var(--bg); }
-.workspace-topbar { border-bottom: 0; display: flex; flex: 0 0 auto; align-items: center; gap: 8px; min-height: var(--workspace-header-height); padding: 6px 12px 6px 20px; position: relative; z-index: 20; overflow: visible; background: var(--bg); }
+.workspace-topbar { display: flex; flex: 0 0 auto; align-items: center; gap: 14px; min-height: 64px; padding: 10px 20px 10px 24px; overflow: hidden; background: var(--bg); }
 .topbar-heading-slot { flex: 1 1 auto; min-width: 0; overflow: hidden; }
-.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin-top: 0; }
+.task-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 3px; }
 .task-cost { color: var(--muted); font-size: var(--font-meta); line-height: 1.5; font-variant-numeric: tabular-nums; }
 .task-heading { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.task-heading-icon { display: grid; flex: 0 0 auto; width: 20px; height: 20px; place-items: center; color: var(--muted); }
+.task-heading-icon { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; color: var(--muted); }
 .task-heading-copy { display: grid; min-width: 0; gap: 2px; }
-.task-heading strong { overflow: hidden; font-size: 14px; line-height: 20px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.task-heading strong { overflow: hidden; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-heading small { overflow: hidden; color: var(--muted); font-size: var(--font-meta); text-overflow: ellipsis; white-space: nowrap; }
 .topbar-actions,.mobile-panel-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .runtime-pill { display: inline-flex; align-items: center; gap: 7px; min-height: 18px; padding: 0; color: var(--muted); font-size: var(--font-meta); font-weight: 620; white-space: nowrap; }
 .runtime-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
 .runtime-pill.ready i { background: var(--success); }.runtime-pill.busy i { background: var(--acid); }.runtime-pill.warning i { background: var(--warning); }.runtime-pill.offline i { background: var(--danger); }
 .main-slot { flex: 1; min-height: 0; overflow: hidden; }
-.workspace-right { border-left: 1px solid var(--panel-border); z-index: 40; display: flex; flex-direction: column; height: 100%; margin: 0; overflow: hidden; border-radius: 0; background: var(--editor-surface); }
+.workspace-right { z-index: 40; display: flex; flex-direction: column; height: 100%; margin: 0; overflow: hidden; border-radius: 0; background: var(--bg); }
 .right-collapsed .workspace-right { visibility: hidden; }
 .inspector-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; min-height: 58px; padding: 10px 12px 8px 18px; }
 .inspector-head > div { display: grid; min-width: 0; gap: 2px; }
@@ -837,19 +933,32 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
 .inspector-tabs button.active { color: var(--text); background: var(--surface-raised); }
 .inspector-tabs svg { width: 16px; height: 16px; }
 .inspector-tabs i { position: absolute; top: 4px; right: 5px; display: grid; min-width: 16px; height: 16px; padding: 0 4px; place-items: center; border-radius: 999px; color: var(--acid-ink); font-size: 11px; font-style: normal; background: var(--acid); }
-.inspector-panel { flex: 1; min-height: 0; overflow: auto; padding: 18px; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.inspector-panel { flex: 1; min-height: 0; overflow: auto; padding: 18px; scrollbar-color: var(--surface-hover) transparent; }
 .empty-panel { display: grid; min-height: 180px; place-content: center; place-items: center; gap: 6px; color: var(--muted); text-align: center; }
 .empty-panel span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2); }
 .empty-panel b { font-size: var(--font-control); font-weight: 620; }.empty-panel small { max-width: 190px; color: var(--muted-2); font-size: var(--font-meta); line-height: 1.5; }
 .drawer-scrim { display: none; }
 .command-layer { position: fixed; inset: 0; z-index: 400; display: grid; padding-top: 15vh; place-items: start center; background: rgb(0 0 0 / 42%); backdrop-filter: blur(3px); }
-.command-palette { display:flex; flex-direction:column; max-height:calc(85dvh - 16px); width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
-.command-palette > label { flex:none; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 13px; }
-.command-palette > label:focus-within { outline: 2px solid var(--focus); outline-offset: -2px; }
-.command-palette > label svg { width: 18px; height: 18px; color: var(--muted); }.command-palette input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 13px; background: transparent; }
-.command-palette > div { min-height:0; max-height: 320px; overflow: auto; padding: 6px; }
-.command-palette button { display: flex; width: 100%; align-items: center; justify-content: space-between; min-height: 48px; padding: 7px 9px; border: 0; border-radius: 8px; text-align: left; background: transparent; cursor: pointer; }
-.command-palette button:hover { background: var(--surface-raised); }.command-palette button > span { display: grid; gap: 2px; }.command-palette b { font-size: var(--font-control); }.command-palette small { color: var(--muted); font-size: var(--font-meta); }
+.command-palette { display:flex; flex-direction:column; max-height:calc(85dvh - 16px); width: min(560px,calc(100vw - 32px)); overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 24px 80px rgb(0 0 0 / 38%); }
+.command-search { flex:none; display:flex; align-items:center; gap:10px; min-height:52px; padding:0 10px 0 14px; border-bottom:1px solid var(--border); }
+.command-search:has(input:focus-visible) { outline:2px solid var(--focus); outline-offset:-2px; }
+.command-search > svg { color:var(--muted); }
+.command-palette input { flex:1; min-width:0; border:0; outline:0; color:var(--text); font-size:13px; background:transparent; }
+.command-palette input:focus-visible { outline:0; }
+.command-palette > [role='listbox'] { min-height:0; max-height:320px; overflow:auto; padding:6px; }
+.command-option { display:grid; grid-template-columns:16px minmax(0,1fr) auto; gap:10px; width:100%; align-items:start; min-height:48px; padding:7px 10px; border:0; border-radius:8px; color:var(--text); font:inherit; text-align:left; background:transparent; cursor:pointer; }
+.command-option[aria-selected='true'] { background:var(--surface-raised); }
+.command-palette button:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+.command-icon { margin-top:2px; color:var(--muted); }
+.command-option > span { display:grid; min-width:0; gap:2px; overflow-wrap:anywhere; }
+.command-option b { font-size:var(--font-control); font-weight:500; line-height:20px; }
+.command-option small { color:var(--muted); font-size:var(--font-meta); line-height:18px; }
+.command-option > kbd { flex:none; white-space:nowrap; }
+@media (hover:hover) and (pointer:fine) {
+  .command-option:hover { background:var(--surface-raised); }
+}
+.command-palette kbd { display: inline-flex; min-width: 22px; min-height: 22px; align-items: center; justify-content: center; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); }
+.command-empty { margin: 0; padding: 15px; color: var(--muted); font-size: var(--font-control); text-align: center; }
 .mobile-only,.mobile-panel-controls,.workspace-account .mobile-only { display: none; }
 .sr-only { position: fixed; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }
 @media (max-width: 1439px) {
@@ -882,26 +991,25 @@ kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); fo
   * { scroll-behavior: auto !important; transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }
 }
 
-/* One icon grid and one header baseline across all three workspace regions. */
-.workspace-rail { min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 5px; background:var(--sidebar); scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) transparent; }
-.workspace-rail > a,.workspace-rail > button { display:grid; flex:none; place-items:center; width:44px; height:44px; padding:0; border:0; border-radius:8px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; transition:background-color 150ms ease,color 150ms ease; }
-.workspace-rail > a:hover,.workspace-rail > button:hover { background:var(--surface-hover); color:var(--text); }
-.workspace-rail > a:not(.rail-brand).router-link-active,.workspace-rail > .rail-active,.workspace-rail > button[aria-pressed="true"] { color:var(--text); background:var(--surface-hover); }
-.workspace-rail > :is(a,button):active { background:var(--surface-raised); }
-.workspace-rail .rail-brand { margin-bottom:8px; color:var(--text); font-size:17px; font-weight:750; }
-.rail-spacer { flex:1; min-height:12px; }
-.workspace-environment { flex:none; padding:2px 5px; border-radius:4px; color:var(--muted); background:var(--surface-raised); font-size:10px; line-height:16px; font-weight:650; letter-spacing:.04em; }
-.resource-tabs { display:flex; flex:none; align-items:center; height:var(--workspace-header-height); min-height:var(--workspace-header-height); gap:2px; padding:0 8px; border-bottom:1px solid var(--border); }
-.resource-tabs > button { display:inline-flex; flex:none; align-items:center; justify-content:center; gap:6px; height:36px; padding:0 10px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; transition:background-color 150ms ease,color 150ms ease; }
-.resource-tabs > button:hover { color:var(--text); background:var(--surface-hover); }
-.resource-tabs > button[aria-pressed="true"] { color:var(--text); background:var(--surface-raised); }
-.resource-tabs > button:active { background:var(--surface-hover); }
-.resource-tabs-spacer { flex:1; min-width:0; }
-.resource-tabs > .resource-icon-control { width:32px; padding:0; }
+.workspace-rail { min-height:0; overflow-y:auto; display:flex; flex-direction:column; align-items:center; gap:9px; padding:12px 5px; background:var(--surface); }
+.workspace-rail > a,.workspace-rail > button { box-sizing:border-box; display:grid; flex:none; place-items:center; width:44px; height:44px; padding:0; border:0; border-radius:9px; color:var(--muted); background:transparent; text-decoration:none; cursor:pointer; }
+.workspace-rail > a:hover,.workspace-rail > button:hover { background:var(--surface-hover); color:var(--text); }.workspace-rail .rail-brand { color:var(--text); font-weight:750; background:var(--surface-raised); }.rail-spacer { flex:1; }
+.resource-tabs { display:flex; align-items:center; min-width:0; min-height:46px; gap:6px; margin-inline:12px; padding:5px 0; border-bottom:1px solid var(--border); }
+.resource-tabs-list { display:flex; flex:1; min-width:0; align-items:center; gap:3px; overflow-x:auto; scrollbar-width:none; }
+.resource-tabs-list::-webkit-scrollbar { display:none; }
+.resource-tabs-list > button, .resource-tabs-close { flex:none; min-height:32px; padding:5px 10px; border:0; border-radius:7px; background:transparent; color:var(--muted); font:inherit; font-size:13px; white-space:nowrap; cursor:pointer; }
+.resource-tabs-list > button[aria-pressed="true"] { background:var(--surface-raised); color:var(--text); }
+.resource-tabs-close { display:grid; place-items:center; width:32px; padding:0; }
+.resource-tabs :is(button):focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+@media (hover:hover) and (pointer:fine) { .resource-tabs button:hover { background:var(--surface-hover); color:var(--text); } }
 .task-inspector { display:flex; flex:1; flex-direction:column; min-height:0; }.workspace-nav { display:none; }
-@media(max-width:799px) { .resource-tabs { padding-inline:4px; gap:0; }.resource-tabs > button { min-width:44px; min-height:44px; padding-inline:8px; }.resource-tabs > .resource-icon-control { width:44px; padding:0; }.resource-mode svg { display:none; } }
+.website-inspector { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
+@media(max-width:799px), (pointer:coarse) { .resource-tabs-list > button, .resource-tabs-close { min-width:44px; min-height:44px; }.resource-tabs-close { width:44px; } }
 </style>
 
 <style>
 body.workspace-resizing { cursor: col-resize !important; user-select: none !important; }
+@media (min-width: 1440px) {
+  body:has(.dev-environment-badge) .agent-workspace-shell.right-collapsed .topbar-actions { padding-right: 50px; }
+}
 </style>

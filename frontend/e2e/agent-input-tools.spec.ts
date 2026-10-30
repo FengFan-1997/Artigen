@@ -63,6 +63,33 @@ for (const [route, label, kind] of [
   });
 }
 
+test('clarification replies protect a newer draft while sending and reuse failed request ids', async ({ page }) => {
+  const fixture = await installAgentInputFixture(page);
+  fixture.state.run.status = 'waiting_user';
+  fixture.state.run.progress.clarificationRequired = true;
+  fixture.state.run.progress.clarification = { id: 'audience', question: '主要面向谁？', options: ['设计团队', '运营团队'] };
+  fixture.state.inputDelay = 600;
+  fixture.state.inputFail = true;
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  const card = page.locator('.clarification-card');
+  const first = card.getByRole('button', { name: '设计团队', exact: true });
+  await first.click();
+  await expect.poll(() => fixture.state.inputs.length).toBe(1);
+  const input = page.getByRole('textbox', { name: '补充要求', exact: true });
+  await input.fill('下一条草稿');
+  await card.getByRole('button', { name: '运营团队', exact: true }).dispatchEvent('click');
+  await expect(input).toHaveValue('下一条草稿');
+  await expect(first).toBeDisabled();
+  expect(fixture.state.inputs).toHaveLength(1);
+  await expect(first).toBeEnabled();
+  await expect(input).toHaveValue('下一条草稿');
+  await first.click();
+  await expect.poll(() => fixture.state.inputs.length).toBe(2);
+  await expect(first).toBeEnabled();
+  expect(fixture.state.inputs[1].inputId).toBe(fixture.state.inputs[0].inputId);
+  await expect(input).toHaveValue('设计团队');
+});
+
 test('a Run acknowledgement preserves a newer draft, including after reload', async ({ page }) => {
   const fixture = await installAgentInputFixture(page);
   fixture.state.inputDelay = 650;
@@ -103,16 +130,52 @@ test('retrying the same failed Run input reuses its idempotency identity', async
   expect(fixture.state.inputs[2]?.inputId).not.toBe(fixture.state.inputs[0]?.inputId);
 });
 
-test('the terminal shared Run composer disables text, attachments and sending', async ({
-  page
-}) => {
-  const fixture = await installAgentInputFixture(page);
+test('terminal Runs replace the inert composer with a compact next step', async ({ page }) => {
+  const theme = test.info().project.name === 'chromium-mobile-390' ? 'light' : 'dark';
+  const fixture = await installAgentInputFixture(page, { theme });
+  const projectId = '22222222-2222-4222-8222-222222222222';
+  fixture.state.run.projectId = projectId;
+  await page.route(`**/api/workspace/projects/${projectId}/files`, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, files: [] })
+  }));
+  await page.setViewportSize(test.info().project.name === 'chromium-mobile-390'
+    ? { width: 390, height: 844 }
+    : { width: 1440, height: 960 });
+
+  for (const status of ['succeeded', 'failed', 'cancelled'] as const) {
+    fixture.state.run.status = status;
+    fixture.state.run.error = status === 'failed' ? { code: 'AGENT_RUNTIME_FAILED' } : null;
+    await page.goto(`/artigen/agent/runs/${inputRunId}`);
+
+    const ended = page.getByRole('group', { name: '任务结束后的操作' });
+    await expect(ended).toBeVisible();
+    await expect(ended).toContainText(status === 'succeeded' ? '任务已完成' : status === 'failed' ? '任务未完成' : '任务已停止');
+    await expect(page.locator('.run-composer .composer-box')).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: '补充要求' })).toHaveCount(0);
+    const action = ended.getByRole('link', { name: '新建任务' });
+    await expect(action).toHaveAttribute('href', `/artigen/agent?projectId=${projectId}`);
+    const actionBox = await action.boundingBox();
+    expect(actionBox?.height).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+
+  }
+
   fixture.state.run.status = 'succeeded';
   await page.goto(`/artigen/agent/runs/${inputRunId}`);
-  await expect(page.getByRole('textbox', { name: '补充要求' })).toBeDisabled();
-  await expect(page.locator('.run-composer .attach')).toBeDisabled();
-  await expect(page.locator('.run-composer .send')).toBeDisabled();
-  await page.locator('.composer-box').dispatchEvent('submit');
+  await page.getByRole('link', { name: '新建任务' }).click();
+  await expect(page).toHaveURL(`/artigen/agent?projectId=${projectId}`);
+  fixture.state.run.status = 'running';
+  fixture.state.run.error = null;
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  const draft = page.getByRole('textbox', { name: '补充要求' });
+  await draft.fill('任务结束前写下、尚未发送的补充要求');
+  fixture.state.run.status = 'succeeded';
+  await page.reload();
+  await expect(draft).toBeDisabled();
+  await expect(draft).toHaveValue('任务结束前写下、尚未发送的补充要求');
+  await expect(page.getByRole('group', { name: '任务结束后的操作' })).toHaveCount(0);
   expect(fixture.state.inputs).toHaveLength(0);
 });
 
@@ -128,11 +191,11 @@ for (const [route, label] of [
     await page.getByRole('textbox', { name: label }).fill('阅读这些资料并提出建议');
     await references(page, ['brief.txt']);
     await references(page, ['brief.txt', 'notes.txt']);
-    await expect(page.locator('.attachment-card')).toHaveCount(2);
+    await expect(page.locator('.attachment-list > span')).toHaveCount(2);
     await expect(page.locator('.attachment-list')).toContainText('brief.txt');
     await expect(page.locator('.attachment-list')).toContainText('notes.txt');
     await page.getByRole('button', { name: '移除 brief.txt', exact: true }).click();
-    await expect(page.locator('.attachment-card')).toHaveCount(1);
+    await expect(page.locator('.attachment-list > span')).toHaveCount(1);
     await expect(page.locator('.attachment-list')).not.toContainText('brief.txt');
   });
   test(`${route}: an over-limit selection reports the limit and keeps existing references`, async ({
@@ -145,7 +208,7 @@ for (const [route, label] of [
       page,
       Array.from({ length: 10 }, (_, i) => `new-${i}.txt`)
     );
-    await expect(page.locator('.attachment-card')).toHaveCount(1);
+    await expect(page.locator('.attachment-list > span')).toHaveCount(1);
     await expect(page.locator('.attachment-list')).toContainText('original.txt');
     await expect(page.locator('#artigen-workspace-main').getByText(/最多添加 10 个/)).toBeVisible();
   });
@@ -187,7 +250,7 @@ test('upload failure preserves files and blocks task creation; a retry can compl
       .locator('#artigen-workspace-main')
       .getByText('参考文件上传失败，已保留你的选择，任务尚未创建。请重试。', { exact: true })
   ).toBeVisible();
-  await expect(page.locator('.attachment-card')).toHaveCount(2);
+  await expect(page.locator('.attachment-list > span')).toHaveCount(2);
   fixture.state.uploadFail = false;
   await page.getByRole('button', { name: '确认并运行', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/runs/${inputRunId}$`));
@@ -231,19 +294,44 @@ test('twenty correlated calls become twenty records, not forty chat messages, wh
   await expect(page.locator('.tool-call').first().locator('.call-event')).toHaveCount(2);
   await expect(page.locator('.tool-call').first()).toContainText('fixture-call-0');
   await expect(page.locator('.context-update')).toHaveCount(2);
-  if (!(await page.getByRole('navigation', { name: '资源面板' }).isVisible())) {
-    await page.getByRole('button', { name: '打开检查器', exact: true }).click();
-  }
-  await page
-    .getByRole('navigation', { name: '资源面板' })
-    .getByRole('button', { name: '任务', exact: true })
-    .click();
+  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: /计划/ }).click();
   await page
     .locator('summary')
     .filter({ hasText: /审计记录/ })
     .click();
   await expect(page.locator('.audit-details article')).toHaveCount(events.length);
+});
+
+test('tool receipt timestamps and event IDs stay aligned on mobile', async ({ page }) => {
+  const fixture = await installAgentInputFixture(page, { theme: 'dark' });
+  const project = test.info().project.name;
+  await page.setViewportSize(
+    project.startsWith('chromium-mobile-')
+      ? { width: project === 'chromium-mobile-360' ? 360 : 390, height: 844 }
+      : { width: 1440, height: 960 }
+  );
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  await fixture.emit(activityEvents(4));
+  await page.locator('.agent-activity > summary').click();
+  const firstCall = page.locator('.tool-call').first();
+  await firstCall.locator('> summary').click();
+  const event = firstCall.locator('.call-event').first();
+  await expect(event.locator('time')).toHaveText('11:00:01');
+  await expect(event.locator('small')).toHaveText('#2');
+  const [rowBox, timeBox, summaryBox, idBox] = await Promise.all([
+    event.boundingBox(),
+    event.locator('time').boundingBox(),
+    event.locator('span').boundingBox(),
+    event.locator('small').boundingBox()
+  ]);
+  expect(rowBox && timeBox && summaryBox && idBox).toBeTruthy();
+  expect(Math.abs(timeBox!.y - idBox!.y)).toBeLessThan(2);
+  expect(idBox!.x).toBeGreaterThan(summaryBox!.x);
+  expect(idBox!.x + idBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width + 1);
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1))
+    .toBe(true);
 });
 
 test('unknown receipts remain unconfirmed and private payload fields never enter the UI', async ({
@@ -291,6 +379,62 @@ test('background activity preserves a reading position and provides an explicit 
   await expect
     .poll(() => area.evaluate((e) => e.scrollHeight - e.scrollTop - e.clientHeight))
     .toBeLessThan(10);
+});
+
+test('a long current action stays on one line without hiding the step count or disclosure icon', async ({
+  page
+}) => {
+  const fixture = await installAgentInputFixture(page);
+  const longAction =
+    '正在核验当前项目中的多个交付文件、编码格式、内容完整性以及每一个可下载结果是否都与原始任务要求保持一致';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/artigen/agent/runs/${inputRunId}`);
+  await fixture.emit([
+    {
+      ...activityEvents(1)[0]!,
+      eventId: 'long-action-summary',
+      type: 'verification.started',
+      summary: longAction,
+      data: {}
+    }
+  ]);
+
+  const summary = page.locator('.run-progress-header');
+  const action = summary.locator('strong');
+  await expect(action).toHaveText(longAction);
+  await expect(action).toHaveAttribute('title', longAction);
+  await expect(summary).toContainText('24 / 120 步');
+  await expect(summary.locator('svg')).toBeVisible();
+  for (const width of [360, 390, 768, 1024, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 844 });
+    const geometry = await summary.evaluate((element) => {
+      const rect = (selector: string) => {
+        const box = element.querySelector(selector)!.getBoundingClientRect();
+        return { x: box.x, right: box.right, height: box.height };
+      };
+      const title = element.querySelector('strong')!;
+      const summaryRect = element.getBoundingClientRect();
+      return {
+        width: summaryRect.width,
+        right: summaryRect.right,
+        height: summaryRect.height,
+        title: rect('strong'),
+        counter: rect(':scope > span'),
+        icon: rect(':scope > svg'),
+        titleOverflows: title.scrollWidth > title.clientWidth,
+        pageWidth: document.documentElement.scrollWidth
+      };
+    });
+    expect(geometry.height).toBeLessThan(64);
+    expect(geometry.title.height).toBeLessThan(24);
+    expect(geometry.title.right).toBeLessThan(geometry.counter.x);
+    expect(geometry.counter.right).toBeLessThan(geometry.icon.x);
+    expect(geometry.icon.right).toBeLessThanOrEqual(geometry.right);
+    expect(geometry.pageWidth).toBe(width);
+    if (width <= 390) expect(geometry.titleOverflows).toBe(true);
+  }
+  await page.locator('.agent-activity > summary').click();
+  await expect(page.locator('.agent-activity')).toContainText(longAction);
 });
 
 for (const width of [390, 768, 1440]) {
@@ -367,16 +511,41 @@ test('mobile approval and child controls retain their 44px targets after replaci
   expect(box!.width).toBeGreaterThanOrEqual(44);
   expect(box!.height).toBeGreaterThanOrEqual(44);
   await page.getByRole('button', { name: '打开检查器', exact: true }).click();
-  if (!(await page.getByRole('navigation', { name: '资源面板' }).isVisible())) {
-    await page.getByRole('button', { name: '打开检查器', exact: true }).click();
-  }
-  await page
-    .getByRole('navigation', { name: '资源面板' })
-    .getByRole('button', { name: '任务', exact: true })
-    .click();
+  await page.getByRole('navigation', {name:'资源面板'}).getByRole('button', {name:'任务',exact:true}).click();
   await page.getByRole('tab', { name: /子 Agent/ }).click();
   const cancel = page.getByRole('button', { name: '取消这个子 Agent', exact: true });
   const childBox = await cancel.boundingBox();
   expect(childBox!.width).toBeGreaterThanOrEqual(44);
   expect(childBox!.height).toBeGreaterThanOrEqual(44);
 });
+
+for (const language of ['zh', 'en']) {
+  test(`quote edit action keeps references and requires an explicit new quote ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installAgentInputFixture(page, { inspector: false });
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/artigen/agent'); await references(page, ['brief.txt', 'notes.txt']);
+    const request = '整理品牌网站证据，交付 PDF 报告。';
+    const input = page.getByRole('textbox', { name: zh ? '任务目标' : 'Task objective', exact: true });
+    await input.fill(request);
+    const send = page.getByRole('button', { name: zh ? '发送任务目标' : 'Send task objective', exact: true });
+    await send.click();
+    const scope = page.locator('.quote-scope');
+    const edit = scope.getByRole('button', { name: zh ? '修改要求与附件' : 'Edit request and references', exact: true });
+    await expect(scope).toContainText('brief.txt · notes.txt'); await expect(edit).toBeEnabled();
+    await expect(edit.locator('svg')).toHaveAttribute('aria-hidden', 'true');
+    expect((await edit.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await edit.focus(); await edit.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(edit).toBeFocused();
+    expect(await edit.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await edit.press('Enter');
+    await expect(input).toBeFocused(); await expect(input).toHaveValue(request);
+    await expect(page.locator('.quote-summary')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: zh ? '确认并运行' : 'Confirm and run', exact: true })).toHaveCount(0);
+    await expect(page.locator('.attachment-list > span')).toHaveCount(2);
+    expect(fixture.state.quotes).toHaveLength(1); expect(fixture.state.uploads).toBe(0); expect(fixture.state.creates).toHaveLength(0);
+    await input.fill(request + '保留引用来源。'); await send.click();
+    await expect(edit).toBeVisible(); await expect(scope).toContainText('brief.txt · notes.txt');
+    expect(fixture.state.quotes).toHaveLength(2); expect(fixture.state.uploads).toBe(0); expect(fixture.state.creates).toHaveLength(0);
+    await expect(input).toHaveValue(request + '保留引用来源。');
+  });
+}

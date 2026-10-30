@@ -15,20 +15,7 @@
         aria-controls="artigen-mobile-nav"
         @click="isMobileMenuOpen = !isMobileMenuOpen"
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          width="24"
-          height="24"
-        >
-          <line x1="3" y1="12" x2="21" y2="12"></line>
-          <line x1="3" y1="6" x2="21" y2="6"></line>
-          <line x1="3" y1="18" x2="21" y2="18"></line>
-        </svg>
+        <component :is="isMobileMenuOpen ? X : Menu" :size="20" :stroke-width="1.75" aria-hidden="true" />
       </button>
 
       <nav class="nav-links">
@@ -109,51 +96,40 @@
           ref="langContainerRef"
           class="lang-container"
           :class="{ 'mobile-hide': hideLangOnMobile }"
-          @click="isLangMenuOpen = !isLangMenuOpen"
+          @keydown.esc="closeLanguageMenu"
         >
           <button
+            ref="langButtonRef"
             class="lang-switch"
             type="button"
+            @click="isLangMenuOpen = !isLangMenuOpen"
             :aria-label="ui.languageMenu"
             :aria-expanded="isLangMenuOpen"
           >
-            <span class="globe-icon">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                width="16"
-                height="16"
-              >
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="2" y1="12" x2="22" y2="12"></line>
-                <path
-                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                ></path>
-              </svg>
-            </span>
+            <span class="globe-icon"><Globe :size="16" :stroke-width="1.75" aria-hidden="true" /></span>
             <span class="lang-label">{{ langLabel }}</span>
-            <span class="arrow" :class="{ open: isLangMenuOpen }">⌄</span>
+            <ChevronDown class="language-chevron" :class="{ open: isLangMenuOpen }" :size="16" :stroke-width="1.75" aria-hidden="true" />
           </button>
           <transition name="dropdown-fade">
             <div v-if="isLangMenuOpen" class="lang-dropdown">
-              <div
+              <button
+                type="button"
                 class="lang-option"
                 :class="{ active: currentLang === 'zh' }"
-                @click.stop="selectLanguage('zh')"
+                :aria-pressed="currentLang === 'zh'"
+                @click="selectLanguage('zh')"
               >
                 ZH · 中文
-              </div>
-              <div
+              </button>
+              <button
+                type="button"
                 class="lang-option"
                 :class="{ active: currentLang === 'en' }"
-                @click.stop="selectLanguage('en')"
+                :aria-pressed="currentLang === 'en'"
+                @click="selectLanguage('en')"
               >
                 EN · English
-              </div>
+              </button>
             </div>
           </transition>
         </div>
@@ -284,6 +260,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ChevronDown, Globe, Menu, X } from '@lucide/vue';
 import { storeToRefs } from 'pinia';
 import { useRoute, useRouter } from 'vue-router';
 import AccountPopup from './AccountPopup.vue';
@@ -308,6 +285,14 @@ const mobileMenuRef = ref<HTMLElement | null>(null);
 
 const isLangMenuOpen = ref(false);
 const langContainerRef = ref<HTMLElement | null>(null);
+const langButtonRef = ref<HTMLButtonElement | null>(null);
+const closeLanguageMenu = (event: KeyboardEvent) => {
+  if (!isLangMenuOpen.value) return;
+  event.preventDefault();
+  event.stopPropagation();
+  isLangMenuOpen.value = false;
+  langButtonRef.value?.focus();
+};
 const isMobileMenuOpen = ref(false);
 
 // Tools Dropdown
@@ -355,8 +340,7 @@ const onDocMouseDown = (e: MouseEvent) => {
 onMounted(() => {
   document.addEventListener('mousedown', onDocMouseDown);
   window.addEventListener('app-auth-changed', handleAuthChanged as EventListener);
-  // Catch a session that finished restoring between setup and subscription.
-  handleAuthChanged();
+  void refreshCredits();
 });
 
 onBeforeUnmount(() => {
@@ -366,9 +350,11 @@ onBeforeUnmount(() => {
 });
 
 const selectLanguage = (lang: 'zh' | 'en') => {
+  const returnFocus = isLangMenuOpen.value;
   languageStore.setLanguage(lang);
   isLangMenuOpen.value = false;
   isMobileMenuOpen.value = false;
+  if (returnFocus) langButtonRef.value?.focus();
 };
 
 const langLabel = computed(() => (currentLang.value === 'zh' ? 'ZH' : 'EN'));
@@ -1059,7 +1045,8 @@ watch(() => isAuthed.value, handleAuthChanged);
   justify-content: center;
   align-items: center;
   line-height: 1;
-  gap: 6px;
+  gap: 8px;
+  border-radius: 8px;
   transition: color 0.2s;
 }
 
@@ -1075,15 +1062,8 @@ watch(() => isAuthed.value, handleAuthChanged);
   color: var(--text-main, #f1f5f9);
 }
 
-.lang-switch .arrow {
-  margin-top: -11px;
-  display: inline-block;
-}
-
-.lang-switch .arrow.open {
-  margin-top: 11px;
-  transform: rotate(180deg);
-}
+.language-chevron { flex: none; transition: transform 0.2s ease; }
+.language-chevron.open { transform: rotate(180deg); }
 
 .lang-dropdown {
   position: absolute;
@@ -1093,23 +1073,34 @@ watch(() => isAuthed.value, handleAuthChanged);
   background: rgba(10, 10, 10, 0.95);
   border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
   backdrop-filter: blur(10px);
-  padding: 8px 0;
+  padding: 6px;
+  border-radius: 10px;
   z-index: 100;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 .lang-option {
-  padding: 8px 16px;
-  font-size: 12px;
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
   color: var(--text-muted, #94a3b8);
   transition: all 0.2s;
   font-family: var(--common-font);
 }
 
 .lang-option:hover {
-  background: rgba(204, 255, 0, 0.1);
-  color: var(--primary, #ccff00);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main, #f1f5f9);
 }
+
+.lang-option:focus-visible { outline: 2px solid var(--primary, #ccff00); outline-offset: -2px; }
 
 .lang-option.active {
   color: var(--primary, #ccff00);

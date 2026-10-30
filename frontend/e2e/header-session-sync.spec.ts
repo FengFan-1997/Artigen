@@ -162,7 +162,8 @@ for (const scenario of [
       return;
     }
     if (scenario === 'temporary read failure') {
-      await expect(page.locator('.workspace-notice')).toBeVisible();
+      await expect(page.locator('.conversation-load-state')).toBeVisible();
+      await expect(page.locator('.conversation-load-state [role="alert"]')).toContainText('暂时');
       await expect(page).toHaveURL(new RegExp(`/artigen/create\\?c=${id}`));
       await page.evaluate(() => window.dispatchEvent(new Event('app-auth-changed')));
     }

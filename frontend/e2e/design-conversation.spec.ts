@@ -133,6 +133,9 @@ const run = {
 };
 
 const installCommonApi = async (page: Page, authenticated = true) => {
+  await page.route('**/api/workspace/navigation*', route => route.fulfill({ json: { ok: true, projects: [], sessions: [], nextCursor: null } }));
+  await page.route('**/api/agent-runs/*/messages*', route => route.fulfill({ json: { ok: true, messages: [], nextCursor: null } }));
+  await page.route('**/api/agent-runs/*/activity*', route => route.fulfill({ json: { ok: true, events: [] } }));
   await page.route('**/api/auth/session', (route) => route.fulfill({
     status: authenticated ? 200 : 401,
     contentType: 'application/json',
@@ -205,7 +208,6 @@ const installExistingConversation = async (page: Page) => {
     }
     return route.fallback();
   });
-  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: { ok: true, events: [] } }));
   await page.route(`**/api/agent-runs/${runId}/events`, (route) => route.abort());
   await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({
     status: 200,
@@ -231,6 +233,76 @@ const installEmptyConversation = async (page: Page) => {
   });
 };
 
+for (const { theme, width } of [{ theme: 'dark', width: 1440 }, { theme: 'light', width: 390 }] as const) {
+  test(`design user bubbles share readable geometry ${theme} ${width}`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+    try {
+      const page = await context.newPage();
+      await page.addInitScript((theme) => localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, theme, rightCollapsed: true })), theme);
+      await installExistingConversation(page);
+      await page.route('**/api/workspace/navigation*', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, projects: [], sessions: [], nextCursor: null }) }));
+      const request = '请整理这次品牌发布的资料，检查标题层级、移动端布局和文件内容。\n保留原有输入与证据，完成后交付可以继续编辑的报告，不要只给一段结论。';
+      await page.route(`**/api/design-conversations/${conversationId}`, (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, conversation: { ...fullConversation, executions: [], messages: [message(userMessageId, 1, 'user', request)] } }) }));
+      await page.goto(`/artigen/create?c=${conversationId}`);
+      const bubble = page.locator('.message.user .message-body');
+      await expect(bubble).toContainText('不要只给一段结论');
+      await page.evaluate(() => document.fonts.ready);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_USER_BUBBLE_CAPTURE) await page.screenshot({ path: path.join(process.env.ARTIGEN_USER_BUBBLE_CAPTURE, `${theme}-${width}-design.png`) });
+      const geometry = await bubble.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius], padding: style.padding, width: element.getBoundingClientRect().width, overflow: element.scrollWidth > element.clientWidth + 1 };
+      });
+      expect.soft(geometry.radii).toEqual(['18px', '18px', '18px', '18px']);
+      expect.soft(geometry.padding).toBe(width === 390 ? '12px 14px' : '14px 18px');
+      expect.soft(geometry.width).toBeLessThanOrEqual(640);
+      expect.soft(geometry.overflow).toBe(false);
+      expect.soft(await bubble.locator('.workspace-markdown > p').last().evaluate((element) => getComputedStyle(element).marginBottom)).toBe('0px');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test('design conversation shares the floating return control without changing its draft', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installExistingConversation(page);
+  await page.route('**/api/workspace/navigation*', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, projects: [], sessions: [], nextCursor: null })
+  }));
+  await page.route(`**/api/design-conversations/${conversationId}`, (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, conversation: {
+      ...fullConversation,
+      executions: [],
+      messages: Array.from({ length: 20 }, (_, index) => message(`jump-${index}`, index + 1, 'assistant', `第 ${index + 1} 轮：已核对页面与交付条件。\n\n保留当前工作成果，继续检查移动端布局、内容可读性与键盘操作。`))
+    } })
+  }));
+  await page.goto(`/artigen/create?c=${conversationId}`);
+  await expect(page.locator('.message-scroll .message').last()).toContainText('第 20 轮');
+  const input = page.getByRole('textbox', { name: '设计需求', exact: true });
+  await input.fill('这份草稿保持不变');
+  const composer = page.locator('.docked-composer .composer-box');
+  const before = await composer.boundingBox();
+  const area = page.locator('.message-scroll');
+  await area.evaluate((element) => { element.scrollTop = 120; });
+  const jump = page.getByRole('button', { name: '回到底部', exact: true });
+  await expect(jump).toBeVisible();
+  const box = await jump.boundingBox();
+  expect(box!.height).toBeGreaterThanOrEqual(44);
+  expect(box!.width).toBe(box!.height);
+  const after = await composer.boundingBox();
+  expect(after!.y).toBeCloseTo(before!.y, 0);
+  await jump.focus();
+  await jump.press('Enter');
+  await expect(jump).toHaveCount(0);
+  await expect.poll(() => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(10);
+  await expect(input).toHaveValue('这份草稿保持不变');
+  await expect(input).toBeFocused();
+});
+
 test('finishes the executor readiness check when the backend is unavailable', async ({ page }) => {
   await installEmptyConversation(page);
   await page.unroute('**/api/design-assistant/status');
@@ -246,7 +318,7 @@ test('finishes the executor readiness check when the backend is unavailable', as
   await expect(page.getByText('服务暂时不可用，草稿会保留，请稍后重试。', { exact: true })).toBeVisible();
   await expect(page.getByText('正在检查执行器', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '打开检查器' }).click();
-  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('navigation', { name: '资源面板', exact: true }).getByRole('button', { name: '任务', exact: true }).click();
   await expect(page.locator('.workspace-right').getByText('暂不可用', { exact: true })).toBeVisible();
 });
 
@@ -369,7 +441,7 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await expect(page.locator('.authorization-scope')).toContainText('https://brand.example');
   await expect(page.locator('.authorization-scope')).toContainText('发布');
   await expect(page.locator('.authorization-scope')).toContainText('30 分钟');
-  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('navigation', { name: '资源面板', exact: true }).getByRole('button', { name: '任务', exact: true }).click();
   const environment = page.locator('#workspace-panel-environment');
   await expect(environment.getByText('Qwen/Qwen3-8B', { exact: true })).not.toBeVisible();
   await expect(environment.getByText('Kwai-Kolors/Kolors', { exact: true })).not.toBeVisible();
@@ -396,7 +468,6 @@ test('desktop chat makes the selected executor, plan, budget and scoped approval
   await page.getByRole('button', { name: '折叠左栏' }).click();
   await expect(page.locator('.agent-workspace-shell')).toHaveClass(/left-collapsed/);
   await expect.poll(() => page.locator('.workspace-left').evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBe(0);
-  await expect.poll(() => page.locator('.workspace-rail').evaluate(element => Math.round(element.getBoundingClientRect().width))).toBe(56);
   const expandLeft = page.getByRole('button', { name: '展开左栏' });
   await expect(expandLeft).toBeVisible();
   await expect(expandLeft).toHaveAttribute('aria-expanded', 'false');
@@ -634,7 +705,7 @@ test('long messages and verified filenames remain readable without mobile overfl
   await page.goto(`/artigen/create?c=${conversationId}`);
   await expect(page.locator('.message-body').first()).toContainText('请保留品牌调性');
   await page.getByRole('button', { name: '打开检查器' }).click();
-  await page.getByRole('navigation', { name: '资源面板' }).getByRole('button', { name: '任务', exact: true }).click();
+  await page.getByRole('navigation', { name: '资源面板', exact: true }).getByRole('button', { name: '任务', exact: true }).click();
   await page.getByRole('tab', { name: /文件/ }).click();
   await expect(page.locator('.file-panel')).toContainText(longFilename);
   await expectWorkspaceGeometry(page, { mobile: true });
@@ -673,90 +744,6 @@ test('failed executions show the error, credit disposition and an editable retry
   await expect(failure).toContainText('已释放 20 点冻结');
   await page.getByRole('button', { name: '载入原要求并修改' }).click();
   await expect(page.getByLabel(/^(?:设计需求|Design request)$/)).toHaveValue('审计品牌官网，交付 PDF 与可编辑演示文稿。');
-});
-
-test('failed planning retries the original stored request only after an explicit click', async ({ page }) => {
-  await installCommonApi(page, true);
-  const original = {
-    ...message(userMessageId, 1, 'user', '请按上一条资料的约束给我一个设计建议。'),
-    planningStatus: 'failed',
-    attachments: [{
-      clientId: 'brand-guide-1',
-      name: 'brand-guide.pdf',
-      mimeType: 'application/pdf',
-      byteSize: 128
-    }]
-  };
-  const failure = {
-    ...message('88888888-8888-4888-8888-888888888888', 2, 'assistant', '文本模型当前受到限流或容量限制。规划阶段没有创建 Agent 任务或冻结点数；请稍后重试。'),
-    kind: 'error',
-    status: 'failed',
-    retryableMessageId: userMessageId
-  };
-  const retryConversation = {
-    ...fullConversation,
-    executions: [],
-    messages: [original, failure]
-  };
-  let retryRequests = 0;
-  let ordinaryMessageRequests = 0;
-  let storedPlanningStatus: 'failed' | 'queued' = 'failed';
-  await page.route('**/api/design-conversations**', async (route) => {
-    const request = route.request();
-    const pathname = new URL(request.url()).pathname;
-    if (pathname.endsWith('/events')) return route.abort();
-    if (pathname.endsWith('/authorizations')) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ ok: true, authorizations: [] })
-      });
-    }
-    if (pathname.endsWith(`/messages/${userMessageId}/retry`) && request.method() === 'POST') {
-      retryRequests += 1;
-      storedPlanningStatus = 'queued';
-      return route.fulfill({
-        status: 202,
-        contentType: 'application/json',
-        body: JSON.stringify({ ok: true, messageId: userMessageId, status: 'queued' })
-      });
-    }
-    if (pathname.endsWith('/messages') && request.method() === 'POST') ordinaryMessageRequests += 1;
-    if (pathname === `/api/design-conversations/${conversationId}`) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          ok: true,
-          conversation: {
-            ...retryConversation,
-            messages: retryConversation.messages.map((item) => item.messageId === userMessageId
-              ? { ...item, planningStatus: storedPlanningStatus }
-              : item)
-          }
-        })
-      });
-    }
-    if (pathname === '/api/design-conversations' && request.method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ ok: true, conversations: [retryConversation] })
-      });
-    }
-    return route.fallback();
-  });
-
-  await page.goto(`/artigen/create?c=${conversationId}`);
-  await expect(page.getByText(original.text, { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '重新分析原需求' })).toBeVisible();
-  await expect(page.getByText('正在分析这条需求…')).toHaveCount(0);
-  await page.getByRole('button', { name: '重新分析原需求' }).click();
-  await expect.poll(() => retryRequests).toBe(1);
-  await expect(page.getByText('正在分析这条需求…')).toBeVisible();
-  await expect.poll(() => ordinaryMessageRequests).toBe(0);
-  await expect(page.locator('.message.user')).toHaveCount(1);
-  await expect(page.locator('.message-files')).toContainText('brand-guide.pdf');
 });
 
 test('raising an over-cap quote changes only this execution and still requires an explicit start', async ({ page }) => {
@@ -844,151 +831,4 @@ test('raising an over-cap quote changes only this execution and still requires a
   await expect(page.getByRole('button', { name: '启动任务' })).toBeVisible();
   await page.waitForTimeout(350);
   expect(taskRequests).toBe(0);
-});
-
-test('design conversation shows durable tool activity inline without opening advanced details', async ({ page }) => {
-  await installExistingConversation(page);
-  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: {
-    ok: true, events: new URL(route.request().url()).searchParams.get('after') === '0' ? [
-      { eventId: '1', runId, type: 'assistant.message', summary: '页面证据已记录，我接下来整理提案。', data: {}, createdAt: now },
-      { eventId: '2', runId, type: 'step.recorded', summary: '读取品牌首页', data: { toolName: 'browser', status: 'succeeded' }, createdAt: now }
-    ] : []
-  } }));
-  await page.goto(`/artigen/create?c=${conversationId}`);
-  const timeline = page.getByRole('region', { name: '协作记录' });
-  await expect(timeline.getByText('页面证据已记录，我接下来整理提案。')).toBeVisible();
-  await timeline.locator('summary').click();
-  await expect(timeline.getByText('读取品牌首页', { exact: true }).last()).toBeVisible();
-  await page.reload();
-  await expect(timeline.getByText('页面证据已记录，我接下来整理提案。')).toHaveCount(1);
-});
-
-test('a completed verified artifact can be selected as the next run context', async ({ page }) => {
-  await installExistingConversation(page);
-  const artifact = {
-    artifactId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    assetId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    parentArtifactId: null,
-    role: 'editable',
-    filename: 'brand-proposal.md',
-    mimeType: 'text/markdown',
-    byteSize: 2048,
-    sha256: 'c'.repeat(64),
-    version: 1,
-    verificationStatus: 'passed',
-    verification: { opened: true },
-    sources: [],
-    costCredits: 0,
-    url: `/api/assets/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb`,
-    expiresAt: '2026-09-30T08:00:00.000Z',
-    createdAt: now
-  };
-  await page.route(`**/api/agent-runs/${runId}`, (route) => route.fulfill({ json: {
-    ok: true,
-    run: { ...run, status: 'succeeded', artifacts: [artifact], sourceArtifacts: [] }
-  } }));
-  let postedBody: Record<string, unknown> | null = null;
-  await page.route(`**/api/design-conversations/${conversationId}/messages`, (route) => {
-    postedBody = route.request().postDataJSON();
-    return route.fulfill({ status: 202, json: { ok: true, message: {
-      ...message('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 3, 'user', '请基于选中的上一版文件继续修改。'),
-      sourceArtifacts: [{
-        artifactId: artifact.artifactId,
-        filename: artifact.filename,
-        mimeType: artifact.mimeType,
-        byteSize: artifact.byteSize,
-        version: artifact.version,
-        sourceRunId: runId
-      }]
-    } } });
-  });
-  await page.goto(`/artigen/create?c=${conversationId}`);
-  await page.getByRole('button', { name: '基于 brand-proposal.md · v1 继续' }).click();
-  const composer = page.getByRole('textbox', { name: '设计需求' });
-  await expect(composer).toHaveValue('请基于选中的上一版文件继续修改，并生成可下载的新版本。');
-  await composer.fill('请基于选中的上一版文件继续修改，并核对全部事实。');
-  await expect(page.locator('.selected-source-artifacts')).toContainText('brand-proposal.md · v1');
-  await page.getByRole('button', { name: '发送需求', exact: true }).click();
-  await expect(page.locator('.source-message-files')).toContainText('brand-proposal.md · v1');
-  expect(postedBody).toEqual({
-    message: '请基于选中的上一版文件继续修改，并核对全部事实。',
-    attachments: [],
-    sourceArtifactIds: [artifact.artifactId]
-  });
-});
-
-
-test('main composer steers the existing run and preserves rejected updates', async ({ page }) => {
-  await installExistingConversation(page);
-  const accepted: string[] = [];
-  let reject = true;
-  let inputId = '';
-  await page.route(`**/api/agent-runs/${runId}/input`, (route) => {
-    const body = route.request().postDataJSON();
-    expect(body.message).toBe('保留上下文，把提案改为三页。');
-    expect(body.inputId).toBeTruthy();
-    if (reject) {
-      inputId = body.inputId;
-      return route.fulfill({ status: 503, json: { ok: false, error: { code: 'TEMPORARILY_UNAVAILABLE' } } });
-    }
-    expect(body.inputId).toBe(inputId);
-    accepted.push(body.message);
-    return route.fulfill({ json: { ok: true, run } });
-  });
-  let newPlanningRequests = 0;
-  await page.route('**/api/design-conversations/*/messages', (route) => {
-    newPlanningRequests++;
-    return route.abort();
-  });
-  await page.route(`**/api/agent-runs/${runId}/history?*`, (route) => route.fulfill({ json: {
-    ok: true, events: new URL(route.request().url()).searchParams.get('after') === '0' && accepted.length ? [
-      { eventId: '1', runId, type: 'run.input_received', summary: '已收到补充信息', data: { messageText: accepted[0] }, createdAt: now }
-    ] : []
-  } }));
-  await page.goto(`/artigen/create?c=${conversationId}`);
-  const composer = page.getByRole('textbox', { name: '设计需求' });
-  await expect(composer).toHaveAttribute('placeholder', '补充当前任务的要求…');
-  await composer.fill('保留上下文，把提案改为三页。');
-  await page.getByRole('button', { name: '发送需求', exact: true }).click();
-  await expect(page.locator('.workspace-notice')).toBeVisible();
-  await expect(composer).toHaveValue('保留上下文，把提案改为三页。');
-  reject = false;
-  await page.getByRole('button', { name: '发送需求', exact: true }).click();
-  await expect(page.getByRole('region', { name: '协作记录' })).toContainText('保留上下文，把提案改为三页。');
-  await expect(composer).toHaveValue('');
-  expect(newPlanningRequests).toBe(0);
-  expect(accepted).toHaveLength(1);
-});
-
-
-test('composer tracks a real reserved scrollbar gutter and its removal', async ({ page }) => {
-  await installExistingConversation(page);
-  await page.setViewportSize({ width: 1440, height: 960 });
-  await page.goto(`/artigen/create?c=${conversationId}`);
-  await expect(page.locator('.execution-card')).toBeVisible();
-  await page.addStyleTag({ content: '.message-scroll { overflow-y: scroll !important; scrollbar-gutter: stable !important; }' });
-  const insets = () => page.locator('.message-scroll').evaluate((scroller) => {
-    const dock = document.querySelector('.docked-composer')!;
-    return {
-      actual: scroller.getBoundingClientRect().width - scroller.clientWidth,
-      applied: parseFloat(getComputedStyle(dock).paddingInlineEnd) - parseFloat(getComputedStyle(scroller).paddingInlineEnd)
-    };
-  });
-  const measured = (await insets()).actual;
-  test.info().annotations.push({ type: 'native-scrollbar-gutter', description: `${measured}px; overlay scrollbars may reserve zero` });
-  await expect.poll(async () => {
-    const value = await insets();
-    return Math.abs(value.actual - value.applied);
-  }).toBeLessThanOrEqual(1);
-  await expectWorkspaceGeometry(page);
-  // A taller window makes the actual content fit, so the native gutter
-  // disappears without assuming support for scrollbar-width:none in WebKit.
-  await page.addStyleTag({ content: '.message-scroll { overflow-y: auto !important; scrollbar-gutter: auto !important; }' });
-  await page.setViewportSize({ width: 1440, height: 2400 });
-  await expect.poll(() => page.locator('.message-scroll').evaluate(
-    (scroller) => scroller.scrollHeight <= scroller.clientHeight
-  )).toBe(true);
-  await expect.poll(async () => (await insets()).actual).toBe(0);
-  await expect.poll(async () => (await insets()).applied).toBe(0);
-  await expectWorkspaceGeometry(page);
 });

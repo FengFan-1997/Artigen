@@ -1,7 +1,10 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
-import { inputRunId } from './helpers/agentInputFixtures';
+import { installLazyDirectoryFixture } from './helpers/lazyDirectoryFixture';
+import { installLocalPermissionFixture } from './helpers/localPermissionFixture';
+import { activityEvents, inputRunId, inputConversationId } from './helpers/agentInputFixtures';
 const runPath = `/artigen/agent/runs/${inputRunId}`;
 async function resources(page: Page, mode = '文件') {
   await expect(page.locator('.workspace-topbar')).toBeVisible();
@@ -24,6 +27,294 @@ async function openBrief(page: Page) {
   await expect(page.locator('.file-toolbar')).toContainText('docs/brief.md');
 }
 
+async function expectComparisonLayout(panel: Locator) {
+  const editor = panel.locator('.workspace-code-editor');
+  await expect(editor).toBeVisible();
+  const width = await editor.evaluate((element) => element.clientWidth);
+  const expectedPanes = width < 720 ? 1 : 2;
+  await expect(editor.locator('.cm-content')).toHaveCount(expectedPanes);
+  if (expectedPanes === 1) await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+  else await expect(panel.locator('.cm-mergeView')).toBeVisible();
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`file filtering explains empty results and clears before closing the inspector ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+        const page = await context.newPage();
+        await installWorkspaceFixture(page, theme);
+        await page.goto(runPath);
+        await resources(page);
+        const tree = page.getByRole('complementary', { name: '文件目录' });
+        const search = tree.getByRole('textbox', { name: '筛选文件', exact: true });
+        await search.fill('not-a-matching-project-file');
+        await page.mouse.move(0, 0);
+        const capture = process.env.ARTIGEN_FILE_FILTER_CAPTURE;
+        if (capture) {
+          await page.screenshot({ path: `${capture}/${theme}-${width}.png`, animations: 'disabled' });
+          await tree.screenshot({ path: `${capture}/${theme}-${width}-tree.png`, animations: 'disabled' });
+        }
+        await expect(tree.getByRole('status')).toContainText('没有匹配的项目文件');
+        await expect(tree.getByRole('status')).toContainText('仅筛选已加载的项目文件');
+        await search.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', isComposing: true, bubbles: true });
+        await expect(search).toHaveValue('not-a-matching-project-file');
+        await expect(tree).toBeVisible();
+        await search.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 229, bubbles: true });
+        await expect(search).toHaveValue('not-a-matching-project-file');
+        await expect(tree).toBeVisible();
+        await search.press('Escape');
+        await expect(search).toHaveValue('');
+        await expect(search).toBeFocused();
+        await expect(tree).toBeVisible();
+        await expect(tree.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
+        await search.fill('not-a-matching-project-file');
+        const clear = tree.getByRole('button', { name: '清除文件筛选', exact: true });
+        expect(await clear.evaluate((element) => { const r = element.getBoundingClientRect(); return element.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); })).toBe(true);
+        if (width === 390) { const rect = await clear.boundingBox(); expect(rect!.width).toBeGreaterThanOrEqual(44); expect(rect!.height).toBeGreaterThanOrEqual(44); }
+        await clear.focus();
+        await clear.press('Enter');
+        await expect(search).toHaveValue('');
+        await expect(search).toBeFocused();
+        await expect(clear).toHaveCount(0);
+        await expect(tree.getByRole('status')).toHaveCount(0);
+        await expect(tree.getByRole('button', { name: 'docs', exact: true })).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+        if (width === 390) {
+          await search.press('Escape');
+          await expect(tree).toBeHidden();
+          await expect(page.getByRole('button', { name: '打开检查器', exact: true })).toBeFocused();
+        }
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`user bubbles share readable geometry for objectives and saved messages ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+        const page = await context.newPage();
+        const fixture = await installWorkspaceFixture(page, theme);
+        const request = '请整理这次品牌发布的资料，检查标题层级、移动端布局和文件内容。\n保留原有输入与证据，完成后交付可以继续编辑的报告，不要只给一段结论。';
+        fixture.state.run.objective = request;
+        await page.route(`**/api/agent-runs/${inputRunId}/messages*`, (route) => route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true, nextCursor: null, messages: [{ id: 'user-geometry', role: 'user', kind: 'text', text: request, createdAt: '2026-10-15T03:00:01Z' }] })
+        }));
+        await page.goto(runPath);
+        const objective = page.locator('.conversation-scroll > .user-message');
+        const saved = page.locator('.timeline-message.user');
+        await expect(saved.locator('.workspace-markdown')).toContainText('不要只给一段结论');
+        const area = page.locator('.conversation-scroll');
+        await area.evaluate((element) => { element.scrollTop = 0; });
+        await expect.poll(() => area.evaluate((element) => element.scrollTop)).toBe(0);
+        await page.mouse.move(0, 0);
+        const capture = process.env.ARTIGEN_USER_BUBBLE_CAPTURE;
+        if (capture) {
+          await page.screenshot({ path: `${capture}/${theme}-${width}-run.png`, animations: 'disabled' });
+          await objective.screenshot({ path: `${capture}/${theme}-${width}-objective.png`, animations: 'disabled' });
+        }
+        for (const bubble of [objective, saved]) {
+          const geometry = await bubble.evaluate((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return { radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomLeftRadius, style.borderBottomRightRadius], padding: style.padding, right: rect.right, width: rect.width, overflow: element.scrollWidth > element.clientWidth + 1 };
+          });
+          expect.soft(geometry.radii).toEqual(['18px', '18px', '18px', '18px']);
+          expect.soft(geometry.padding).toBe(width === 390 ? '12px 14px' : '14px 18px');
+          expect.soft(geometry.overflow).toBe(false);
+          expect.soft(geometry.width).toBeLessThanOrEqual(640);
+          const parentRight = await area.evaluate((element) => element.getBoundingClientRect().right);
+          expect.soft(Math.abs(geometry.right - parentRight)).toBeLessThanOrEqual(1);
+        }
+        const paragraph = saved.locator('.workspace-markdown > p').last();
+        expect.soft(await paragraph.evaluate((element) => getComputedStyle(element).marginBottom)).toBe('0px');
+        await expect(objective.locator('p')).toHaveText(request);
+        await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { (window as Window & { bubbleCopy?: string }).bubbleCopy = text; } } }));
+        const copy = saved.getByRole('button', { name: '复制消息', exact: true });
+        await copy.focus();
+        await copy.press('Enter');
+        expect(await page.evaluate(() => (window as Window & { bubbleCopy?: string }).bubbleCopy)).toBe(request);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 1024, 390]) {
+    test(`file view switch groups modes and preserves unsaved edits ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width < 1440 });
+      try {
+        const page = await context.newPage();
+        const { workspace } = await installWorkspaceFixture(page, theme);
+        await page.goto(runPath);
+        await openBrief(page);
+        const toolbar = page.locator('.file-toolbar');
+        const preview = toolbar.getByRole('button', { name: '预览', exact: true });
+        const source = toolbar.getByRole('button', { name: '源码', exact: true });
+        await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
+        await page.mouse.move(0, 0);
+        const capture = width === 1024 ? '' : process.env.ARTIGEN_FILE_VIEW_CAPTURE;
+        if (capture) await toolbar.screenshot({ path: `${capture}/${theme}-${width}-toolbar.png`, animations: 'disabled' });
+        await source.click();
+        const editor = page.getByRole('textbox', { name: '文件编辑器' });
+        await expect(editor).toBeVisible();
+        await page.mouse.move(0, 0);
+        if (capture) await page.screenshot({ path: `${capture}/${theme}-${width}-source.png`, animations: 'disabled' });
+        const group = toolbar.getByRole('group', { name: '文件显示方式' });
+        await expect(group).toBeVisible({ timeout: 500 });
+        await expect(group.getByRole('button')).toHaveCount(2);
+        await expect(group.getByRole('button', { pressed: true })).toHaveCount(1);
+        await expect(source).toHaveAttribute('aria-pressed', 'true');
+        const [previewBox, sourceBox] = await Promise.all([preview.boundingBox(), source.boundingBox()]);
+        expect(Math.abs(previewBox!.y + previewBox!.height / 2 - sourceBox!.y - sourceBox!.height / 2)).toBeLessThanOrEqual(0.5);
+        expect(previewBox!.height).toBe(sourceBox!.height);
+        if (width < 1440) {
+          expect(sourceBox!.height).toBeGreaterThanOrEqual(44);
+          expect(previewBox!.width).toBeGreaterThanOrEqual(44);
+        }
+        const [selected, inactive] = await Promise.all([
+          source.evaluate((element) => getComputedStyle(element).backgroundColor),
+          preview.evaluate((element) => getComputedStyle(element).backgroundColor)
+        ]);
+        expect(selected).not.toBe(inactive);
+        expect(await source.evaluate((element) => Number(getComputedStyle(element).fontWeight))).toBeGreaterThanOrEqual(500);
+        await editor.fill('# 未保存的检查结果\n\n保留这段中文草稿。');
+        await preview.focus();
+        await preview.press('Enter');
+        await expect(preview).toBeFocused();
+        await expect(preview).toHaveAttribute('aria-pressed', 'true');
+        await expect(group.getByRole('button', { pressed: true })).toHaveCount(1);
+        await expect(page.locator('.document-preview')).toContainText('保留这段中文草稿。');
+        await source.focus();
+        await source.press('Space');
+        await expect(source).toBeFocused();
+        await expect(source).toHaveAttribute('aria-pressed', 'true');
+        await expect(editor.locator('.cm-line')).toHaveText(['# 未保存的检查结果', '', '保留这段中文草稿。']);
+        expect(await source.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return target !== null && element.contains(target);
+        })).toBe(true);
+        expect(workspace.saves).toHaveLength(0);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 1024, 390]) {
+    test(`technical disclosures use a quiet leading caret and unique targets ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width < 1440 });
+      try {
+        const page = await context.newPage();
+        await installWorkspaceFixture(page, theme);
+        await page.goto('/artigen/agent');
+        await resources(page, '任务');
+        const summary = page.locator('.technical-details > summary').filter({ hasText: /^技术详情$/ });
+        const panel = summary.locator('..');
+        await expect(summary).toBeVisible();
+        await page.evaluate(() => document.fonts.ready);
+        await page.mouse.move(0, 0);
+        const capture = width === 1024 ? '' : process.env.ARTIGEN_TECHNICAL_DISCLOSURE_CAPTURE;
+        if (capture) await page.screenshot({ path: `${capture}/${theme}-${width}-closed.png`, animations: 'disabled' });
+        await summary.click();
+        await expect(summary).toHaveAttribute('aria-expanded', 'true');
+        await expect(panel.locator('.technical-details-content')).toContainText('@cf/openai/gpt-oss-120b');
+        await panel.scrollIntoViewIfNeeded();
+        await page.mouse.move(0, 0);
+        if (capture) await page.screenshot({ path: `${capture}/${theme}-${width}-open.png`, animations: 'disabled' });
+        const ids = await page.locator('.technical-details-content').evaluateAll((elements) => elements.map((element) => element.id));
+        expect.soft(ids.length).toBeGreaterThanOrEqual(2);
+        expect.soft(new Set(ids).size, 'each disclosure must own its content target').toBe(ids.length);
+        expect.soft(await summary.locator(':scope > :first-child').getAttribute('class')).toContain('workspace-icon');
+        expect.soft(await panel.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+        const controls = await summary.getAttribute('aria-controls');
+        expect.soft(await panel.locator('.technical-details-content').getAttribute('id')).toBe(controls);
+        const alignment = await panel.evaluate((element) => {
+          const label = element.querySelector('summary span')!.getBoundingClientRect();
+          const content = element.querySelector('.technical-details-content')!;
+          return Math.abs(label.left - content.getBoundingClientRect().left - parseFloat(getComputedStyle(content).paddingLeft));
+        });
+        expect.soft(alignment).toBeLessThanOrEqual(1);
+        const size = await summary.boundingBox();
+        if (width < 1440) expect.soft(size!.height).toBeGreaterThanOrEqual(44);
+        await summary.focus();
+        await summary.press('Space');
+        await expect(summary).toHaveAttribute('aria-expanded', 'false');
+        await expect(summary).toBeFocused();
+        await expect(panel.locator('.technical-details-content')).toBeHidden();
+        await summary.press('Enter');
+        await expect(summary).toHaveAttribute('aria-expanded', 'true');
+        await expect(panel.locator('.technical-details-content')).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+for (const theme of ['dark', 'light']) {
+  test(`narrow English file status keeps the save state together ${theme}`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    try {
+      const page = await context.newPage();
+      const { workspace } = await installWorkspaceFixture(page, theme);
+      await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+      await page.goto(runPath);
+      await page.getByRole('button', { name: 'Open inspector', exact: true }).click();
+      await page.getByRole('navigation', { name: 'Resources' }).getByRole('button', { name: 'Files', exact: true }).click();
+      const tree = page.getByRole('complementary', { name: 'File explorer' });
+      await tree.getByRole('button', { name: 'docs', exact: true }).click();
+      await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+      await page.getByRole('button', { name: 'Source', exact: true }).click();
+      await page.getByRole('textbox', { name: 'File editor', exact: true }).fill('# 保留未保存内容');
+      const footer = page.locator('.file-status');
+      await expect(footer).toContainText('Unsaved · v1');
+      const stateLines = await footer.locator(':scope > span').evaluate(element => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return new Set([...range.getClientRects()].filter(rect => rect.width > 0).map(rect => Math.round(rect.top))).size;
+      });
+      expect(stateLines).toBe(1);
+      await expect(footer.getByRole('button', { name: 'Add to chat context' })).toBeDisabled();
+      await expect(footer.getByRole('combobox', { name: 'View file versions' })).toBeVisible();
+      expect(workspace.saves).toHaveLength(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test('capabilities expose enabled and disabled values without grant controls', async ({ page }) => {
+  const { state } = await installWorkspaceFixture(page);
+  state.run.capabilities = { browser: true, files: false, shell: true };
+  await page.goto(runPath);
+  await resources(page, '任务');
+  await page.getByRole('tab', { name: '环境', exact: true }).click();
+  const list = page.locator('dl.grant-list');
+  await expect(list.locator('dt')).toHaveText(['网页操作', '文档与文件', '离线处理']);
+  await expect(list.locator('dd')).toHaveText(['已启用', '未启用', '已启用']);
+  await expect(list.locator('button,input,select')).toHaveCount(0);
+  state.run.capabilities.files = true;
+  await page.reload();
+  await expect(list.locator('dd')).toHaveText(['已启用', '已启用', '已启用']);
+  expect(state.inputs).toHaveLength(0);
+  expect(state.quotes).toHaveLength(0);
+});
+
 test('project tree, file tabs, cloud save/conflict, proposals and read-only GitHub', async ({
   page
 }) => {
@@ -31,13 +322,7 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(runPath);
-  if ((page.viewportSize()?.width || 1440) < 1440) {
-    await page.getByRole('button', { name: '打开历史', exact: true }).click();
-  }
   await expect(page.getByText('夏日视觉', { exact: true })).toBeVisible();
-  if ((page.viewportSize()?.width || 1440) < 1440) {
-    await page.getByRole('button', { name: '关闭历史', exact: true }).click();
-  }
   await expect(page.locator('.run-conversation-stream')).toContainText('本轮重点');
   await openBrief(page);
   await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
@@ -46,43 +331,819 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await expect(editor).toBeVisible();
   await editor.fill('# 修改后的标题\n\n保存这份报告。');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.locator('.resource-workspace').getByRole('status')).toContainText('文件已保存');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('文件已保存');
   expect(workspace.saves).toHaveLength(1);
-  await expect(
-    page
-      .getByRole('combobox', { name: '查看文件版本' })
-      .getByRole('option', { name: 'v2', exact: true })
-  ).toHaveCount(1);
   workspace.conflict = true;
   await editor.fill('# 保留冲突草稿');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.locator('.resource-workspace').getByRole('status')).toContainText('文件已在其他位置修改');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('文件已在其他位置修改');
   await expect(editor).toContainText('保留冲突草稿');
   workspace.conflict = false;
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await resources(page, '变更');
-  await page.getByText('比较来源', { exact: true }).click();
-  await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
-  await expect(page.locator('.workspace-diff-view')).toBeVisible();
-  await expect(
-    page.locator('.diff-line-content,.diff-line-new-content,.diff-line-old-content').first()
-  ).toBeVisible();
+  await page.getByLabel('比较来源').selectOption('66666666-6666-4666-8666-666666666666');
+  await expectComparisonLayout(page.locator('.changes-panel'));
   await page.getByRole('button', { name: '应用到当前文件', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销最近一次应用' })).toBeVisible();
   await page.getByRole('button', { name: '撤销最近一次应用' }).click();
-  await resources(page, '文件');
-  await page.getByRole('combobox', { name: '查看文件版本' }).selectOption('1');
-  await expect(
-    page.getByText('历史版本与当前已保存内容的差异；恢复会保存为新版本。', { exact: true })
-  ).toBeVisible();
-  await expect(page.getByRole('button', { name: '恢复此版本', exact: true })).toBeVisible();
-  await expect(page.getByText('Agent 候选修改，尚未写入文件。', { exact: true })).toHaveCount(0);
   await resources(page, 'GitHub');
   await page.getByRole('button', { name: /完善首页按钮/ }).click();
   await page.getByText('src/Home.vue', { exact: false }).click();
   await expect(page.locator('.github-workspace pre')).toContainText('开始创作');
   expect(workspace.githubRequests.every((m) => m === 'GET')).toBe(true);
   expect(errors).toEqual([]);
+});
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`file tabs preserve unsaved state and quiet close affordances ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      const { workspace } = await installWorkspaceFixture(page, theme);
+      const name = 'brand-launch-review-and-delivery-checklist.md';
+      workspace.files[0].path = `docs/${name}`;
+      await page.goto(runPath);
+      await resources(page);
+      const tree = page.getByRole('complementary', { name: '文件目录' });
+      await tree.getByRole('button', { name: 'docs', exact: true }).click();
+      await tree.getByRole('button', { name, exact: true }).click();
+      await page.getByRole('button', { name: '源码', exact: true }).click();
+      const draft = '# 已检查首页\n\n这份修改尚未保存。';
+      await page.getByRole('textbox', { name: '文件编辑器' }).fill(draft);
+      if (!(await tree.isVisible())) await page.getByRole('button', { name: '显示目录树' }).click();
+      await tree.getByRole('button', { name: 'src', exact: true }).click();
+      await tree.getByRole('button', { name: 'theme.css', exact: true }).click();
+      const tabs = page.getByRole('tablist', { name: '已打开文件' });
+      const dirtyTab = tabs.getByRole('tab', { name: new RegExp(name) });
+      const dirtyRow = dirtyTab.locator('..');
+      const cleanTab = tabs.getByRole('tab', { name: 'theme.css', exact: true });
+      await expect(cleanTab).toHaveAttribute('aria-selected', 'true');
+      await page.mouse.move(0, 0);
+      const capture = process.env.ARTIGEN_FILE_TABS_CAPTURE;
+      if (capture) {
+        await page.screenshot({ path: `${capture}/${theme}-${width}.png`, animations: 'disabled' });
+        await page.locator('.file-tabs-bar').screenshot({ path: `${capture}/${theme}-${width}-detail.png`, animations: 'disabled' });
+      }
+      // Capture each unchanged baseline before asserting the new state contract.
+      const activeClose = cleanTab.locator('..').getByRole('button', { name: '关闭 theme.css', exact: true });
+      expect(await activeClose.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return rect.left >= 0 && rect.right <= innerWidth && hit !== null && element.contains(hit);
+      })).toBe(true);
+      await expect(dirtyTab).toHaveAttribute('title', `docs/${name}`);
+      await expect(dirtyTab).toHaveAccessibleName(`${name}（未保存）`);
+      await expect(dirtyRow.locator('.file-tab-dirty')).toBeVisible();
+      const close = dirtyRow.getByRole('button', { name: new RegExp(`关闭 ${name}`) });
+      const label = dirtyTab.locator('.file-tab-name');
+      expect(await label.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+      const marker = await dirtyRow.locator('.file-tab-dirty').boundingBox();
+      const closeBox = await close.boundingBox();
+      expect(marker).not.toBeNull();
+      expect(closeBox).not.toBeNull();
+      expect(Math.abs(marker!.y + marker!.height / 2 - closeBox!.y - closeBox!.height / 2)).toBeLessThanOrEqual(0.5);
+      if (width === 390) {
+        expect(closeBox!.width).toBeGreaterThanOrEqual(44);
+        expect(closeBox!.height).toBeGreaterThanOrEqual(44);
+        expect(await close.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+      } else {
+        expect(await close.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+        await dirtyTab.hover();
+        expect(await close.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+        await expect(dirtyRow.locator('.file-tab-dirty')).toBeVisible();
+      }
+      // An inactive clean tab stays quiet, but keyboard focus reveals its close button.
+      await dirtyTab.click();
+      const cleanClose = cleanTab.locator('..').getByRole('button', { name: '关闭 theme.css', exact: true });
+      await page.mouse.move(0, 0);
+      if (width !== 390) expect(await cleanClose.evaluate((element) => getComputedStyle(element).opacity)).toBe('0');
+      await cleanClose.focus();
+      await expect(cleanClose).toBeFocused();
+      expect(await cleanClose.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+      await cleanClose.press('Enter');
+      await expect(tabs.getByRole('tab')).toHaveCount(1);
+      await expect(dirtyTab).toBeFocused();
+      await expect(page.getByRole('textbox', { name: '文件编辑器' }).locator('.cm-line')).toHaveText(draft.split('\n'));
+      // Rejecting discard must retain both the file and its exact draft.
+      page.once('dialog', (dialog) => dialog.dismiss());
+      await dirtyTab.press('Delete');
+      await expect(dirtyTab).toBeVisible();
+      await expect(page.getByRole('textbox', { name: '文件编辑器' }).locator('.cm-line')).toHaveText(draft.split('\n'));
+      page.once('dialog', (dialog) => dialog.accept());
+      await close.focus();
+      await close.press('Enter');
+      await expect(tabs.getByRole('tab')).toHaveCount(0);
+      await expect(page.getByRole('button', { name: /目录树/ })).toBeFocused();
+      expect(workspace.saves).toHaveLength(0);
+      expect(errors).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+test('file tree separates folder disclosure from its icon and marks the active file', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await installWorkspaceFixture(page);
+  await page.goto(runPath);
+  await expect(page.locator('.run-conversation-stream')).toContainText('本轮重点');
+  await openBrief(page);
+
+  const tree = page.getByRole('complementary', { name: '文件目录' });
+  const folder = tree.getByRole('button', { name: 'docs', exact: true });
+  const file = tree.getByRole('button', { name: 'brief.md', exact: true });
+
+  await expect(folder).toHaveAttribute('aria-expanded', 'true');
+  await expect(folder.locator('.workspace-icon')).toHaveCount(2);
+  await expect(file).toHaveAttribute('aria-current', 'page');
+  await expect(file.locator('.file-tree-caret')).toBeEmpty();
+  await expect(file.locator('.file-tree-kind')).toBeVisible();
+  expect(await file.evaluate((element) => getComputedStyle(element).display)).toBe('grid');
+  const [activeIconColor, folderIconColor] = await Promise.all([
+    file.locator('.file-tree-kind').evaluate((element) => getComputedStyle(element).color),
+    folder.locator('.file-tree-kind').evaluate((element) => getComputedStyle(element).color)
+  ]);
+  expect(activeIconColor).not.toBe(folderIconColor);
+});
+
+test('selected project history item is visible and announced in light desktop and dark mobile history', async ({
+  browser
+}) => {
+  for (const [theme, viewport] of [
+    ['light', { width: 1440, height: 960 }],
+    ['dark', { width: 390, height: 844 }]
+  ] as const) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    await installWorkspaceFixture(page, theme);
+    await page.goto(runPath);
+    if (viewport.width < 800) await page.getByRole('button', { name: '打开历史' }).click();
+
+    const row = page.locator('.project-navigation .session-row.selected');
+    const link = row.getByRole('link', { name: '整理网站审查报告' });
+    await expect(link).toHaveAttribute('aria-current', 'page');
+    await expect(link).toHaveAttribute('title', '整理网站审查报告');
+    expect(await link.evaluate((element) => getComputedStyle(element).fontWeight)).toBe('560');
+    const [rowBackground, panelBackground] = await Promise.all([
+      row.evaluate((element) => getComputedStyle(element).backgroundColor),
+      page.locator('.workspace-left').evaluate((element) => getComputedStyle(element).backgroundColor)
+    ]);
+    expect(rowBackground).not.toBe(panelBackground);
+    await context.close();
+  }
+});
+
+test('Markdown table headings stay distinct in dark desktop and light mobile workspaces', async ({
+  browser
+}) => {
+  for (const [theme, viewport] of [
+    ['dark', { width: 1440, height: 960 }],
+    ['light', { width: 390, height: 844 }]
+  ] as const) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    const fixture = await installWorkspaceFixture(page, theme);
+    await page.goto(runPath);
+    await fixture.emit();
+    await openBrief(page);
+
+    const table = page.locator('.document-preview .workspace-markdown table');
+    const heading = table.locator('thead th').first();
+    const cell = table.locator('tbody td').first();
+    await expect(heading).toBeVisible();
+    const styles = await heading.evaluate((element) => {
+      const foreground = getComputedStyle(element).color;
+      const background = getComputedStyle(element).backgroundColor;
+      const bodyBackground = getComputedStyle(
+        element.closest('table')!.querySelector('tbody td')!
+      ).backgroundColor;
+      const luminance = (color: string) => {
+        const [r, g, b] = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((value) => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const foregroundLuminance = luminance(foreground);
+      const backgroundLuminance = luminance(background);
+      return {
+        background,
+        bodyBackground,
+        fontWeight: Number(getComputedStyle(element).fontWeight),
+        contrast:
+          (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) /
+          (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+      };
+    });
+    expect(styles.background).not.toBe(styles.bodyBackground);
+    expect(styles.fontWeight).toBeGreaterThanOrEqual(600);
+    expect(styles.contrast).toBeGreaterThanOrEqual(4.5);
+    await expect(cell).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true
+    );
+    await context.close();
+  }
+});
+
+test('Markdown code stays readable while long paths wrap and fenced lines scroll locally', async ({ browser }) => {
+  const longPath = `projects/${'brand-launch-'.repeat(8)}report.md`;
+  const listPath = `docs/${'reference/'.repeat(10)}launch-notes.md`;
+  const command = 'const report = await generateReport({ projectId: "brand-launch", outputPath: "outputs/delivery/report.md", includeEvidence: true });';
+  const text = ['# 文件与执行参数', '', '继续使用 `projectId` 和 `draftVersion` 关联本次任务。保存后运行 `pnpm run build`，再打开产物检查结果。', '', `产物路径：\`${longPath}\`。`, '', '```ts', command, '```', '', '代码中的空格和换行应保持原样；长代码行在代码区域内滚动。', '', `- 最后核对输出路径 \`${listPath}\` 并整理交付。`].join('\n');
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 360, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const { workspace } = await installWorkspaceFixture(page, theme);
+      Object.assign(workspace.files[0], { text, byteSize: Buffer.byteLength(text), sha256: createHash('sha256').update(text).digest('hex') });
+      await page.goto(runPath);
+      await openBrief(page);
+      const markdown = page.locator('.document-preview .workspace-markdown');
+      await expect(markdown).toContainText('文件与执行参数');
+      await expect(markdown.locator('p code')).toHaveText(['projectId', 'draftVersion', 'pnpm run build', longPath]);
+      await expect(markdown.locator('li code')).toHaveText(listPath);
+      expect(await markdown.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      const fenced = markdown.locator('pre code');
+      expect(await fenced.textContent()).toBe(`${command}\n`);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_INLINE_CODE_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_INLINE_CODE_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      const pre = markdown.locator('pre');
+      const scrollLeft = await pre.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+        const offset = element.scrollLeft;
+        element.scrollLeft = 0;
+        return offset;
+      });
+      expect(scrollLeft).toBeGreaterThan(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      const documentOverflow = await page.locator('.document-preview').evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+      expect(documentOverflow).toBe(false);
+      expect.soft(await fenced.evaluate((element) => parseFloat(getComputedStyle(element).fontSize)), `${theme} ${viewport.width}px fenced code must remain readable`).toBeGreaterThanOrEqual(12);
+      await context.close();
+    }
+  }
+});
+
+test('image zoom controls remain reachable while the enlarged canvas scrolls', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      await installWorkspaceFixture(page, theme);
+      await page.goto(runPath);
+      await resources(page);
+      const tree = page.getByRole('complementary', { name: '文件目录' });
+      await tree.getByRole('button', { name: 'outputs', exact: true }).click();
+      await tree.getByRole('button', { name: 'preview.png', exact: true }).click();
+      const viewer = page.locator('.image-viewer');
+      const image = viewer.locator('img');
+      await expect(image).toBeVisible();
+      await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+      const increase = viewer.getByRole('button', { name: '放大图片', exact: true });
+      const decrease = viewer.getByRole('button', { name: '缩小图片', exact: true });
+      const reset = viewer.getByRole('button').nth(1);
+      for (let i = 0; i < 12; i++) await increase.click();
+      await expect(reset).toHaveText('400%');
+      const canvas = viewer.locator('.image-canvas');
+      const scroll = await canvas.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+        element.scrollLeft = element.scrollWidth;
+        return { top: element.scrollTop, left: element.scrollLeft };
+      });
+      expect(scroll.top).toBeGreaterThan(0);
+      expect(scroll.left).toBeGreaterThan(0);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_IMAGE_ZOOM_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_IMAGE_ZOOM_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      const reachable = await reset.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      });
+      expect.soft(reachable, `${theme} ${viewport.width}px zoom reset remains reachable after scrolling`).toBe(true);
+      expect.soft(await increase.isDisabled(), '400% disables zoom in').toBe(true);
+      await reset.click();
+      await expect(reset).toHaveText('100%');
+      await expect(reset).toHaveAccessibleName('适合宽度，当前 100%');
+      await expect.poll(() => canvas.evaluate((element) => element.scrollLeft)).toBe(0);
+      await expect.poll(() => canvas.evaluate((element) => element.scrollTop)).toBe(0);
+      for (let i = 0; i < 3; i++) await decrease.click();
+      await expect(reset).toHaveText('25%');
+      expect.soft(await decrease.isDisabled(), '25% disables zoom out').toBe(true);
+      await reset.click();
+      await expect(reset).toHaveText('100%');
+      if (viewport.width < 800) for (const button of [increase, decrease, reset]) {
+        const rect = await button.boundingBox();
+        expect(rect!.width).toBeGreaterThanOrEqual(44);
+        expect(rect!.height).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await context.close();
+    }
+  }
+});
+
+test('GitHub record rows keep long titles compact with hover feedback and keyboard return', async ({ browser }) => {
+  const title = '完善项目首页、移动端购买流程与登录后草稿恢复，保留用户上下文并补齐完整回归证据'.repeat(3);
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      await installWorkspaceFixture(page, theme);
+      const requests: string[] = [];
+      await page.route('**/github/pulls?*', (route) => {
+        requests.push(route.request().method());
+        return route.fulfill({ json: { items: [
+          { number: 12, title, state: 'open', url: 'https://github.com/example/brand-site/pull/12', updatedAt: '2026-10-15T03:00:10Z' },
+          { number: 11, title: '修复移动端菜单与文件预览', state: 'closed', url: 'https://github.com/example/brand-site/pull/11', updatedAt: '2026-10-14T03:00:10Z' }
+        ], hasMore: false } });
+      });
+      await page.goto(runPath);
+      await resources(page, 'GitHub');
+      const row = page.locator('.git-record').first();
+      const heading = row.locator('b');
+      await expect(heading).toHaveText(title);
+      const idle = await row.evaluate((element) => getComputedStyle(element).backgroundColor);
+      await row.hover();
+      const hover = await row.evaluate((element) => getComputedStyle(element).backgroundColor);
+      if (process.env.ARTIGEN_GITHUB_ROW_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_GITHUB_ROW_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(hover, `${theme} ${viewport.width}px record hover must be visible`).not.toBe(idle);
+      expect.soft(await heading.getAttribute('title'), 'truncated record keeps complete native title').toBe(title);
+      const geometry = await row.evaluate((element) => {
+        const heading = element.querySelector('b')!;
+        const icon = element.querySelector('svg')!.getBoundingClientRect();
+        const text = heading.getBoundingClientRect();
+        return { height: element.getBoundingClientRect().height, titleHeight: text.height, lineHeight: parseFloat(getComputedStyle(heading).lineHeight), alignment: Math.abs((icon.y + icon.height / 2) - (text.y + text.height / 2)) };
+      });
+      expect.soft(geometry.height).toBeLessThanOrEqual(68);
+      expect.soft(geometry.titleHeight).toBeLessThanOrEqual(geometry.lineHeight + 1);
+      expect.soft(geometry.alignment).toBeLessThanOrEqual(1);
+      await row.focus();
+      await expect(row).toBeFocused();
+      await page.keyboard.press('Enter');
+      const back = page.getByRole('button', { name: '返回记录', exact: true });
+      await expect(back).toBeFocused();
+      await back.click();
+      await expect(page.locator('.git-record').first()).toBeFocused();
+      expect(requests).toEqual(['GET']);
+      await page.locator('.github-records nav').getByRole('button', { name: '提交', exact: true }).click();
+      await expect(page.locator('.git-record b')).toHaveText(['修复登录后草稿恢复']);
+      await expect(page.locator('.git-record small')).toContainText('aaaaaaaa');
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      if (viewport.width < 800) expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await context.close();
+    }
+  }
+});
+
+test('history search recovers from no results without closing the mobile drawer', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      await installWorkspaceFixture(page, theme);
+      await page.goto(runPath);
+      if (viewport.width < 1440) await page.getByRole('button', { name: '打开历史', exact: true }).click();
+      const history = page.locator('#workspace-history-panel');
+      const search = history.locator('input[name="workspace-search"]');
+      await expect(search).toHaveAccessibleName('搜索任务');
+      const current = history.getByRole('link', { name: '整理网站审查报告', exact: true });
+      await expect(current).toBeVisible();
+      await search.fill('没有匹配的任务');
+      await expect(current).toHaveCount(0);
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_HISTORY_SEARCH_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_HISTORY_SEARCH_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(await history.getByText('已加载内容中没有匹配项', { exact: true }).count()).toBe(1);
+      const clear = history.getByRole('button', { name: '清除任务搜索', exact: true });
+      expect.soft(await clear.count(), 'explicit accessible clear action exists').toBe(1);
+      await expect(clear).toBeVisible();
+      if (viewport.width < 800) {
+        const rect = await clear.boundingBox();
+        expect(rect!.width).toBeGreaterThanOrEqual(43.9);
+        expect(rect!.height).toBeGreaterThanOrEqual(43.9);
+      }
+      await clear.click();
+      await expect(search).toHaveValue('');
+      await expect(search).toBeFocused();
+      await expect(current).toBeVisible();
+      await expect(clear).toHaveCount(0);
+      await search.fill('另一个不存在的任务');
+      await search.dispatchEvent('keydown', { key: 'Escape', code: 'Escape', isComposing: true, bubbles: true });
+      await expect(search).toHaveValue('另一个不存在的任务');
+      await expect(search).toBeFocused();
+      await search.press('Escape');
+      expect.soft(await search.inputValue(), 'first Escape clears the search').toBe('');
+      expect.soft(await search.evaluate((element) => document.activeElement === element), 'first Escape keeps search focus').toBe(true);
+      expect.soft(await history.evaluate((element) => !element.inert), 'first Escape keeps history available').toBe(true);
+      if (viewport.width < 1440) {
+        await page.keyboard.press('Escape');
+        await expect(page.getByRole('button', { name: '打开历史', exact: true })).toBeFocused();
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await context.close();
+    }
+  }
+});
+
+test('run plan reads as a numbered checklist with aligned markers and a completion summary', async ({ browser }) => {
+  const labels = ['阅读品牌资料并确认交付范围', '整理官网页面与竞品参考画面', '检查移动端从商品详情、购物车到确认订单的完整购买路径，并记录每个关键步骤的证据', '制作可编辑提案与设计说明', '验证报告和交付文件'];
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const fixture = await installWorkspaceFixture(page, theme);
+      fixture.state.run.progress.plan = labels.map((label, index) => ({ label, status: index < 2 ? 'completed' : index === 2 ? 'in_progress' : 'pending' }));
+      await page.goto(runPath);
+      await fixture.emit();
+      await resources(page, '任务');
+      await page.getByRole('tab', { name: '计划', exact: true }).click();
+      const panel = page.getByRole('tabpanel', { name: '计划', exact: true });
+      const plan = panel.locator('.execution-plan');
+      await expect(plan.locator('b').filter({ hasText: labels[0] })).toBeVisible();
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_PLAN_LIST_CAPTURE) await page.screenshot({ path: `${process.env.ARTIGEN_PLAN_LIST_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(await plan.getByRole('list', { name: '执行计划', exact: true }).count(), 'plan has ordered list semantics').toBe(1);
+      expect.soft(await plan.getByText('2 / 5 已完成', { exact: true }).count()).toBe(1);
+      expect.soft(await plan.locator('.plan-marker .workspace-icon').count(), 'completed and current steps use shared icons').toBe(3);
+      const current = plan.locator('[aria-current="step"]');
+      expect.soft(await current.count(), 'current step is announced').toBe(1);
+      await expect(current).toBeVisible();
+      {
+        await expect(current).toContainText(labels[2]);
+        await expect(current).toContainText('正在执行');
+        const alignment = await current.evaluate((element) => {
+          const marker = element.querySelector('.plan-marker')!.getBoundingClientRect();
+          const title = element.querySelector('b')!.getBoundingClientRect();
+          return Math.abs(marker.y - title.y);
+        });
+        expect(alignment).toBeLessThanOrEqual(1);
+      }
+      const last = plan.locator('li').last();
+      await expect(last).toContainText(labels[4]);
+      await expect(last).toContainText('待执行');
+      expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await page.locator('.audit-details > summary').click();
+      await expect(page.locator('.audit-details article').first()).toBeVisible();
+      await context.close();
+    }
+  }
+});
+
+test('stop confirmation stays explicit and readable without submitting before confirmation', async ({ browser }) => {
+  for (const theme of ['dark', 'light']) {
+    for (const viewport of [{ width: 1440, height: 960 }, { width: 390, height: 844 }, { width: 360, height: 800 }]) {
+      const context = await browser.newContext({ viewport });
+      const page = await context.newPage();
+      const fixture = await installWorkspaceFixture(page, theme);
+      let cancellations = 0;
+      await page.route(`**/api/agent-runs/${inputRunId}/cancel`, (route) => {
+        expect(route.request().method()).toBe('POST');
+        cancellations++;
+        fixture.state.run.status = 'cancelled';
+        return route.fulfill({ json: { ok: true, run: fixture.state.run } });
+      });
+      await page.goto(runPath);
+      const runMenu = page.locator('details.run-menu');
+      await runMenu.locator('summary').click();
+      await runMenu.getByRole('button', { name: '结束任务并结算', exact: true }).click();
+      const confirm = runMenu.getByRole('button', { name: '确认结束并结算', exact: true });
+      await expect(confirm).toBeVisible();
+      expect(cancellations).toBe(0);
+      await expect(page.locator('.run-notice')).toContainText('再次点击确认');
+      await page.mouse.move(0, 0);
+      if (process.env.ARTIGEN_STOP_CONFIRM_CAPTURE && viewport.width !== 360) await page.screenshot({ path: `${process.env.ARTIGEN_STOP_CONFIRM_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
+      expect.soft(await confirm.locator('span').isVisible(), `${theme} ${viewport.width}px confirmation must use visible words`).toBe(true);
+      const contrast = await confirm.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const luminance = (color: string) => {
+          const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map((value) => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        };
+        const foreground = luminance(style.color), background = luminance(style.backgroundColor);
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+      expect.soft(contrast, `${theme} ${viewport.width}px confirm text contrast`).toBeGreaterThanOrEqual(4.5);
+      expect(await confirm.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
+      })).toBe(true);
+      if (viewport.width < 800) {
+        const rect = await confirm.boundingBox();
+        expect(rect!.height).toBeGreaterThanOrEqual(44);
+        expect(rect!.width).toBeGreaterThanOrEqual(44);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await confirm.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('.run-ended-bar')).toContainText('任务已停止');
+      expect(cancellations).toBe(1);
+      await context.close();
+    }
+  }
+});
+
+for (const theme of ['dark', 'light']) {
+  for (const width of [1440, 390]) {
+    test(`conversation jump floats without shifting the composer ${theme} ${width}`, async ({ browser }) => {
+      const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 960 }, isMobile: width === 390, hasTouch: width === 390 });
+      try {
+        const page = await context.newPage();
+        const fixture = await installWorkspaceFixture(page, theme);
+        await page.route(`**/api/agent-runs/${inputRunId}/messages*`, (route) => route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true, nextCursor: null, messages: Array.from({ length: 8 }, (_, index) => ({
+            id: `jump-message-${index}`, role: 'assistant', kind: 'commentary',
+            text: `## 第 ${index + 1} 轮检查\n\n已核对页面结构、文件内容与交付条件。保留当前工作成果，继续检查移动端布局。\n\n- 检查标题与操作的层级\n- 确保键盘可以完成所有操作\n- 保留任务范围和原有文件`,
+            createdAt: new Date(Date.UTC(2026, 9, 15, 3, 0, index)).toISOString()
+          })) })
+        }));
+        await page.goto(runPath);
+        await expect(page.locator('.timeline-message')).toHaveCount(8);
+        await expect(page.locator('.timeline-message').last()).toContainText('确保键盘可以完成所有操作');
+        await page.evaluate(() => document.fonts.ready);
+        const area = page.locator('.conversation-scroll');
+        const composer = page.locator('.run-composer .composer-box');
+        const input = page.getByRole('textbox', { name: '补充要求' });
+        // Keep the composer untouched while a background update arrives.
+        await area.evaluate((element) => { element.scrollTop = 240; });
+        await expect.poll(() => area.evaluate((element) => element.scrollTop)).toBe(240);
+        const before = await composer.boundingBox();
+        const readingHeight = await area.evaluate((element) => element.clientHeight);
+        const event = activityEvents(1)[0]!;
+        await fixture.emit([{ ...event, eventId: '901', type: 'verification.started', summary: '开始核验交付文件。' }]);
+        const jump = page.getByRole('button', { name: '有新内容 · 回到底部', exact: true });
+        await expect(jump).toBeVisible();
+        await page.mouse.move(0, 0);
+        const capture = process.env.ARTIGEN_CONVERSATION_JUMP_CAPTURE;
+        if (capture) {
+          await page.screenshot({ path: `${capture}/${theme}-${width}.png`, animations: 'disabled' });
+          const center = await page.locator('.workspace-main').boundingBox();
+          await page.screenshot({ path: `${capture}/${theme}-${width}-detail.png`, clip: { x: center!.x, y: center!.y + center!.height - 300, width: center!.width, height: 300 }, animations: 'disabled' });
+        }
+        await expect(jump).toHaveCSS('position', 'absolute', { timeout: 500 });
+        const after = await composer.boundingBox();
+        expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+        expect(Math.abs(after!.height - before!.height)).toBeLessThanOrEqual(1);
+        expect(await area.evaluate((element) => element.clientHeight)).toBe(readingHeight);
+        expect(await area.evaluate((element) => element.scrollTop)).toBe(240);
+        await expect(jump.locator('.workspace-icon')).toBeVisible();
+        const box = await jump.boundingBox();
+        expect(box!.height).toBeGreaterThanOrEqual(44);
+        expect(await jump.evaluate((element) => {
+          const rect = element.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return target !== null && element.contains(target);
+        })).toBe(true);
+        await jump.focus();
+        await jump.press('Enter');
+        await expect.poll(() => area.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)).toBeLessThan(10);
+        await expect(jump).toHaveCount(0);
+        await expect(input).toBeFocused();
+        if (capture) await page.screenshot({ path: `${capture}/focus-${theme}-${width}.png`, animations: 'disabled' });
+        await area.evaluate((element) => { element.scrollTop = 240; });
+        const plain = page.getByRole('button', { name: '回到底部', exact: true });
+        await expect(plain).toBeVisible();
+        await expect(plain.locator('span')).toHaveCount(0);
+        const round = await plain.boundingBox();
+        expect(round!.width).toBe(round!.height);
+        if (capture) {
+          const center = await page.locator('.workspace-main').boundingBox();
+          await page.screenshot({ path: `${capture}/reading-${theme}-${width}.png`, clip: { x: center!.x, y: center!.y + center!.height - 300, width: center!.width, height: 300 }, animations: 'disabled' });
+        }
+        await plain.focus();
+        await plain.press('Space');
+        await expect(plain).toHaveCount(0);
+        await expect(input).toHaveValue('');
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+}
+
+test('public run messages expose a keyboard and touch friendly copy action with honest feedback', async ({ page, browser }) => {
+  await installWorkspaceFixture(page);
+  await page.goto(runPath);
+  const messages = page.locator('.run-conversation-stream .timeline-message.assistant');
+  await expect(messages).toHaveCount(2);
+  const copy = page.getByRole('button', { name: '复制消息' }).nth(1);
+  await copy.focus();
+  await expect(copy).toBeFocused();
+  await expect.poll(() => copy.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as Window & { copiedMessage?: string }).copiedMessage = text;
+        }
+      }
+    });
+  });
+  await copy.click();
+  await expect(page.locator('.copy-announcement')).toHaveText('消息已复制');
+  expect(await page.evaluate(() => (window as Window & { copiedMessage?: string }).copiedMessage)).toBe(
+    '已整理初稿。可以在右侧阅读 [审查报告](brief.md)，查看源码或对比下一版。\n\n| 优先级 | 问题 |\n| --- | --- |\n| P1 | 登录后恢复当前任务 |\n| P2 | 主按钮层级不清晰 |'
+  );
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('clipboard denied'); } }
+    });
+  });
+  await copy.click();
+  await expect(page.locator('.copy-announcement')).toHaveText(
+    '复制失败，请检查剪贴板权限后重试'
+  );
+
+  const mobileContext = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true
+  });
+  const mobilePage = await mobileContext.newPage();
+  await installWorkspaceFixture(mobilePage, 'light');
+  await mobilePage.goto(runPath);
+  const mobileCopy = mobilePage.getByRole('button', { name: '复制消息' }).first();
+  await expect(mobileCopy).toBeVisible();
+  const target = await mobileCopy.boundingBox();
+  expect(target?.width).toBeGreaterThanOrEqual(44);
+  expect(target?.height).toBeGreaterThanOrEqual(44);
+  await expect.poll(() => mobileCopy.evaluate((element) => getComputedStyle(element).opacity)).toBe('1');
+  await mobileContext.close();
+
+  const tabletContext = await browser.newContext({ viewport: { width: 1024, height: 900 }, isMobile: true, hasTouch: true });
+  try {
+    const tabletPage = await tabletContext.newPage();
+    await installWorkspaceFixture(tabletPage, 'light');
+    await tabletPage.goto(runPath);
+    const tabletCopy = tabletPage.getByRole('button', { name: '复制消息' }).first();
+    await expect(tabletCopy).toBeVisible();
+    await expect.poll(() => tabletCopy.evaluate(el => getComputedStyle(el).opacity)).toBe('1');
+    expect(await tabletCopy.evaluate(el => getComputedStyle(el).pointerEvents)).toBe('auto');
+    const rect = await tabletCopy.boundingBox();
+    expect(rect!.width).toBeGreaterThanOrEqual(44);
+    expect(rect!.height).toBeGreaterThanOrEqual(44);
+    await tabletPage.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => {} } }));
+    await tabletCopy.tap();
+    await expect(tabletPage.locator('.copy-announcement')).toHaveText('消息已复制');
+  } finally { await tabletContext.close(); }
+});
+
+test('GitHub type loading errors stay distinct from an empty list and refresh retries', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  let fail = true, reads = 0;
+  await page.route('**/github/commits?*', (route) => {
+    reads++;
+    expect(route.request().method()).toBe('GET');
+    return fail
+      ? route.fulfill({ status: 503, json: { ok: false, error: { code: 'GITHUB_UNAVAILABLE' } } })
+      : route.fallback();
+  });
+  await page.goto(runPath);
+  await resources(page, 'GitHub');
+  const panel = page.locator('.github-workspace');
+  const records = panel.locator('.github-records');
+  await expect(records.locator('.git-record')).toHaveCount(1);
+  await records.locator('nav').getByRole('button', { name: '提交', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('读取失败');
+  await expect(records.locator('.git-record')).toHaveCount(0);
+  await expect(records.locator('.github-empty')).toHaveCount(0);
+  fail = false;
+  await panel.locator(':scope > header').getByRole('button', { name: '刷新', exact: true }).click();
+  await expect(records.locator('.git-record b')).toHaveText(['修复登录后草稿恢复']);
+  await expect(records.locator('nav').getByRole('button', { name: '提交', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(reads).toBe(2);
+  expect(workspace.githubRequests.every((method) => method === 'GET')).toBe(true);
+});
+
+test('GitHub type changes hide stale records and repeated selection does not reload', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  let finish = () => {};
+  const gate = new Promise<void>((resolve) => { finish = resolve; });
+  let commitReads = 0;
+  await page.route('**/github/commits?*', async (route) => {
+    commitReads++;
+    await gate;
+    await route.fulfill({ json: { items: [{ sha: 'a'.repeat(40), title: '只属于提交列表的记录', url: 'https://github.com/example/brand-site/commit/' + 'a'.repeat(40), updatedAt: '2026-10-15T03:00:10Z' }], hasMore: false } });
+  });
+  try {
+    await page.goto(runPath);
+    await resources(page, 'GitHub');
+    const records = page.locator('.github-records');
+    await expect(records.locator('.git-record b')).toHaveText(['完善首页按钮与移动端布局']);
+    const commits = records.locator('nav').getByRole('button', { name: '提交', exact: true });
+    await commits.click();
+    await expect.poll(() => commitReads).toBe(1);
+    expect(await records.locator('.git-record').count()).toBe(0);
+    await expect(records).toHaveAttribute('aria-busy', 'true');
+    finish();
+    await expect(records.locator('.git-record b')).toHaveText(['只属于提交列表的记录']);
+    await commits.click();
+    expect(commitReads).toBe(1);
+    await expect(commits).toHaveAttribute('aria-pressed', 'true');
+  } finally { finish(); }
+});
+
+test('binary preview contains long metadata and downloads the original bytes on touch screens', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, acceptDownloads: true });
+  try {
+    const page = await context.newPage();
+    const { workspace } = await installWorkspaceFixture(page, 'light');
+    const name = `brand-reference-${'2026abcdef'.repeat(12)}.bundle`;
+    const mime = `application/vnd.artigen.${'reference'.repeat(8)}`;
+    const bytes = Buffer.from(Array.from({ length: 2048 }, (_, i) => (i * 41) % 256));
+    Object.assign(workspace.files[1], { path: `archives/${name}`, mimeType: mime, byteSize: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+    await page.route(`**${workspace.files[1].url}`, (route) => route.fulfill({ contentType: mime, body: bytes }));
+    await page.goto(runPath);
+    await resources(page);
+    const tree = page.getByRole('complementary', { name: '文件目录' });
+    await tree.getByRole('button', { name: 'archives', exact: true }).click();
+    await tree.getByRole('button', { name, exact: true }).click();
+    const preview = page.locator('.file-viewer .resource-empty');
+    await expect(preview.getByRole('heading', { name, exact: true })).toBeVisible();
+    expect(await preview.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await expect(preview.locator('dd')).toHaveText([mime, '2 KB']);
+    const download = preview.getByRole('button', { name: '下载后打开', exact: true });
+    expect((await download.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const pending = page.waitForEvent('download');
+    await download.click();
+    const file = await pending;
+    expect(file.suggestedFilename()).toBe(name);
+    const stream = await file.createReadStream();
+    expect(stream).not.toBeNull();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(bytes);
+    await file.delete();
+    expect(workspace.saves).toHaveLength(0);
+  } finally { await context.close(); }
+});
+
+test('project navigation load failures keep their own retry and readable run fallback', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  let fail = true;
+  await page.route('**/api/workspace/navigation', (route) => fail
+    ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'NAVIGATION_UNAVAILABLE' } }) })
+    : route.fallback());
+  await page.goto(runPath);
+  const navigation = page.locator('.project-navigation');
+  await expect(navigation.getByRole('status')).toContainText('项目目录暂时无法读取');
+  await expect(navigation.locator('.history-run')).not.toHaveCount(0);
+  await expect(page.locator('.user-message')).toContainText('调研品牌网站');
+  fail = false;
+  await navigation.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(navigation.getByRole('status')).toHaveCount(0);
+  await expect(navigation.getByRole('button', { name: '编辑会话 首页体验研究', exact: true })).toBeAttached();
+  await expect(page.locator('.user-message')).toContainText('调研品牌网站');
+});
+
+test('chat save failures keep edits and report the failed save inside the editor', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  let patches = 0;
+  await page.route(`**/api/workspace/conversations/${inputConversationId}`, (route) => {
+    patches++;
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { code: 'SAVE_UNAVAILABLE' } }) });
+  });
+  await page.goto(runPath);
+  const open = page.getByRole('button', { name: '编辑会话 首页体验研究', exact: true });
+  await open.focus();
+  await open.press('Enter');
+  const form = page.locator('.session-editor');
+  const title = form.getByRole('textbox', { name: '会话名称', exact: true });
+  await expect(title).toBeFocused();
+  await title.fill('保存失败也保留这份会话名称');
+  await form.getByRole('combobox', { name: '所属项目', exact: true }).selectOption(projectB);
+  const save = form.getByRole('button', { name: '保存', exact: true });
+  await save.click();
+  await expect.poll(() => patches).toBe(1);
+  await expect(save).toBeEnabled();
+  await expect(title).toHaveValue('保存失败也保留这份会话名称');
+  await expect(form.getByRole('combobox')).toHaveValue(projectB);
+  await expect(form.getByRole('alert')).toContainText('会话未保存');
+  await expect(page.locator('.project-navigation')).not.toContainText('项目目录暂时无法读取');
+  await form.getByRole('button', { name: '取消', exact: true }).click();
+  await open.focus();
+  await open.press('Enter');
+  await expect(form.getByRole('alert')).toHaveCount(0);
+  await expect(title).toHaveValue('首页体验研究');
 });
 
 test('project new chats keep project scope and account changes remove private messages', async ({
@@ -179,16 +1240,10 @@ test('capture actual before and after application surfaces', async ({ browser })
             await page.getByRole('button', { name: '源码', exact: true }).click();
           if (scene === 'diff') {
             await resources(page, '变更');
-            await page.getByText('比较来源', { exact: true }).click();
             await page
-              .getByLabel('选择 Agent 候选文件')
+              .getByLabel('比较来源')
               .selectOption('66666666-6666-4666-8666-666666666666');
-            await expect(page.locator('.workspace-diff-view')).toBeVisible();
-            await expect(
-              page
-                .locator('.diff-line-content,.diff-line-new-content,.diff-line-old-content')
-                .first()
-            ).toBeVisible();
+            await expectComparisonLayout(page.locator('.changes-panel'));
           }
           if (scene === 'tabs') {
             const show = page.getByRole('button', { name: '显示目录树' });
@@ -266,17 +1321,64 @@ test('PDF preview uses the real PDF.js worker and releases its tab cleanly', asy
   await page.getByRole('button', { name: '关闭 report.pdf' }).click();
   await expect(page.locator('.pdf-document')).toHaveCount(0);
 });
+
+test('PDF page controls show the count, touch sizing and single-page bounds', async ({ page }) => {
+  await installWorkspaceFixture(page, page.viewportSize()!.width < 600 ? 'light' : 'dark');
+  await page.goto(runPath);
+  await resources(page);
+  const tree = page.getByRole('complementary', { name: '文件目录' });
+  await tree.getByRole('button', { name: 'docs', exact: true }).click();
+  await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+  const controls = page.getByRole('group', { name: 'PDF 页面导航' });
+  await expect(controls.locator('output')).toHaveText('1 / 1');
+  await expect(controls.getByRole('button', { name: '上一页' })).toBeDisabled();
+  await expect(controls.getByRole('button', { name: '下一页' })).toBeDisabled();
+  await expect(controls.locator('.pdf-page-step').first()).toHaveCSS(
+    'width',
+    page.viewportSize()!.width < 600 ? '44px' : '32px'
+  );
+  await expect(page.locator('.pdf-document canvas')).toBeVisible();
+
+  const gallery =
+    page.viewportSize()!.width >= 600 ? process.env.ARTIGEN_PDF_GALLERY_DIR : undefined;
+  if (gallery) {
+    await mkdir(`${gallery}/${process.env.ARTIGEN_PDF_GALLERY_SIDE || 'after'}`, {
+      recursive: true
+    });
+    await page.locator('.pdf-document').screenshot({
+      path: `${gallery}/${process.env.ARTIGEN_PDF_GALLERY_SIDE || 'after'}/pdf-page-controls.jpg`,
+      type: 'jpeg',
+      quality: 84
+    });
+  }
+});
+
+test('PDF preview failure does not present an invalid page count', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  await page.route('**/api/assets/80000000-0000-4000-8000-000000000005', (route) =>
+    route.fulfill({ contentType: 'application/pdf', body: 'not a PDF' })
+  );
+  await page.goto(runPath);
+  await resources(page);
+  const tree = page.getByRole('complementary', { name: '文件目录' });
+  await tree.getByRole('button', { name: 'docs', exact: true }).click();
+  await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+
+  const controls = page.getByRole('group', { name: 'PDF 页面导航' });
+  await expect(page.locator('.pdf-error')).toContainText('PDF 暂时无法预览');
+  await expect(controls.locator('output')).toHaveAttribute('aria-label', 'PDF 预览不可用');
+  await expect(controls.locator('output')).toHaveText('— / —');
+  await expect(controls.getByRole('button', { name: '上一页' })).toBeDisabled();
+  await expect(controls.getByRole('button', { name: '下一页' })).toBeDisabled();
+});
 test('a stale candidate cannot be applied to a different file', async ({ page }) => {
   const { workspace } = await installWorkspaceFixture(page);
   Object.assign(workspace.files[2], { editTarget: { id: 'another-file', sha256: 'a'.repeat(64) } });
   await page.goto(runPath);
   await openBrief(page);
   await resources(page, '变更');
-  await page.getByText('比较来源', { exact: true }).click();
-  await page.getByLabel('选择 Agent 候选文件').selectOption('66666666-6666-4666-8666-666666666666');
-  await expect(page.locator('.resource-notice[role="status"]')).toContainText(
-    '候选基于另一个文件或旧版本'
-  );
+  await page.getByLabel('比较来源').selectOption('66666666-6666-4666-8666-666666666666');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('候选基于另一个文件或旧版本');
   await expect(page.getByRole('button', { name: '应用到当前文件' })).toHaveCount(0);
   expect(workspace.saves).toHaveLength(0);
 });
@@ -291,7 +1393,7 @@ test('editing during a file save preserves and restores the newer draft', async 
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect.poll(() => workspace.saves.length).toBe(1);
   await editor.fill('newer unsaved text');
-  await expect(page.locator('.resource-workspace').getByRole('status')).toContainText('文件已保存');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('文件已保存');
   await expect(editor).toContainText('newer unsaved text');
   await page.waitForTimeout(500);
   page.once('dialog', (dialog) => dialog.accept());
@@ -415,88 +1517,1521 @@ test('authorized inline images open a resource tab while external image sources 
   }
 });
 
-test('the final answer replaces an identical last public commentary without hiding history', async ({
-  page
-}) => {
-  await installWorkspaceFixture(page);
-  await page.route('**/api/agent-runs/*/messages*', (route) =>
-    route.fulfill({
-      json: {
-        messages: [
-          {
-            id: 'public-round',
-            role: 'assistant',
-            kind: 'commentary',
-            text: '公开回合最终正文',
-            createdAt: '2026-10-15T00:00:00Z'
-          },
-          {
-            id: 'public-final',
-            role: 'assistant',
-            kind: 'final',
-            text: '公开回合最终正文',
-            createdAt: '2026-10-15T00:00:01Z'
-          }
-        ],
-        nextCursor: null
-      }
-    })
-  );
-  await page.goto(`/artigen/agent/runs/${inputRunId}`);
-  await expect(
-    page.locator('.run-conversation-stream').getByText('公开回合最终正文', { exact: true })
-  ).toHaveCount(1);
-  await page.reload();
-  await expect(
-    page.locator('.run-conversation-stream').getByText('公开回合最终正文', { exact: true })
-  ).toHaveCount(1);
+test('dismissing a file conflict keeps the draft, version guard and keyboard return', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(runPath);
+  await openBrief(page);
+  await page.getByRole('button', { name: '源码', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: '文件编辑器', exact: true });
+  const original = workspace.files[0].text;
+  await editor.fill('# 保留未保存版本');
+  workspace.conflict = true;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  const notice = page.locator('.resource-notice');
+  await expect(notice.getByRole('status')).toContainText('文件已在其他位置修改');
+  const dismiss = notice.getByRole('button', { name: '关闭文件通知', exact: true });
+  await dismiss.focus();
+  await dismiss.press('Enter');
+  await expect(notice).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'brief.md（未保存）', exact: true })).toBeFocused();
+  await expect(editor).toContainText('保留未保存版本');
+  expect(workspace.saves).toHaveLength(1);
+  expect(workspace.files[0].text).toBe(original);
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(notice.getByRole('status')).toContainText('文件已在其他位置修改');
+  expect(workspace.files[0].text).toBe(original);
+  workspace.conflict = false;
+  await page.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(notice.getByRole('status')).toContainText('文件已保存');
+  expect(workspace.files[0].text).toBe('# 保留未保存版本');
 });
 
-for (const listState of ['ready', 'slow', 'failed'] as const)
-  test(`verified delivery opens UTF-8 preview with ${listState} project listing`, async ({
-    page
-  }) => {
-    const { state, workspace } = await installWorkspaceFixture(page);
-    const file = workspace.files[0];
-    if (listState !== 'ready')
-      await page.route(`**/api/workspace/projects/${projectA}/files`, async (route) => {
-        if (listState === 'failed')
-          return route.fulfill({ status: 503, json: { ok: false, error: 'TEMPORARY' } });
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        return route.fallback();
-      });
-    state.run.status = 'succeeded';
-    state.run.artifacts = [
-      {
-        artifactId: 'abababab-abab-4bab-8bab-abababababab',
-        assetId: file.assetId,
-        parentArtifactId: null,
-        role: 'data',
-        filename: 'brief.md',
-        mimeType: file.mimeType,
-        byteSize: file.byteSize,
-        sha256: file.sha256,
-        version: 1,
-        verificationStatus: 'passed',
-        verification: {},
-        sources: [],
-        costCredits: 0,
-        url: file.url,
-        expiresAt: '2099-10-15T03:00:00Z',
-        createdAt: '2026-10-15T03:00:00Z'
-      }
-    ];
-    await page.route(`**/api/workspace/projects/${projectA}/files/artifact%3A*/content`, (route) =>
-      route.fulfill({ json: { ok: true, file, text: file.text } })
-    );
-    await page.goto(runPath);
-    await expect(page.locator('.workspace-topbar')).toBeVisible();
-    // Open from the conversation itself. A mobile resource drawer would cover
-    // this link; the delivery action must open that drawer after selection.
-    const tabsBefore = page.context().pages().length;
-    await page.locator('.delivery-summary a').click();
-    await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
-    await expect(page.getByRole('tab', { name: 'brief.md', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: '下载 brief.md', exact: true })).toBeVisible();
-    expect(page.context().pages()).toHaveLength(tabsBefore);
+test('file notice dismissal without an open document returns to the tree toggle', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  await page.route(`**/api/workspace/projects/${projectA}/files`, route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: { code: 'SERVICE_UNAVAILABLE' } })
+  }));
+  await page.goto(runPath);
+  await resources(page);
+  const notice = page.locator('.resource-notice');
+  await expect(notice.getByRole('status')).toContainText('操作未完成');
+  const dismiss = notice.getByRole('button', { name: '关闭文件通知', exact: true });
+  await dismiss.focus();
+  await dismiss.press('Space');
+  await expect(notice).toHaveCount(0);
+  await expect(page.locator('.tree-toggle')).toBeFocused();
+  await expect(page.getByRole('tablist', { name: '已打开文件', exact: true }).getByRole('tab')).toHaveCount(0);
+  expect(workspace.saves).toHaveLength(0);
+});
+
+test('loading more chats keeps its cursor on failure, prevents duplicate requests and appends without fallback rows', async ({ page }) => {
+  await installWorkspaceFixture(page);
+  const sessions = [
+    { id: inputConversationId, projectId: projectA, title: '首页体验研究', kind: 'conversation', status: 'active', updatedAt: '2026-10-15T03:00:10Z' },
+    { id: inputRunId, projectId: projectA, title: '整理网站审查报告', kind: 'run', status: 'running', updatedAt: '2026-10-15T03:00:10Z' }
+  ];
+  const requests: Array<string | null> = [];
+  const pending: Array<() => void> = [];
+  let fail = true;
+  await page.route('**/api/workspace/navigation**', async route => {
+    const cursor = new URL(route.request().url()).searchParams.get('cursor');
+    requests.push(cursor);
+    if (cursor) await new Promise<void>(resolve => pending.push(resolve));
+    const bad = Boolean(cursor && fail);
+    await route.fulfill({ status: bad ? 503 : 200, contentType: 'application/json', body: JSON.stringify(bad ? { ok: false, error: { code: 'NAVIGATION_UNAVAILABLE' } } : {
+      ok: true, projects: [{ projectId: projectA, title: '品牌网站' }],
+      sessions: cursor ? [...sessions, { ...sessions[0], id: '99999999-9999-4999-8999-999999999999', title: '新增会话' }] : sessions,
+      nextCursor: cursor ? null : 'fixture-page-2'
+    }) });
   });
+  try {
+    await page.goto(runPath);
+    const navigation = page.locator('.project-navigation');
+    const more = navigation.getByRole('button', { name: '加载更多会话', exact: true });
+    await expect(more).toBeVisible();
+    await more.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+    const control = navigation.locator('.load-more');
+    await expect(control).toHaveText('正在加载…');
+    await expect(control).toBeDisabled();
+    await expect(control).toHaveAttribute('aria-busy', 'true');
+    await expect.poll(() => requests.length).toBe(2);
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(control).toHaveText('重试加载更多');
+    await expect(navigation.getByRole('status')).toContainText('已加载会话仍保留');
+    await expect(navigation.locator('.session-row')).toHaveCount(2);
+    await expect(navigation.locator('.history-run')).toHaveCount(0);
+    await expect(page.locator('.user-message')).toContainText('调研品牌网站');
+    fail = false;
+    await control.press('Enter');
+    await expect.poll(() => requests.length).toBe(3);
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(control).toHaveCount(0);
+    await expect(navigation.getByRole('status')).toHaveCount(0);
+    await expect(navigation.locator('.session-row')).toHaveCount(3);
+    expect(requests).toEqual([null, 'fixture-page-2', 'fixture-page-2']);
+  } finally { pending.splice(0).forEach(resolve => resolve()); }
+});
+
+for (const language of ['zh', 'en']) {
+  test(`lazy local folders clear old errors, localize nested feedback and do not duplicate pending reads ${language}`, async ({ page }) => {
+    await installWorkspaceFixture(page);
+    if (language === 'en') await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.goto(runPath);
+    const zh = language === 'zh';
+    const navigation = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    await navigation.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const fixture = await installLazyDirectoryFixture(page);
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: zh ? '连接本机文件夹' : 'Connect local folder', exact: true }).click();
+    const folder = tree.getByRole('button', { name: 'reference-notes', exact: true });
+    await folder.click();
+    await expect.poll(fixture.calls).toBe(1);
+    await fixture.release(true);
+    await expect(tree.getByRole('status')).toHaveText(zh ? '目录暂时无法读取，点击文件夹重试。' : 'Could not read this folder. Select it to retry.');
+    await folder.press('Enter');
+    await expect.poll(fixture.calls).toBe(2);
+    await expect(tree.getByRole('status')).toHaveText(zh ? '正在读取目录…' : 'Reading folder…');
+    await folder.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+    await expect(folder).toHaveAttribute('aria-expanded', 'true');
+    await expect(folder).toHaveAttribute('aria-busy', 'true');
+    expect(await fixture.calls()).toBe(2);
+    await folder.press('Enter');
+    await fixture.release(false);
+    await expect(folder).toHaveAttribute('aria-busy', 'false');
+    await expect(folder).toHaveAttribute('aria-expanded', 'false');
+    await expect(tree.getByRole('status')).toHaveCount(0);
+    await folder.press('Enter');
+    await expect(tree.getByRole('button', { name: 'brief.txt', exact: true })).toBeVisible();
+    expect(await fixture.calls()).toBe(2);
+    await fixture.target('nested');
+    const nested = tree.getByRole('button', { name: 'nested', exact: true });
+    await nested.press('Enter');
+    await expect.poll(fixture.calls).toBe(3);
+    await fixture.release(true);
+    await expect(tree.getByRole('status')).toHaveText(zh ? '目录暂时无法读取，点击文件夹重试。' : 'Could not read this folder. Select it to retry.');
+    await nested.press('Enter');
+    await expect.poll(fixture.calls).toBe(4);
+    await fixture.release(false);
+    await expect(tree.getByRole('button', { name: 'nested-note.txt', exact: true })).toBeVisible();
+    await expect(tree.getByRole('status')).toHaveCount(0);
+  });
+}
+
+test('file read recovery keeps context, deduplicates retry and restores keyboard focus', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  let reads = 0;
+  const pending: Array<() => void> = [];
+  await page.route(`**/files/${workspace.files[0].id}/content`, async route => {
+    const attempt = ++reads;
+    if (attempt > 1) await new Promise<void>(resolve => pending.push(resolve));
+    if (attempt < 4) return route.fulfill({ status: attempt === 1 ? 403 : 503, contentType: 'application/json', body: JSON.stringify({ error: { code: attempt === 1 ? 'WORKSPACE_READ_PERMISSION_DENIED' : 'UNAVAILABLE' } }) });
+    await route.fallback();
+  });
+  try {
+    await page.goto(runPath);
+    await openBrief(page);
+    const panel = page.locator('.file-viewer');
+    await expect(panel.getByRole('heading', { name: '暂时无法打开文件', exact: true })).toBeVisible();
+    await expect(panel.locator('.file-status')).toHaveCount(0);
+    await expect(panel.locator('.file-read-name')).toHaveText('brief.md');
+    await expect(panel.getByRole('alert')).toContainText('文件访问权限不足');
+    const retry = panel.getByRole('button', { name: '重新读取', exact: true });
+    await retry.focus();
+    await retry.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+    await expect.poll(() => reads).toBe(2);
+    await expect(panel.getByRole('status')).toHaveText('正在读取文件…');
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(panel.getByRole('alert')).toContainText('操作未完成');
+    await expect(retry).toBeFocused();
+    await retry.press('Enter');
+    await expect.poll(() => reads).toBe(3);
+    const otherControl = page.locator('.tree-toggle');
+    await otherControl.focus();
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(retry).toBeVisible();
+    await expect(otherControl).toBeFocused();
+    await retry.press('Enter');
+    await expect.poll(() => reads).toBe(4);
+    pending.splice(0).forEach(resolve => resolve());
+    await expect(page.locator('.document-preview')).toContainText('已完成首页');
+    await expect(page.getByRole('tab', { name: 'brief.md', exact: true })).toBeFocused();
+    await expect(panel.getByRole('alert')).toHaveCount(0);
+    await expect(panel.locator('.file-status')).toBeVisible();
+    expect(workspace.saves).toHaveLength(0);
+    expect(reads).toBe(4);
+  } finally { pending.splice(0).forEach(resolve => resolve()); }
+});
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub repository form validates locally and keeps rejected input while linking ${language}`, async ({ page }) => {
+    await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const bindings: unknown[] = [];
+    const pending: Array<() => void> = [];
+    let fail = true;
+    await page.route('**/api/workspace/projects/*/github', async route => {
+      if (route.request().method() === 'GET') return route.fulfill({ json: { ok: true, repository: null } });
+      expect(route.request().method()).toBe('PUT');
+      bindings.push(route.request().postDataJSON());
+      await new Promise<void>(resolve => pending.push(resolve));
+      return route.fulfill({ status: fail ? 503 : 200, json: fail ? { error: { code: 'UNAVAILABLE' } } : { repository: { owner: 'example', repository: 'brand-site' } } });
+    });
+    try {
+      await page.goto(runPath);
+      await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true }).getByRole('button', { name: 'GitHub', exact: true }).click();
+      const panel = page.locator('.github-workspace');
+      const form = panel.getByRole('form', { name: zh ? '关联仓库' : 'Link repository', exact: true });
+      const input = form.getByRole('textbox');
+      await expect(input).toBeEnabled();
+      await input.fill('not-a-repository-path');
+      await input.press('Enter');
+      await expect(panel.getByRole('status')).toHaveText(zh ? '请输入 owner/repository。' : 'Enter owner/repository.');
+      expect(bindings).toHaveLength(0);
+      await input.fill(' example/brand-site ');
+      const submit = form.getByRole('button');
+      await submit.evaluate(element => { (element as HTMLButtonElement).click(); (element as HTMLButtonElement).click(); });
+      await expect.poll(() => bindings.length).toBe(1);
+      await expect(form).toHaveAttribute('aria-busy', 'true');
+      await expect(submit).toHaveText(zh ? '处理中…' : 'Working…');
+      await expect(input).toBeDisabled();
+      await expect(panel.getByRole('status')).toHaveCount(0);
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(input).toBeEnabled();
+      await expect(input).toHaveValue(' example/brand-site ');
+      await expect(panel.getByRole('status')).toBeVisible();
+      fail = false;
+      await input.press('Enter');
+      await expect.poll(() => bindings.length).toBe(2);
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(form).toHaveCount(0);
+      await expect(panel.locator('.git-record')).toHaveCount(1);
+      expect(bindings).toEqual([{ owner: 'example', repository: 'brand-site' }, { owner: 'example', repository: 'brand-site' }]);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`new text file form preserves drafts and validates before explicit save ${language}`, async ({ page }) => {
+    const { workspace } = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const creates: Array<{ text: string; path: string; expectedRevision: number }> = [];
+    await page.route(`**/api/workspace/projects/${projectA}/files`, async route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const input = route.request().postDataJSON();
+      creates.push(input);
+      return route.fulfill({ json: { file: { ...workspace.files[0], id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', path: input.path, revision: 1, sha256: createHash('sha256').update(input.text).digest('hex'), byteSize: Buffer.byteLength(input.text) } } });
+    });
+    const dialogs: string[] = [];
+    page.on('dialog', dialog => { dialogs.push(dialog.type()); void dialog.dismiss(); });
+    await page.goto(runPath);
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    const original = workspace.files[0].text + '\n保留原文件草稿';
+    await page.locator('.cm-content').fill(original);
+    if (!(await tree.isVisible())) await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    const trigger = tree.getByRole('button', { name: zh ? '新建文本文件' : 'New text file', exact: true });
+    await trigger.click();
+    const form = page.getByRole('form', { name: zh ? '新建文本文件' : 'New text file', exact: true });
+    const field = form.getByRole('textbox', { name: zh ? '相对路径' : 'Relative path', exact: true });
+    await expect(field).toBeFocused();
+    for (const path of ['', '/outside.md', 'notes//a.md', 'notes/../a.md', 'notes/./a.md', 'notes\\a.md']) {
+      await field.fill(path);
+      await form.getByRole('button', { name: zh ? '创建文件' : 'Create file', exact: true }).click();
+      await expect(form.getByRole('alert')).toContainText(zh ? '有效的相对路径' : 'valid relative path');
+      await expect(field).toHaveValue(path);
+      await expect(field).toBeFocused();
+      expect(creates).toHaveLength(0);
+    }
+    for (const key of ['Escape', 'Enter']) {
+      await field.dispatchEvent('keydown', { key, isComposing: true, bubbles: true });
+      await field.dispatchEvent('keydown', { key, keyCode: 229, bubbles: true });
+      await expect(form).toBeVisible();
+    }
+    await field.press('Escape');
+    await expect(form).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(page.getByRole('tab', { name: zh ? 'brief.md（未保存）' : 'brief.md (unsaved)', exact: true })).toHaveCount(1);
+    await trigger.click();
+    await expect(field).toHaveValue('');
+    await expect(form.getByRole('alert')).toHaveCount(0);
+    await form.getByRole('button', { name: zh ? '取消' : 'Cancel', exact: true }).click();
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await field.fill('notes/新建说明.md');
+    await form.getByRole('button', { name: zh ? '创建文件' : 'Create file', exact: true }).evaluate((el: HTMLButtonElement) => { el.click(); el.click(); });
+    await expect(form).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: '新建说明.md', exact: true })).toBeFocused();
+    expect(creates).toHaveLength(0);
+    expect(workspace.saves).toHaveLength(0);
+    await page.locator('.cm-content').fill('中文内容，仅在点击保存后写入。');
+    await page.getByRole('button', { name: zh ? '保存' : 'Save', exact: true }).click();
+    await expect.poll(() => creates.length).toBe(1);
+    expect(creates[0]).toEqual({ text: '中文内容，仅在点击保存后写入。', path: 'notes/新建说明.md', expectedRevision: 0 });
+    await expect(page.locator('.file-save-state')).toContainText(zh ? '已保存' : 'Saved');
+    await expect(page.getByRole('tab', { name: zh ? 'brief.md（未保存）' : 'brief.md (unsaved)', exact: true })).toHaveCount(1);
+    expect(dialogs).toEqual([]);
+    await page.getByRole('tab', { name: zh ? 'brief.md（未保存）' : 'brief.md (unsaved)', exact: true }).click();
+    await expect.poll(async () => (await page.locator('.cm-content .cm-line').allTextContents()).join('\n')).toBe(original);
+  });
+}
+
+test('new text file form clears when project or account scope changes', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  await page.goto(`/artigen/create?projectId=${projectA}`);
+  await resources(page);
+  const tree = page.getByRole('complementary', { name: '文件目录', exact: true });
+  const trigger = tree.getByRole('button', { name: '新建文本文件', exact: true });
+  const form = page.getByRole('form', { name: '新建文本文件', exact: true });
+  await trigger.click();
+  await form.getByRole('textbox').fill('notes/project-a.md');
+  await page.getByRole('button', { name: '夏日视觉', exact: true }).hover();
+  await page.getByRole('button', { name: '在夏日视觉中新建会话', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`projectId=${projectB}`));
+  await expect(form).toHaveCount(0);
+  await trigger.click();
+  await expect(form.getByRole('textbox')).toHaveValue('');
+  await form.getByRole('textbox').fill('notes/project-b.md');
+  await page.evaluate(() => { localStorage.setItem('app_user_id', 'other-fixture'); window.dispatchEvent(new Event('app-auth-changed')); });
+  await expect(form).toHaveCount(0);
+  await expect(page.getByRole('tab')).toHaveCount(0);
+  expect(workspace.saves).toHaveLength(0);
+});
+
+for (const language of ['zh', 'en']) {
+  test(`identical comparisons suppress no-op apply and preserve real differences ${language}`, async ({ page }) => {
+    const { workspace } = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = workspace.files[0].text;
+    Object.assign(workspace.files[2], { text: original, sha256: createHash('sha256').update(original).digest('hex'), byteSize: Buffer.byteLength(original) });
+    await page.goto(runPath);
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    const files = nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true });
+    const changes = nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true });
+    await files.click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
+    await changes.click();
+    const panel = page.locator('.changes-panel');
+    const empty = panel.getByRole('status');
+    const apply = panel.getByRole('button', { name: zh ? '应用到当前文件' : 'Apply to current file', exact: true });
+    await expect(empty).toContainText(zh ? '两份内容一致' : 'Contents are identical');
+    await expect(panel.locator('.added,.removed,.cm-mergeView')).toHaveCount(0);
+    await panel.getByRole('combobox').selectOption(workspace.files[2].id);
+    await expect(panel.getByRole('combobox')).toHaveValue(workspace.files[2].id);
+    await expect(empty).toBeVisible();
+    await expect(apply).toHaveCount(0);
+    expect(workspace.saves).toHaveLength(0);
+    await files.click();
+    await page.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true }).selectOption('1');
+    await expect(empty).toBeVisible();
+    await expect(panel.locator(':scope > p')).toHaveText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
+    await expect(apply).toHaveCount(0);
+    const revised = original + '\n这次候选确实增加了内容。';
+    Object.assign(workspace.files[2], { text: revised, sha256: createHash('sha256').update(revised).digest('hex'), byteSize: Buffer.byteLength(revised) });
+    await panel.getByRole('combobox').selectOption(workspace.files[2].id);
+    await expectComparisonLayout(panel);
+    await expect(empty).toHaveCount(0);
+    await expect(apply).toBeEnabled();
+    for (const content of await panel.locator('.cm-content').all()) await expect(content).toHaveAttribute('contenteditable', 'false');
+    expect(workspace.saves).toHaveLength(0);
+    await apply.click();
+    await expect.poll(() => workspace.saves.length).toBe(1);
+    await expect(empty).toBeVisible();
+    await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+    expect(workspace.files[0].text).toBe(revised);
+    await panel.getByRole('button', { name: zh ? '撤销最近一次应用' : 'Undo last application', exact: true }).click();
+    await expect.poll(() => workspace.saves.length).toBe(2);
+    await expect(empty).toBeVisible();
+    expect(workspace.files[0].text).toBe(original);
+    await files.click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    await page.locator('.cm-content').fill(original + '\n真实编辑');
+    await changes.click();
+    await expectComparisonLayout(panel);
+    await panel.getByRole('button', { name: zh ? '保存当前修改' : 'Save changes', exact: true }).click();
+    await expect.poll(() => workspace.saves.length).toBe(3);
+    await expect(empty).toBeVisible();
+    expect(workspace.files[0].text).toBe(original + '\n真实编辑');
+  });
+}
+
+test('empty files compare equal but newline-only edits remain a real difference', async ({ page }) => {
+  const { workspace } = await installWorkspaceFixture(page);
+  Object.assign(workspace.files[0], { text: '', sha256: createHash('sha256').update('').digest('hex'), byteSize: 0 });
+  await page.goto(runPath);
+  await openBrief(page);
+  await resources(page, '变更');
+  const panel = page.locator('.changes-panel');
+  await expect(panel.getByRole('status')).toContainText('两份内容一致');
+  await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+  await resources(page);
+  await page.getByRole('button', { name: '源码', exact: true }).click();
+  await page.locator('.cm-content').fill('\n');
+  await resources(page, '变更');
+  await expectComparisonLayout(panel);
+  await expect(panel.getByRole('status')).toHaveCount(0);
+  await expect(panel.getByRole('button', { name: '保存当前修改', exact: true })).toBeEnabled();
+  expect(workspace.saves).toHaveLength(0);
+});
+
+for (const language of ['zh', 'en']) {
+  test(`fenced code copy preserves content and rejects stale feedback ${language}`, async ({ page }) => {
+    const fixture = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const source = '  <script>window.codeInjected = true</script>\n\t中文 & "引号"\n\n';
+    const second = 'second block\n';
+    const unsafeInfo = 'html"><img/src=x/onerror=window.codeInjected=true>';
+    let text = '```' + unsafeInfo + '\n' + source + '```\n\n```\n' + second + '```';
+    await page.route(`**/api/agent-runs/${inputRunId}/messages*`, route => route.fulfill({ json: { ok: true, messages: [{ id: 'copy-code-message', role: 'assistant', kind: 'text', text, createdAt: '2026-10-15T03:00:10Z' }], nextCursor: null } }));
+    await page.goto(runPath);
+    const message = page.locator('.run-conversation-stream .workspace-markdown');
+    const blocks = message.locator('.md-code-block');
+    const button = blocks.first().getByRole('button');
+    await expect(blocks).toHaveCount(2);
+    await expect(blocks.locator('.md-code-language')).toHaveText([unsafeInfo, 'text']);
+    await expect(blocks.locator('.md-code-language').first()).toHaveAttribute('title', unsafeInfo);
+    await expect(message.locator('img,[onerror]')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as Window & { codeInjected?: boolean }).codeInjected)).toBeUndefined();
+    await expect(message.locator('script')).toHaveCount(0);
+    await page.evaluate(() => {
+      const state = window as Window & { codeCopies?: string[]; finishCodeCopy?: () => void };
+      state.codeCopies = [];
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { state.codeCopies!.push(value); await new Promise<void>(resolve => { state.finishCodeCopy = resolve; }); } } });
+    });
+    await button.focus();
+    await button.press('Enter');
+    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute('aria-busy', 'true');
+    await button.evaluate((el: HTMLButtonElement) => el.click());
+    expect(await page.evaluate(() => (window as Window & { codeCopies?: string[] }).codeCopies)).toEqual([source]);
+    await page.evaluate(() => (window as Window & { finishCodeCopy?: () => void }).finishCodeCopy?.());
+    await expect(button).toHaveText(zh ? '已复制' : 'Copied');
+    await expect(button).toBeEnabled();
+    await expect(blocks.first().getByRole('status')).toHaveText(zh ? '代码已复制' : 'Code copied');
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('clipboard denied'); } } }));
+    await blocks.nth(1).getByRole('button').click();
+    await expect(blocks.nth(1).getByRole('button')).toHaveText(zh ? '复制失败，重试' : 'Copy failed; retry');
+    await expect(blocks.nth(1).getByRole('status')).toContainText(zh ? '剪贴板权限' : 'clipboard access');
+    await page.evaluate(() => {
+      const state = window as Window & { codeCopies?: string[]; finishCodeCopy?: () => void };
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { state.codeCopies!.push(value); await new Promise<void>(resolve => { state.finishCodeCopy = resolve; }); } } });
+    });
+    await blocks.nth(1).getByRole('button').click();
+    await expect(blocks.nth(1).getByRole('button')).toBeDisabled();
+    expect(await page.evaluate(() => (window as Window & { codeCopies?: string[] }).codeCopies)).toEqual([source, second]);
+    text = '```json\n{"updated":true}\n```';
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9901', type: 'message.created', summary: '公开内容已更新', createdAt: '2026-10-15T03:00:11Z', data: {} }]);
+    await expect(blocks).toHaveCount(1);
+    await expect(blocks.locator('.md-code-language')).toHaveText('json');
+    await page.evaluate(() => (window as Window & { finishCodeCopy?: () => void }).finishCodeCopy?.());
+    await expect(button).toHaveText(zh ? '复制代码' : 'Copy code');
+    await expect(button).toBeEnabled();
+    await expect(blocks.getByRole('status')).toBeEmpty();
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value: string) => { (window as Window & { newCodeCopy?: string }).newCodeCopy = value; } } }));
+    await button.click();
+    await expect(button).toHaveText(zh ? '已复制' : 'Copied');
+    expect(await page.evaluate(() => (window as Window & { newCodeCopy?: string }).newCodeCopy)).toBe('{"updated":true}\n');
+    expect(fixture.workspace.saves).toHaveLength(0);
+    expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`expired approval recovery is read-only and keeps honest reload states ${language}`, async ({ page }) => {
+    const fixture = await installWorkspaceFixture(page);
+    const zh = language === 'zh';
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const approval = { approvalId: 'expired-approval', actionType: 'publish', recipient: 'https://example.invalid/publish', riskLevel: 'high' as const, changeSummary: '已过期的合成审批', status: 'pending' as const, expiresAt: '2026-10-14T03:00:00Z', createdAt: '2026-10-14T02:00:00Z', decidedAt: null };
+    fixture.state.run.approvals = [approval];
+    let reads = 0, responseStatus = 200, hold = false;
+    const pending: Array<() => void> = [], writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/api/agent-runs/') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(`**/api/agent-runs/${inputRunId}`, async route => {
+      reads++;
+      const status = responseStatus;
+      if (hold) await new Promise<void>(resolve => pending.push(resolve));
+      return route.fulfill({ status, json: status === 200 ? { run: fixture.state.run } : { error: { code: status === 401 ? 'LOGIN_REQUIRED' : status === 404 ? 'AGENT_RUN_NOT_FOUND' : 'UNAVAILABLE' } } });
+    });
+    try {
+      await page.goto(runPath);
+      const notice = page.getByRole('region', { name: zh ? '过期审批' : 'Expired approvals', exact: true });
+      const retry = notice.getByRole('button');
+      await expect(notice).toContainText(zh ? '1 项审批已过期' : '1 approval expired');
+      await expect(page.locator('.approval-card')).toHaveCount(0);
+      await page.locator('.run-composer textarea').fill('保留这条尚未发送的补充');
+      responseStatus = 503; hold = true;
+      await retry.evaluate((el: HTMLButtonElement) => { el.click(); el.click(); });
+      await expect.poll(() => reads).toBe(2);
+      await expect(retry).toBeDisabled();
+      await expect(notice).toHaveAttribute('aria-busy', 'true');
+      await expect(retry).toContainText(zh ? '正在读取' : 'Loading');
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(retry).toBeEnabled();
+      await expect(notice.getByRole('alert')).toContainText(zh ? '暂时无法读取任务' : 'could not load');
+      await expect(page.locator('.run-composer textarea')).toHaveValue('保留这条尚未发送的补充');
+      responseStatus = 200; hold = false; fixture.state.run.approvals = [];
+      await retry.click();
+      await expect(notice).toHaveCount(0);
+      expect(reads).toBe(3);
+      await expect(page.locator('.run-composer textarea')).toHaveValue('保留这条尚未发送的补充');
+      for (const status of [401, 404]) {
+        fixture.state.run.approvals = [approval]; responseStatus = 200;
+        await page.reload();
+        await expect(notice).toBeVisible();
+        responseStatus = status;
+        await retry.click();
+        await expect(notice.getByRole('alert')).toBeVisible();
+        const action = notice.getByRole('link');
+        await expect(action).toHaveText(status === 401 ? (zh ? '重新登录' : 'Sign in again') : (zh ? '返回任务历史' : 'Back to task history'));
+        if (status === 401) await expect(action).toHaveAttribute('href', new RegExp('^/login\\?returnTo='));
+        else await expect(action).toHaveAttribute('href', '/artigen/agent');
+        await expect(retry).toHaveCount(0);
+        await expect(page.locator('.approval-card')).toHaveCount(0);
+      }
+      expect(writes).toEqual([]);
+      expect(fixture.state.inputs).toHaveLength(0);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`project disclosure keeps keyboard access and new chat scope ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const longTitle = '品牌网站 · 首页与购买流程体验研究及上线材料整理';
+    await page.route('**/api/workspace/navigation', route => route.fulfill({ json: {
+      projects: [{ projectId: projectA, title: longTitle }, { projectId: projectB, title: '夏日视觉' }],
+      sessions: [{ id: inputConversationId, projectId: projectA, title: '首页体验研究', kind: 'conversation', status: 'active', updatedAt: '2026-10-15T03:00:00Z' }], nextCursor: null
+    } }));
+    const writes: string[] = [];
+    page.on('request', req => { if (req.method() !== 'GET' && /\/api\/(workspace|agent-runs|design-conversations)/.test(req.url())) writes.push(req.method()); });
+    await page.goto(runPath);
+    const row = page.locator('.project-heading').first();
+    const toggle = row.getByRole('button', { name: longTitle, exact: true });
+    const add = row.getByRole('button', { name: zh ? `在${longTitle}中新建会话` : `New chat in ${longTitle}`, exact: true });
+    await expect(toggle).toHaveAttribute('title', longTitle);
+    const panelId = await toggle.getAttribute('aria-controls');
+    expect(panelId).toBeTruthy();
+    const panel = page.locator(`[id="${panelId}"]`);
+    await expect(panel.getByRole('link', { name: '首页体验研究', exact: true })).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(add).toBeHidden();
+    const originalWidth = (await toggle.boundingBox())!.width;
+    await toggle.focus();
+    await expect(add).toBeVisible();
+    expect((await toggle.boundingBox())!.width).toBe(originalWidth);
+    await toggle.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(panel).toBeHidden();
+    await expect(toggle).toBeFocused();
+    await toggle.press('Tab');
+    await expect(add).toBeFocused();
+    await add.press('Shift+Tab');
+    await expect(toggle).toBeFocused();
+    await toggle.press('Space');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(panel).toBeVisible();
+    const second = page.locator('.project-heading').nth(1).getByRole('button', { name: '夏日视觉', exact: true });
+    expect(await second.getAttribute('aria-controls')).not.toBe(panelId);
+    await second.focus(); await second.press('Enter');
+    await expect(second).toHaveAttribute('aria-expanded', 'false');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const search = page.getByRole('searchbox', { name: zh ? '搜索任务' : 'Search tasks', exact: true });
+    await search.fill('首页体验');
+    await expect(page.locator('.project-heading')).toHaveCount(1);
+    await expect(panel.getByRole('link', { name: '首页体验研究', exact: true })).toBeVisible();
+    await search.fill('');
+    await expect(page.locator('.project-heading')).toHaveCount(2);
+    await expect(second).toHaveAttribute('aria-expanded', 'false');
+    await second.focus(); await second.press('Tab');
+    const secondAdd = page.locator('.project-heading').nth(1).getByRole('button', { name: zh ? '在夏日视觉中新建会话' : 'New chat in 夏日视觉', exact: true });
+    await expect(secondAdd).toBeFocused();
+    await secondAdd.press('Enter');
+    await expect(page).toHaveURL(new RegExp(`/artigen/create\\?projectId=${projectB}$`));
+    expect(writes).toEqual([]);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub empty records keep category links separate from pending and failed reads ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    let fail = false, empty = true, hold = false, commitReads = 0;
+    const pending: Array<() => void> = [], methods: string[] = [];
+    page.on('request', req => { if (req.url().includes('/github')) methods.push(req.method()); });
+    await page.route('**/github/pulls?*', route => route.fulfill({ json: { items: [], hasMore: false } }));
+    await page.route('**/github/commits?*', async route => {
+      commitReads++;
+      if (hold) await new Promise<void>(resolve => pending.push(resolve));
+      if (fail) return route.fulfill({ status: 503, json: { error: { code: 'UNAVAILABLE' } } });
+      return route.fulfill({ json: { items: empty ? [] : [{ sha: 'a'.repeat(40), title: '合成提交记录', url: 'https://github.com/example/brand-site/commit/' + 'a'.repeat(40), updatedAt: '2026-10-15T03:00:00Z' }], hasMore: false } });
+    });
+    try {
+      await page.goto(runPath);
+      await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true }).getByRole('button', { name: 'GitHub', exact: true }).click();
+      const panel = page.locator('.github-workspace'), records = panel.locator('.github-records');
+      const notice = records.locator('.github-empty');
+      await expect(notice.getByRole('heading')).toHaveText(zh ? '暂无拉取请求' : 'No pull requests yet');
+      await expect(notice.getByRole('link')).toHaveAttribute('href', 'https://github.com/example/brand-site/pulls');
+      await expect(notice.getByRole('link')).toHaveAttribute('target', '_blank');
+      await expect(notice.getByRole('link')).toHaveAttribute('rel', 'noopener noreferrer');
+      hold = true;
+      const commits = records.locator('nav').getByRole('button', { name: zh ? '提交' : 'Commits', exact: true });
+      await commits.click();
+      await expect.poll(() => commitReads).toBe(1);
+      await expect(records).toHaveAttribute('aria-busy', 'true');
+      await expect(notice).toHaveCount(0);
+      await expect(records.getByRole('status')).toHaveText(zh ? '正在读取…' : 'Loading…');
+      hold = false; pending.splice(0).forEach(resolve => resolve());
+      await expect(notice.getByRole('heading')).toHaveText(zh ? '暂无提交记录' : 'No commits yet');
+      await expect(notice.getByRole('link')).toHaveAttribute('href', 'https://github.com/example/brand-site/commits');
+      await commits.click();
+      expect(commitReads).toBe(1);
+      fail = true;
+      const refresh = panel.locator(':scope > header').getByRole('button', { name: zh ? '刷新' : 'Refresh', exact: true });
+      await refresh.click();
+      await expect(panel.getByRole('status')).toContainText(zh ? '读取失败' : 'Request failed');
+      await expect(notice).toHaveCount(0);
+      fail = false; empty = false;
+      await refresh.click();
+      await expect(records.locator('.git-record b')).toHaveText(['合成提交记录']);
+      await expect(notice).toHaveCount(0);
+      expect(commitReads).toBe(3);
+      expect(methods.length).toBeGreaterThan(0);
+      expect(methods.every(method => method === 'GET')).toBe(true);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`message recovery preserves cached content and drafts while coalescing SSE only ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    let fail = false, hold = false, reads = 0, text = '先前已显示的公开消息';
+    const pending: Array<() => void> = [], writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/api/agent-runs/') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(`**/api/agent-runs/${inputRunId}/messages*`, async route => {
+      reads++;
+      if (hold) await new Promise<void>(resolve => pending.push(resolve));
+      return route.fulfill(fail ? { status: 503, json: { error: { code: 'UNAVAILABLE' } } } : { json: { messages: [{ id: 'retained-public-message', role: 'assistant', kind: 'text', text, createdAt: '2026-10-15T03:00:10Z' }], nextCursor: null } });
+    });
+    const emitMessage = async (id: string) => fixture.emit([{ ...activityEvents(1)[0]!, eventId: id, type: 'message.created', summary: '合成消息通知', createdAt: '2026-10-15T03:03:00Z', data: {} }]);
+    try {
+      await page.goto(runPath);
+      const messages = page.locator('.run-conversation-stream');
+      await expect(messages).toContainText(text);
+      const draft = page.locator('.run-composer textarea');
+      await draft.fill('保留这条尚未发送的补充');
+      fail = true; await emitMessage('9401');
+      const notice = page.getByRole('region', { name: zh ? '消息读取提示' : 'Message loading notice', exact: true });
+      const retry = notice.getByRole('button');
+      await expect(notice).toBeVisible();
+      await expect(messages).toContainText(text);
+      await retry.focus(); await retry.press('Tab'); await page.keyboard.press('Shift+Tab');
+      await expect(retry).toBeFocused();
+      hold = true;
+      await retry.evaluate((el: HTMLButtonElement) => { el.click(); el.click(); });
+      await expect.poll(() => reads).toBe(3);
+      await expect(retry).toHaveAttribute('aria-disabled', 'true');
+      await expect(retry).toBeFocused();
+      await expect(notice).toHaveAttribute('aria-busy', 'true');
+      await expect(retry).toHaveText(zh ? '正在读取…' : 'Loading…');
+      pending.splice(0).forEach(resolve => resolve());
+      await expect(retry).toHaveAttribute('aria-disabled', 'false');
+      await expect(retry).toBeFocused();
+      expect(reads).toBe(3);
+      await expect(draft).toHaveValue('保留这条尚未发送的补充');
+      fail = false;
+      await retry.press('Enter');
+      await expect.poll(() => reads).toBe(4);
+      // A real message notification during a pending manual retry still schedules one follow-up.
+      await emitMessage('9402');
+      text = '更新后的公开消息'; hold = false;
+      pending.splice(0).forEach(resolve => resolve());
+      await expect.poll(() => reads).toBe(5);
+      await expect(notice).toHaveCount(0);
+      await expect(messages.locator('.timeline-message .workspace-markdown')).toHaveText(text);
+      await expect(messages.locator('.timeline-message')).toHaveCount(1);
+      await expect(draft).toHaveValue('保留这条尚未发送的补充');
+      expect(writes).toEqual([]);
+      expect(fixture.state.inputs).toHaveLength(0);
+    } finally { pending.splice(0).forEach(resolve => resolve()); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`version chooser is labelled and opens read-only history without losing drafts ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const { workspace } = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = workspace.files[0].text;
+    const writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/api/workspace/') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route('**/api/workspace/projects/*/files/*/content?revision=1', route => route.fulfill({ json: { file: workspace.files[0], text: '# Historical revision\n\nOriginal copy.' } }));
+    await page.goto(runPath);
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    const editor = page.getByRole('textbox', { name: zh ? '文件编辑器' : 'File editor', exact: true });
+    await editor.fill('# 尚未保存的修改');
+    const footer = page.locator('.file-status');
+    const control = footer.locator('.file-version-control');
+    const select = control.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true });
+    await expect(control.getByText(zh ? '比较版本' : 'Compare version', { exact: true })).toBeVisible();
+    expect(await control.evaluate(el => (el as HTMLLabelElement).control === el.querySelector('select'))).toBe(true);
+    await select.focus();
+    await expect(select).toBeFocused();
+    expect(await select.evaluate(el => el.matches(':focus'))).toBe(true);
+    await select.selectOption('1');
+    const changes = page.locator('.changes-panel');
+    await expect(changes).toContainText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
+    await expectComparisonLayout(changes);
+    await expect(changes.locator('[contenteditable="true"]')).toHaveCount(0);
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    await expect(editor).toContainText('尚未保存的修改');
+    await expect(footer).toContainText(zh ? '未保存 · v1' : 'Unsaved · v1');
+    expect(workspace.files[0].text).toBe(original);
+    expect(workspace.saves).toHaveLength(0); expect(writes).toEqual([]);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub detail returns to the exact record reading position without reloading ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const { workspace } = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const title = 'fix-very-long-generated-editor-component-filename-and-preserve-context-'.repeat(5);
+    let reads = 0;
+    const writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/github') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route('**/github/pulls?*', route => {
+      reads++;
+      return route.fulfill({ json: { items: Array.from({ length: 60 }, (_, i) => ({ number: 900 + i, title: i === 30 ? title : `Review ${i + 1}`, state: 'open', url: `https://github.com/example/brand-site/pull/${900 + i}` })), hasMore: false } });
+    });
+    await page.goto(runPath);
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace');
+    const row = root.locator('.git-record').nth(30);
+    for (const offset of [120, 240]) {
+      await row.scrollIntoViewIfNeeded();
+      await root.evaluate((el, offset) => { const row = el.querySelectorAll('.git-record')[30]!; el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - offset; }, offset);
+      const top = await root.evaluate(el => el.scrollTop);
+      await row.focus(); await row.press('Enter');
+      const detail = root.locator('.github-record-detail');
+      const back = detail.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true });
+      await expect(back).toBeFocused();
+      await expect(detail.locator('h3')).toHaveText(title);
+      const link = detail.getByRole('link');
+      await expect(link).toHaveAttribute('href', 'https://github.com/example/brand-site/pull/930');
+      await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+      await back.press('Tab'); await expect(link).toBeFocused();
+      await page.keyboard.press('Shift+Tab'); await expect(back).toBeFocused();
+      expect(await detail.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await back.press('Enter');
+      await expect(row).toBeFocused();
+      expect(Math.abs(await root.evaluate(el => el.scrollTop) - top)).toBeLessThanOrEqual(1);
+      await expect(root.locator('.git-record')).toHaveCount(60);
+    }
+    expect(reads).toBe(1); expect(writes).toEqual([]);
+    expect(workspace.githubRequests.every(method => method === 'GET')).toBe(true);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`audit rows keep public summaries readable and keyboard scrolling stable ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const events = Array.from({ length: 40 }, (_, i) => ({ ...activityEvents(1)[0]!, eventId: String(9600 + i), type: i === 1 ? 'verification.repair_requested' : 'context.compacted', summary: i === 0 ? 'workspace/reports/very-long-generated-file-name-without-spaces-'.repeat(6) : 'Preserve public evidence and unfinished checks.', createdAt: new Date(Date.parse('2026-10-15T03:00:00Z') + i * 1000).toISOString() }));
+    events[2] = { ...events[2]!, type: 'tool.call.completed', summary: 'PRIVATE_AUDIT_TEST_MARKER', data: { toolName: 'browser_dom', ok: false, command: 'PRIVATE_AUDIT_TEST_MARKER' } };
+    await page.goto(runPath); await fixture.emit(events);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留尚未发送的检查意见');
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '任务' : 'Task', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? '计划' : 'Plan', exact: true }).click();
+    const audit = page.locator('.audit-details'); await audit.locator(':scope > summary').click();
+    const list = audit.getByRole('list', { name: zh ? '审计事件' : 'Audit events', exact: true });
+    const rows = list.getByRole('listitem'); await expect(rows).toHaveCount(40);
+    await expect(rows.first().locator('small')).toHaveText(events[0]!.summary);
+    await expect(rows.first().locator('time')).toHaveAttribute('datetime', events[0]!.createdAt);
+    await expect(audit).not.toContainText('PRIVATE_AUDIT_TEST_MARKER');
+    expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await list.focus(); await expect(list).toBeFocused();
+    expect(await list.evaluate(el => el.matches(':focus'))).toBe(true);
+    await list.press('End'); await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+    await list.press('Home'); await expect.poll(() => list.evaluate(el => el.scrollTop)).toBe(0);
+    await list.evaluate(el => { el.scrollTop = 80; });
+    await fixture.emit([{ ...events[0]!, eventId: '9700', summary: 'A new public event.', createdAt: '2026-10-15T03:10:00Z' }]);
+    await expect(rows).toHaveCount(41);
+    expect(await list.evaluate(el => el.scrollTop)).toBe(80); await expect(list).toBeFocused();
+    await expect(audit.locator(':scope > summary')).toContainText('41');
+    await audit.locator(':scope > summary').press('Enter'); await expect(list).not.toBeVisible();
+    await audit.locator(':scope > summary').press('Enter'); await expect(list).toBeVisible();
+    await page.getByRole('tab', { name: zh ? '环境' : 'Environment', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '关闭检查器' : 'Close inspector', exact: true }).click();
+    await expect(draft).toHaveValue('保留尚未发送的检查意见');
+    expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`long run objectives expand without truncating text or clearing drafts ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const objective = '请保留完整任务原文与文件来源，检查移动端购买流程、费用和审批边界。\n'.repeat(14);
+    fixture.state.run.objective = objective;
+    await page.addInitScript(() => localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, theme: 'dark', rightCollapsed: true })));
+    await page.goto(runPath);
+    await expect(page.locator('.run-conversation-stream')).toContainText('本轮重点');
+    const bubble = page.locator('.conversation-scroll > .user-message');
+    const text = bubble.locator('p'); const toggle = bubble.getByRole('button');
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留下一条未发送的意见');
+    await expect(toggle).toHaveText(zh ? '显示更多' : 'Show more');
+    const controlled = await toggle.getAttribute('aria-controls'); expect(controlled).toBe(await text.getAttribute('id'));
+    await toggle.focus(); await toggle.press('Enter');
+    await expect(toggle).toHaveText(zh ? '收起' : 'Show less'); await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(text).toHaveText(objective);
+    expect(await text.evaluate(el => el.textContent)).toBe(objective);
+    fixture.state.run.budget.used = 13;
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9800', type: 'context.compacted', summary: '保持当前任务上下文', createdAt: '2026-10-15T03:05:00Z' }]);
+    await expect(page.locator('.workspace-topbar')).toContainText('13 / 50');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await page.evaluate(() => window.dispatchEvent(new Event('app-auth-changed')));
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await toggle.focus(); await toggle.press('Enter');
+    await toggle.press('Space'); await expect(toggle).toHaveAttribute('aria-expanded', 'false'); await expect(toggle).toBeFocused(); await expect(toggle).toBeInViewport();
+    await expect(draft).toHaveValue('保留下一条未发送的意见');
+    // Actual text updates and viewport changes are observed; no character-count cutoff.
+    fixture.state.run.objective = '保留原文。'.repeat(24);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9801', type: 'context.compacted', summary: '读取更新后的任务原文', createdAt: '2026-10-15T03:06:00Z' }]);
+    await expect(text).toHaveText(fixture.state.run.objective);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(toggle).toHaveCount(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fixture.state.run.objective = '短任务。';
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9802', type: 'context.compacted', summary: '保留简短任务', createdAt: '2026-10-15T03:07:00Z' }]);
+    await expect(text).toHaveText('短任务。'); await expect(toggle).toHaveCount(0);
+    expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`empty deliverables reflect arriving artifacts without writes or draft loss ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    fixture.state.run.artifacts = [];
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea');
+    await draft.fill('保留未发送的文件说明');
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '任务' : 'Task', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? /^文件/ : /^Files/ }).click();
+    const panel = page.getByRole('tabpanel', { name: zh ? /^文件/ : /^Files/ });
+    const empty = panel.locator('.deliverables-empty');
+    const title = zh ? '暂无交付文件' : 'No deliverables yet';
+    await expect(empty.getByRole('heading', { name: title })).toBeVisible();
+    await expect(empty.locator('p')).toHaveText(zh ? '本次任务生成的文件会显示在这里。' : 'Files produced by this run appear here.');
+    await expect(panel.locator('a,button,input')).toHaveCount(0);
+    fixture.state.run.artifacts = [{
+      artifactId: '60000000-0000-4000-8000-000000000001', assetId: null, parentArtifactId: null,
+      role: 'editable', filename: 'review-report.md', mimeType: 'text/markdown', byteSize: 128,
+      sha256: null, version: 1, verificationStatus: 'pending', verification: {}, sources: [], costCredits: 0,
+      url: '/api/assets/60000000-0000-4000-8000-000000000002', expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z'
+    }];
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9801', type: 'context.compacted', summary: '文件清单已更新。' }]);
+    const download = panel.getByRole('link', { name: /review-report.md/ });
+    await expect(download).toBeVisible(); await expect(empty).toHaveCount(0);
+    await expect(panel.locator('.inspector-card > header > b')).toHaveText('1');
+    await expect(download).toHaveAttribute('href', /\/api\/assets\/60000000-0000-4000-8000-000000000002$/);
+    await expect(download).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(download).toContainText(zh ? '待验证' : 'Pending verification');
+    await download.focus(); await download.press('Shift+Tab'); await page.keyboard.press('Tab'); await expect(download).toBeFocused();
+    expect(await download.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await page.getByRole('tab', { name: zh ? '环境' : 'Environment', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? /^文件/ : /^Files/ }).click();
+    await expect(download).toBeVisible();
+    await page.getByRole('button', { name: zh ? '关闭检查器' : 'Close inspector', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的文件说明');
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.creates).toHaveLength(0);
+    expect(fixture.workspace.saves).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`restored draft notices stay visible across all composer placements ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const original = '已恢复的文件检查要求';
+    await page.addInitScript(({ zh, original, runId, conversationId }) => {
+      if (!zh) localStorage.setItem('app_lang', 'en');
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 2, theme: 'dark', rightCollapsed: true }));
+      for (const task of ['agent:new', 'conversation:new::', `run:${runId}`, `conversation:${conversationId}`]) {
+        const key = `artigen:workspace-draft:v1:input-fixture:${encodeURIComponent(task)}`;
+        if (localStorage.getItem(key) === null) localStorage.setItem(key, original);
+      }
+    }, { zh, original, runId: inputRunId, conversationId: inputConversationId });
+    await page.route(`**/api/design-conversations/${inputConversationId}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, conversation: { conversationId: inputConversationId, projectId: null, title: '品牌网站研究', status: 'active', autoCreditCap: 50, clarificationRounds: 0, expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z', updatedAt: '2026-10-15T03:00:00Z', uploads: [], executions: [], messages: [{ messageId: 'draft-notice-message', sequence: 1, role: 'assistant', kind: 'text', status: 'complete', text: '请继续补充文件检查要求。', attachments: [], questions: [], assumptions: [], memoryCandidates: [], createdAt: '2026-10-15T03:00:00Z' }] } }) }));
+    const scenes = [
+      ['workbench', '/artigen/agent'], ['create', '/artigen/create'],
+      ['run', `/artigen/agent/runs/${inputRunId}`], ['conversation', `/artigen/create?c=${inputConversationId}`]
+    ] as const;
+    for (const [scene, path] of scenes) {
+      await page.goto(path);
+      if (scene === 'conversation') await expect(page.locator('.docked-composer')).toBeVisible();
+      const input = page.locator('.composer-box textarea:visible');
+      const notice = page.locator('.draft-restored:visible');
+      await expect(input).toHaveValue(original); await expect(notice).toHaveAttribute('role', 'status');
+      await expect(notice.locator('strong')).toHaveText(zh ? '已恢复本机草稿' : 'Local draft restored');
+      await expect(notice.locator('small')).toHaveCount(scene === 'run' ? 0 : 1);
+      if (scene !== 'run') await expect(notice.locator('small')).toHaveText(zh ? '参考文件需重新选择。' : 'Choose reference files again.');
+      await expect(notice).toBeInViewport(); await expect(notice.locator('button,a,input')).toHaveCount(0);
+      await expect(page.locator('.attachment-list')).toHaveCount(0);
+      const edited = `${scene} 尚未发送的新要求`;
+      await input.fill(edited); await expect(page.locator('.draft-restored')).toHaveCount(0);
+      await page.reload(); await expect(input).toHaveValue(edited); await expect(notice).toBeVisible();
+      await expect(page.locator('.attachment-list')).toHaveCount(0);
+    }
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.quotes).toHaveLength(0);
+    expect(fixture.state.designMessages).toHaveLength(0); expect(fixture.state.uploads).toBe(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`subagent card axes stay aligned through long labels and status updates ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    fixture.state.run.subagents = [0, 1, 2].map(i => ({
+      subagentId: `30000000-0000-4000-8000-00000000000${i}`, runId: inputRunId, ordinal: i + 1,
+      role: 'Research', label: i === 0 ? 'ReviewMobilePurchaseFlowAndKeyboardAccessibility'.repeat(2) : `Evidence review ${i}`,
+      status: i === 0 ? 'running' : i === 1 ? 'succeeded' : 'failed',
+      progress: { stepCount: 7 + i, maxSteps: 20, cancelRequested: false }, usage: { credits: 1.25 + i },
+      summary: '保留证据、任务范围与原始文件。', outputFiles: [], error: null,
+      expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z', startedAt: '2026-10-15T03:00:00Z', finishedAt: null, updatedAt: '2026-10-15T03:00:00Z'
+    }));
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留下一条未发送的要求');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '任务' : 'Task', exact: true }).click();
+    await page.getByRole('tab', { name: zh ? /^子 Agent/ : /^Subagents/ }).click();
+    const panel = page.getByRole('tabpanel', { name: zh ? /^子 Agent/ : /^Subagents/ });
+    const cards = panel.locator('.subagent-card'); await expect(cards).toHaveCount(3);
+    await expect(cards.first().locator('header b')).toHaveText(fixture.state.run.subagents[0]!.label);
+    const axes = await panel.evaluate(el => {
+      const parent = el.querySelector('.parent-agent-card')!;
+      const left = parent.querySelector('b')!.getBoundingClientRect().left;
+      return [...el.querySelectorAll('.subagent-card')].map(card => ({ delta: Math.abs(card.querySelector('b')!.getBoundingClientRect().left - left), overflow: card.scrollWidth > card.clientWidth + 1 }));
+    });
+    expect(axes.every(axis => axis.delta <= 1 && !axis.overflow)).toBe(true);
+    await expect(cards.locator('.subagent-status-label')).toHaveText(zh ? ['执行中', '已完成', '失败'] : ['Running', 'Completed', 'Failed']);
+    const cancel = cards.first().getByRole('button', { name: zh ? '取消这个子 Agent' : 'Cancel this subagent' });
+    await cancel.focus(); await cancel.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(cancel).toBeFocused();
+    expect(await cancel.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    expect((await cancel.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    fixture.state.run.subagents[0]!.status = 'succeeded';
+    await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9902', type: 'context.compacted', summary: '子任务状态已更新。' }]);
+    await expect(cards.first().locator('.subagent-status-label')).toHaveText(zh ? '已完成' : 'Completed');
+    await expect(panel.getByRole('button', { name: zh ? '取消这个子 Agent' : 'Cancel this subagent' })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: zh ? '子 Agent' : 'Subagents', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('button', { name: zh ? '关闭检查器' : 'Close inspector', exact: true }).click();
+    await expect(draft).toHaveValue('保留下一条未发送的要求'); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub patch file rows keep paths and counts readable with native disclosure ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const filename = 'frontend/src/components/very-long-generated-directory/'.repeat(5) + '说明.ts';
+    const patch = '@@ -1,2 +1,2 @@\n-<button>旧内容</button>\n+<button>新内容</button>';
+    const reads: string[] = [], writes: string[] = [];
+    page.on('request', req => { if (req.url().includes('/github') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(/\/github\/(?:pull-files|commit)\?/, route => {
+      reads.push(route.request().method());
+      return route.fulfill({ json: { items: [{ filename, additions: 123456, deletions: 78901, patch }, { filename: 'preview.png', additions: 0, deletions: 0, patch: null }], hasMore: false } });
+    });
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的审查意见');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace');
+    for (const kind of ['pulls', 'commits']) {
+      if (kind === 'commits') await root.getByRole('button', { name: zh ? '提交' : 'Commits', exact: true }).click();
+      await root.locator('.git-record').click();
+      const details = root.locator('.github-record-detail details'), summary = details.first().locator('summary');
+      await expect(details).toHaveCount(2); await expect(summary.locator('.patch-filename')).toHaveText(filename);
+      await expect(summary.locator('.patch-filename')).toHaveAttribute('title', filename);
+      await expect(summary.locator('.patch-counts')).toHaveText('+123456−78901');
+      await summary.focus(); await summary.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(summary).toBeFocused();
+      expect(await summary.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+      expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(43.9);
+      await summary.press('Enter'); await expect(details.first()).toHaveAttribute('open', '');
+      await expect(details.first().locator('pre')).toHaveText(patch); await expect(details.first().locator('pre button')).toHaveCount(0);
+      await summary.press('Space'); await expect(details.first()).not.toHaveAttribute('open');
+      await details.nth(1).locator('summary').press('Enter');
+      await expect(details.nth(1).locator('pre')).toHaveText(zh ? '此文件没有可用文本差异。' : 'No text patch is available.');
+      await root.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true }).click();
+    }
+    expect(reads).toEqual(['GET', 'GET']); expect(writes).toEqual([]); expect(fixture.workspace.saves).toHaveLength(0);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的审查意见'); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`PDF failures follow workspace language and keep original downloads intact ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = 'not a PDF: preserve bytes\n含中文原始内容';
+    let broken = true;
+    await page.route('**/api/assets/80000000-0000-4000-8000-000000000005', route => broken ? route.fulfill({ contentType: 'application/pdf', body: original }) : route.fallback());
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的文件检查意见');
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+    const pdf = page.locator('.pdf-document'); const error = pdf.locator('.pdf-error');
+    await expect(error.getByRole('heading', { name: zh ? 'PDF 暂时无法预览' : 'PDF preview unavailable' })).toBeVisible();
+    await expect(error).toHaveAttribute('role', 'status'); await expect(error.locator('button,a')).toHaveCount(0);
+    await expect(pdf.locator('.pdf-page-scroll')).toBeHidden();
+    const controls = pdf.getByRole('group', { name: zh ? 'PDF 页面导航' : 'PDF page navigation' });
+    await expect(controls.locator('output')).toHaveText('— / —');
+    await expect(controls.getByRole('button', { name: zh ? '上一页' : 'Previous page' })).toBeDisabled();
+    await expect(controls.getByRole('button', { name: zh ? '下一页' : 'Next page' })).toBeDisabled();
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: zh ? '下载 report.pdf' : 'Download report.pdf', exact: true }).click();
+    const download = await downloaded; expect(download.suggestedFilename()).toBe('report.pdf');
+    const stream = await download.createReadStream(); expect(stream).not.toBeNull();
+    const bytes: Buffer[] = []; for await (const chunk of stream!) bytes.push(Buffer.from(chunk));
+    expect(Buffer.concat(bytes)).toEqual(Buffer.from(original)); await download.delete();
+    await page.getByRole('button', { name: zh ? '关闭 report.pdf' : 'Close report.pdf', exact: true }).click();
+    await expect(pdf).toHaveCount(0); broken = false;
+    if (await page.locator('.tree-toggle').getAttribute('aria-pressed') === 'false')
+      await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    await tree.getByRole('button', { name: 'report.pdf', exact: true }).click();
+    await expect(pdf.locator('output')).toHaveText('1 / 1'); await expect(error).toHaveCount(0);
+    await expect(pdf.locator('.pdf-page-scroll canvas')).toBeVisible();
+    await expect(pdf.locator('output')).toHaveAttribute('aria-label', zh ? '第 1 页，共 1 页' : 'Page 1 of 1');
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的文件检查意见');
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`image decode failures keep original downloads and other document state intact ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const original = Buffer.from('not a PNG\n保留原始字节\u0000\u0001'); let broken = true;
+    let reads = 0;
+    await page.route('**/api/assets/80000000-0000-4000-8000-000000000004', route => {
+      reads++;
+      return broken ? route.fulfill({ contentType: 'image/png', body: original }) : route.fallback();
+    });
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的图片检查意见');
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'outputs', exact: true }).click();
+    await tree.getByRole('button', { name: 'preview.png', exact: true }).click();
+    const viewer = page.locator('.image-viewer'), error = viewer.getByRole('status');
+    await expect(error.getByRole('heading', { name: zh ? '图片暂时无法预览' : 'Image preview unavailable' })).toBeVisible();
+    await expect(viewer.locator('img,.image-controls,.image-canvas')).toHaveCount(0);
+    await expect(error.locator('button,a')).toHaveCount(0);
+    const downloaded = page.waitForEvent('download');
+    await page.getByRole('button', { name: zh ? '下载 preview.png' : 'Download preview.png', exact: true }).click();
+    const download = await downloaded; expect(download.suggestedFilename()).toBe('preview.png');
+    const stream = await download.createReadStream(); expect(stream).not.toBeNull();
+    const chunks: Buffer[] = []; for await (const chunk of stream!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(original); await download.delete();
+    if (await page.locator('.tree-toggle').getAttribute('aria-pressed') === 'false')
+      await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    await tree.getByRole('button', { name: 'docs', exact: true }).click();
+    await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await expect(page.locator('.document-preview')).toContainText('品牌网站审查');
+    await expect(viewer).toHaveCount(0);
+    await page.getByRole('tab', { name: 'preview.png', exact: true }).click();
+    await expect(error).toBeVisible(); expect(reads).toBe(1);
+    await page.getByRole('button', { name: zh ? '关闭 preview.png' : 'Close preview.png', exact: true }).click();
+    broken = false;
+    if (await page.locator('.tree-toggle').getAttribute('aria-pressed') === 'false')
+      await page.getByRole('button', { name: zh ? '显示目录树' : 'Show file tree', exact: true }).click();
+    await tree.getByRole('button', { name: 'preview.png', exact: true }).click();
+    const image = viewer.locator('img'); await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate(el => (el as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect(error).toHaveCount(0);
+    await viewer.getByRole('button', { name: zh ? '放大图片' : 'Zoom in', exact: true }).click();
+    await expect(viewer.locator('.image-zoom-reset')).toHaveText('125%'); expect(reads).toBe(2);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的图片检查意见');
+    expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub pagination keeps read content and retries the same record and patch page ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const reads: Record<string, number[]> = {}; const writes: string[] = [];
+    let release: (() => void) | undefined;
+    page.on('request', req => { if (req.url().includes('/github') && req.method() !== 'GET') writes.push(req.method()); });
+    await page.route(/\/github\/(pulls|commits|pull-files|commit)\?/, async route => {
+      const url = new URL(route.request().url()), endpoint = url.pathname.split('/').pop()!;
+      const n = Number(url.searchParams.get('page'));
+      const pages = reads[endpoint] ||= []; pages.push(n);
+      if (n === 2 && pages.filter(p => p === 2).length === 1)
+        return route.fulfill({ status: 503, json: { error: { code: 'GITHUB_UNAVAILABLE' } } });
+      if (n === 2) await new Promise<void>(resolve => { release = resolve; });
+      const patch = endpoint === 'pull-files' || endpoint === 'commit';
+      const item = patch ? { filename: `src/Review${n}.vue`, additions: n, deletions: 0, patch: `@@ -0 +1 @@\n+<button>Review ${n}</button>` }
+        : { ...(endpoint === 'pulls' ? { number: n, state: 'open' } : { sha: 'a'.repeat(39) + n }), title: `Read-only review ${n}`, url: 'https://github.com/example/brand-site', updatedAt: '2026-10-15T03:00:00Z' };
+      return route.fulfill({ json: { items: [item], hasMore: n === 1 } });
+    });
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的审查意见');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace'); const notice = root.locator(':scope > p[role=status]');
+    for (const kind of ['pulls', 'commits']) {
+      if (kind === 'commits') await root.getByRole('button', { name: zh ? '提交' : 'Commits', exact: true }).click();
+      const records = root.locator('.github-records'), recordMore = records.locator('.github-load-more');
+      await expect(records.locator('.git-record')).toHaveCount(1); await expect(recordMore).toBeEnabled();
+      await recordMore.focus(); await recordMore.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(recordMore).toBeFocused();
+      expect(await recordMore.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+      await recordMore.press('Enter');
+      await expect(notice).toContainText(zh ? '读取失败' : 'Request failed');
+      await expect(records.locator('.git-record')).toHaveCount(1); await expect(recordMore).toBeEnabled();
+      await recordMore.click(); await expect.poll(() => Boolean(release)).toBe(true);
+      await expect(recordMore).toBeDisabled(); await expect(recordMore).toHaveAttribute('aria-busy', 'true');
+      await expect(recordMore).toHaveText(zh ? '正在读取更多…' : 'Loading more…');
+      await expect(notice).toHaveCount(0); await expect(records.getByRole('status')).toHaveCount(0);
+      await expect(records.locator('.git-record')).toHaveCount(1);
+      await recordMore.evaluate(el => (el as HTMLButtonElement).click()); expect(reads[kind]).toEqual([1, 2, 2]);
+      release!(); release = undefined;
+      await expect(records.locator('.git-record')).toHaveCount(2); await expect(recordMore).toHaveCount(0);
+      await records.locator('.git-record').first().click();
+      const detail = root.locator('.github-record-detail'), patchMore = detail.locator('.github-load-more');
+      await expect(detail.locator('details')).toHaveCount(1); await expect(patchMore).toBeEnabled();
+      await patchMore.click(); await expect(notice).toContainText(zh ? '读取失败' : 'Request failed');
+      await expect(detail.locator('details')).toHaveCount(1); await expect(patchMore).toBeEnabled();
+      await patchMore.click(); await expect.poll(() => Boolean(release)).toBe(true);
+      await expect(patchMore).toBeDisabled(); await expect(patchMore).toHaveAttribute('aria-busy', 'true');
+      await expect(patchMore).toHaveText(zh ? '正在读取更多文件…' : 'Loading more files…'); await expect(notice).toHaveCount(0);
+      const key = kind === 'pulls' ? 'pull-files' : 'commit'; expect(reads[key]).toEqual([1, 2, 2]);
+      release!(); release = undefined;
+      await expect(detail.locator('details')).toHaveCount(2); await expect(patchMore).toHaveCount(0); await expect(notice).toHaveCount(0);
+      await detail.locator('summary').last().press('Enter');
+      await expect(detail.locator('pre').last()).toHaveText('@@ -0 +1 @@\n+<button>Review 2</button>'); await expect(detail.locator('pre button')).toHaveCount(0);
+      await root.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true }).click();
+      await expect(records.locator('.git-record')).toHaveCount(2);
+    }
+    expect(writes).toEqual([]); expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的审查意见');
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`GitHub initial reload failures do not expose stale pagination ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    let failRecords = false, failPatches = false;
+    await page.route('**/github/pulls?*', route => failRecords
+      ? route.fulfill({ status: 503, json: { error: { code: 'GITHUB_UNAVAILABLE' } } })
+      : route.fulfill({ json: { items: [{ number: 1, title: 'Review records', state: 'open', url: 'https://github.com/example/brand-site/pull/1' }], hasMore: true } }));
+    await page.route('**/github/pull-files?*', route => failPatches
+      ? route.fulfill({ status: 503, json: { error: { code: 'GITHUB_UNAVAILABLE' } } })
+      : route.fulfill({ json: { items: [{ filename: 'src/Home.vue', additions: 1, deletions: 0, patch: '+Review' }], hasMore: true } }));
+    await page.goto(runPath);
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: 'GitHub', exact: true }).click();
+    const root = page.locator('.github-workspace'), more = root.locator('.github-load-more');
+    const refresh = root.locator(':scope > header').getByRole('button', { name: zh ? '刷新' : 'Refresh', exact: true });
+    await expect(more).toBeVisible(); failRecords = true; await refresh.click();
+    await expect(root.getByRole('status')).toContainText(zh ? '读取失败' : 'Request failed');
+    await expect(root.locator('.git-record')).toHaveCount(0); await expect(more).toHaveCount(0);
+    failRecords = false; await refresh.click(); await expect(root.locator('.git-record')).toHaveCount(1);
+    await root.locator('.git-record').click(); await expect(more).toBeVisible();
+    await expect(root.locator('details')).toHaveCount(1);
+    await root.getByRole('button', { name: zh ? '返回记录' : 'Back to records', exact: true }).click();
+    failPatches = true; await root.locator('.git-record').click();
+    await expect(root.getByRole('status')).toContainText(zh ? '读取失败' : 'Request failed');
+    await expect(root.locator('details')).toHaveCount(0); await expect(more).toHaveCount(0);
+    expect(fixture.workspace.githubRequests.every(method => method === 'GET')).toBe(true);
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) for (const timezoneId of ['Asia/Shanghai', 'America/Los_Angeles']) {
+  test(`public message timestamps keep full dates with compact local clocks ${language} ${timezoneId}`, async ({ browser }) => {
+    const zh = language === 'zh';
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, timezoneId, isMobile: true, hasTouch: true });
+    try {
+      const page = await context.newPage(); const fixture = await installWorkspaceFixture(page);
+      if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+      const stamp = '2026-10-15T03:04:05Z'; fixture.state.run.createdAt = stamp;
+      const messages = [
+        { id: 'clock-first', role: 'assistant', kind: 'commentary', text: '第一天的原始消息。', createdAt: stamp },
+        { id: 'clock-second', role: 'user', kind: 'text', text: '第二天的补充内容。', createdAt: '2026-10-16T03:04:05Z' },
+        { id: 'clock-invalid', role: 'assistant', kind: 'commentary', text: '没有有效时间的旧记录仍保留。', createdAt: 'invalid-date' }
+      ];
+      await page.route(`**/api/agent-runs/${inputRunId}/messages*`, route => route.fulfill({ json: { messages, nextCursor: null } }));
+      await page.goto(runPath);
+      const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的时间核对意见');
+      const objectiveTime = page.locator('article.message.user-message > header time');
+      const clock = page.locator('.timeline-message').filter({ hasText: '第一天的原始消息。' }).locator('header time');
+      const expected = await page.evaluate(({ stamp, zh }) => {
+        const d = new Date(stamp), locale = zh ? 'zh-CN' : 'en-US';
+        const timeZone = zh ? 'Asia/Shanghai' : undefined;
+        return { short: d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', ...(timeZone ? { timeZone } : {}) }), full: d.toLocaleString(locale, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short', ...(timeZone ? { timeZone } : {}) }) };
+      }, { stamp, zh });
+      await expect(objectiveTime).toHaveText(expected.short); await expect(clock).toHaveText(expected.short);
+      for (const time of [objectiveTime, clock]) {
+        await expect(time).toHaveAttribute('datetime', stamp); await expect(time).toHaveAttribute('title', expected.full);
+        expect(await time.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('nowrap');
+        expect(await time.evaluate(el => getComputedStyle(el).fontVariantNumeric)).toBe('tabular-nums');
+      }
+      const nextDay = page.locator('.timeline-message').filter({ hasText: '第二天的补充内容。' }).locator('header time');
+      await expect(nextDay).toHaveText(expected.short); expect(await nextDay.getAttribute('title')).not.toBe(expected.full);
+      const invalid = page.locator('.timeline-message').filter({ hasText: '没有有效时间的旧记录仍保留。' }).locator('header time');
+      await expect(invalid).toHaveText('—'); await expect(invalid).not.toHaveAttribute('datetime');
+      await expect(invalid).toHaveAttribute('title', zh ? '时间不可用' : 'Time unavailable');
+      await expect(page.locator('.timeline-message .workspace-markdown')).toHaveText(messages.map(m => m.text));
+      await expect(page.locator('.timeline-message .copy-message')).toHaveCount(3);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+      await expect(draft).toHaveValue('保留未发送的时间核对意见');
+      expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0);
+    } finally { await context.close(); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`comparison source keeps historical selection explicit without writing ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const { workspace } = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const candidate = workspace.files[2]!;
+    candidate.path = 'outputs/review/'.repeat(10) + '品牌网站审查-revised.md';
+    await page.setViewportSize({ width: 390, height: 844 }); await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留尚未发送的审查意见');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' });
+    const files = nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true });
+    await files.click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer' });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click(); await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
+    const panel = page.locator('.changes-panel'); const select = panel.getByRole('combobox', { name: zh ? '比较来源' : 'Comparison source', exact: true });
+    await expect(select).toHaveValue(''); await expect(select).toHaveAttribute('title', zh ? '当前编辑' : 'Current edits');
+    await select.selectOption(candidate.id); await expectComparisonLayout(panel);
+    await expect(select).toHaveAttribute('title', candidate.path);
+    await expect(select.locator('option:checked')).toHaveText(candidate.path);
+    for (const editor of await panel.locator('.cm-content').all()) await expect(editor).toHaveAttribute('contenteditable', 'false');
+    expect(workspace.saves).toHaveLength(0);
+    await files.click();
+    await page.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true }).selectOption('1');
+    await expect(select).toHaveValue('version:1');
+    await expect(select.locator('option:checked')).toHaveText(zh ? '历史版本 v1' : 'Version v1');
+    await expect(select.locator('option:checked')).toBeDisabled();
+    const describedBy = await select.getAttribute('aria-describedby'); expect(describedBy).toBeTruthy();
+    await expect(page.locator(`[id="${describedBy}"]`)).toHaveText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
+    await select.focus(); await expect(select).toBeFocused();
+    expect(await select.evaluate(el => el.matches(':focus'))).toBe(true);
+    expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await select.selectOption(''); await expect(panel.locator(':scope > p')).toHaveText(zh ? '当前编辑与打开时版本的比较。' : 'Current edits compared with the opened version.');
+    await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+    await expect(select).toHaveValue(''); await expect(select).toBeFocused();
+    expect(workspace.saves).toHaveLength(0);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click(); await expect(draft).toHaveValue('保留尚未发送的审查意见');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`local folder permission recovery stays scoped and never duplicates requests ${language}`, async ({ page }) => {
+    const zh = language === 'zh';
+    const fixture = await installWorkspaceFixture(page);
+    const permission = await installLocalPermissionFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    const open = async () => {
+      const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+      await expect(nav).toBeVisible();
+      await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    };
+    await page.goto(runPath);
+    await open();
+    await permission.prepare();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: zh ? '连接本机文件夹' : 'Connect local folder', exact: true }).click();
+    await expect(tree.getByRole('button', { name: 'permission-note.txt', exact: true })).toBeVisible();
+    await page.reload(); await open();
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的目录检查意见');
+    const action = tree.locator('.local-permission-action');
+    const status = tree.locator('.local-permission [role="status"]');
+    await expect(action).toHaveText(zh ? '重新授权目录' : 'Authorize folder again');
+    expect(await permission.requests()).toEqual([]);
+    expect(await permission.reads()).toBe(0);
+    await action.focus(); await action.press('Enter');
+    await expect(action).toBeDisabled(); await expect(action).toHaveAttribute('aria-busy', 'true');
+    await expect(action).toHaveText(zh ? '正在授权…' : 'Authorizing…');
+    await action.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+    expect(await permission.requests()).toEqual(['read']);
+    await permission.release('denied');
+    await expect(status).toHaveText(zh ? '尚未获得目录访问权限，请重试。' : 'Folder access was not granted. Try again.');
+    await expect(action).toBeEnabled();
+    await action.press('Enter');
+    await expect.poll(permission.requests).toEqual(['read', 'read']);
+    await expect(status).toHaveCount(0);
+    await permission.release('error');
+    await expect(status).toHaveText(zh ? '文件访问权限不足，请重新授权后重试。' : 'Authorize file access and retry.');
+    await expect(action).toBeEnabled();
+    await permission.failRead(true);
+    await action.click();
+    await expect.poll(permission.requests).toEqual(['read', 'read', 'read']);
+    await permission.release('granted');
+    await expect(status).toHaveText(zh ? '文件访问权限不足，请重新授权后重试。' : 'Authorize file access and retry.');
+    await expect(action).toBeEnabled();
+    await expect(tree.getByRole('button', { name: 'permission-note.txt', exact: true })).toHaveCount(0);
+    await permission.failRead(false); await action.click();
+    await expect(action).toHaveCount(0);
+    await expect(status).toHaveCount(0);
+    expect(await permission.requests()).toEqual(['read', 'read', 'read']);
+    const file = tree.getByRole('button', { name: 'permission-note.txt', exact: true });
+    await expect(file).toBeVisible(); await file.click();
+    await expect(page.locator('.cm-content')).toHaveText('Local permission UI fixture.');
+    await page.reload(); await open();
+    await expect(action).toBeVisible(); await action.click();
+    await expect.poll(permission.requests).toEqual(['read']);
+    await tree.getByRole('button', { name: zh ? '断开文件夹 local-permission-fixture' : 'Disconnect folder local-permission-fixture', exact: true }).click();
+    await expect(tree.locator('.local-root')).toHaveCount(0);
+    await permission.release('error');
+    await page.waitForTimeout(100);
+    await expect(status).toHaveCount(0);
+    await expect(page.locator('.resource-notice')).toHaveCount(0);
+    await expect(tree.getByRole('button', { name: zh ? '连接本机文件夹' : 'Connect local folder', exact: true })).toBeEnabled();
+    await expect(draft).toHaveValue('保留未发送的目录检查意见');
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`Markdown heading rhythm preserves six native levels across messages and previews ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    const titles = ['审查结论', '视觉层级', '移动体验', '交互记录', '核验范围', 'evidence/long-heading-without-spaces-'.repeat(12)];
+    let text = titles.map((title, i) => '#'.repeat(i + 1) + ' ' + title).join('\n\n');
+    const fileText = '###### 文件验收记录\n\n保留文件原文与未发送的要求。';
+    fixture.workspace.files[0].text = fileText;
+    await page.route(`**/api/agent-runs/${inputRunId}/messages*`, route => route.fulfill({ json: { ok: true, messages: [{ id: 'heading-rhythm-message', role: 'assistant', kind: 'text', text, createdAt: '2026-10-15T03:00:10Z' }], nextCursor: null } }));
+    await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的排版检查意见');
+    const markdown = page.locator('.timeline-message.assistant .workspace-markdown');
+    const headings = markdown.getByRole('heading');
+    await expect(headings).toHaveText(titles);
+    expect(await headings.evaluateAll(nodes => nodes.map(node => node.tagName))).toEqual(['H1','H2','H3','H4','H5','H6']);
+    const metrics = await headings.evaluateAll(nodes => nodes.map(node => {
+      const style = getComputedStyle(node);return { size: parseFloat(style.fontSize), weight: style.fontWeight, bottom: style.marginBottom };
+    }));
+    expect(metrics.map(m => m.size)).toEqual([22,19,17,15,15,15]);
+    expect(metrics.every(m => m.weight === '650')).toBe(true);
+    expect(metrics.at(-1)!.bottom).toBe('0px');
+    expect(await markdown.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    expect(await headings.last().evaluate(el => el.getBoundingClientRect().height > parseFloat(getComputedStyle(el).lineHeight))).toBe(true);
+    for (let level = 1; level <= 6; level++) {
+      text = '#'.repeat(level) + ' 首段标题-' + level;
+      await fixture.emit([{ ...activityEvents(1)[0]!, eventId: String(9900 + level), type: 'message.created', summary: '标题排版测试更新' }]);
+      await expect(markdown.getByRole('heading', { level })).toHaveText('首段标题-' + level);
+      const spacing = await markdown.getByRole('heading').evaluate(el => ({ top: getComputedStyle(el).marginTop, bottom: getComputedStyle(el).marginBottom }));
+      expect(spacing).toEqual({ top: '0px', bottom: '0px' });
+    }
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click(); await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    const preview = page.locator('.document-preview .workspace-markdown');
+    await expect(preview.getByRole('heading', { level: 6 })).toHaveText('文件验收记录');
+    const first = await preview.locator('h6').evaluate(el => ({ size: getComputedStyle(el).fontSize, top: getComputedStyle(el).marginTop }));
+    expect(first).toEqual({ size: '15px', top: '0px' });
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    await expect(page.locator('.cm-content .cm-line')).toHaveText(fileText.split('\n'));
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的排版检查意见');
+    // The design conversation calls the same renderer; check its first h4 too.
+    await page.route(`**/api/design-conversations/${inputConversationId}`, route => route.fulfill({ json: { ok: true, conversation: { conversationId: inputConversationId, projectId: null, title: '标题排版验收', status: 'active', autoCreditCap: 50, clarificationRounds: 0, expiresAt: '2099-10-15T03:00:00Z', createdAt: '2026-10-15T03:00:00Z', updatedAt: '2026-10-15T03:00:00Z', uploads: [], executions: [], messages: [{ messageId: 'heading-design-message', sequence: 1, role: 'assistant', kind: 'text', status: 'complete', text: '#### 设计审查记录', attachments: [], questions: [], assumptions: [], memoryCandidates: [], createdAt: '2026-10-15T03:00:00Z' }] } } }));
+    await page.goto(`/artigen/create?c=${inputConversationId}`);
+    const design = page.locator('.message-body .workspace-markdown h4'); await expect(design).toHaveText('设计审查记录');
+    expect(await design.evaluate(el => ({ size: getComputedStyle(el).fontSize, top: getComputedStyle(el).marginTop, bottom: getComputedStyle(el).marginBottom }))).toEqual({ size: '15px', top: '0px', bottom: '0px' });
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0); expect(fixture.state.designMessages).toHaveLength(0);
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`explicit retry notice preserves drafts and coalesces control requests ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    fixture.state.run.status = 'waiting_user'; fixture.state.run.progress.retryRequired = true;
+    const budget = structuredClone(fixture.state.run.budget);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 });
+    let release: (() => void) | undefined; let fail = true;
+    const requests: string[] = [];
+    await page.route(`**/api/agent-runs/${inputRunId}/resume`, async route => {
+      requests.push(route.request().method());
+      await new Promise<void>(resolve => { release = resolve; });
+      if (fail) return route.fulfill({ status: 503, json: { error: { code: 'AGENT_CONTROL_FAILED' } } });
+      fixture.state.run.status = 'running'; fixture.state.run.progress.retryRequired = false;
+      return route.fulfill({ json: { ok: true, run: fixture.state.run } });
+    });
+    try {
+      await page.goto(runPath);
+      const notice = page.locator('.retry-required'); const action = notice.getByRole('button');
+      await expect(notice).toHaveAttribute('role', 'status');
+      await expect(notice.locator('b')).toHaveText(zh ? '这次调用结果无法确认' : 'This call could not be confirmed');
+      await expect(notice.locator('p')).toHaveText(zh ? '系统没有自动重试，也没有把这次未落账调用计入费用。你可以确认后安全重试。' : 'It was not retried automatically or charged without a receipt. You can explicitly retry it now.');
+      const draft = page.locator('.run-composer textarea'); await draft.fill('保留尚未发送的后续检查意见');
+      expect(requests).toEqual([]);
+      await action.focus(); await expect(action).toBeFocused();
+      await action.evaluate(el => { (el as HTMLButtonElement).click(); (el as HTMLButtonElement).click(); });
+      await expect.poll(() => requests).toEqual(['POST']);
+      await expect(action).toBeDisabled(); await expect(action).toHaveAttribute('aria-busy', 'true');
+      await expect(action).toHaveText(zh ? '正在处理…' : 'Working…');
+      await expect(page.locator('.run-controls').getByRole('button', { name: zh ? '重试' : 'Retry', exact: true })).toBeDisabled();
+      await expect(draft).toHaveValue('保留尚未发送的后续检查意见');
+      release!(); release = undefined;
+      await expect(action).toBeEnabled(); await expect(action).toHaveAttribute('aria-busy', 'false');
+      await expect(action).toHaveText(zh ? '确认重试' : 'Retry now');
+      await expect(page.locator('.run-notice')).toContainText(zh ? '控制请求没有成功' : 'The control request failed');
+      await expect(notice).toBeVisible(); expect(fixture.state.run.status).toBe('waiting_user');
+      fail = false; await action.focus(); await action.press('Enter');
+      await expect.poll(() => requests).toEqual(['POST', 'POST']);
+      await expect(action).toBeDisabled(); release!(); release = undefined;
+      await expect(notice).toHaveCount(0);
+      await expect(page.locator('.run-controls').getByRole('button', { name: zh ? '暂停' : 'Pause', exact: true })).toBeEnabled();
+      await expect(page.locator('.run-notice')).toHaveCount(0); await expect(draft).toHaveValue('保留尚未发送的后续检查意见');
+      expect(fixture.state.run.budget).toEqual(budget);
+      expect(fixture.state.inputs).toHaveLength(0); expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.creates).toHaveLength(0);
+      // Ordinary waiting-for-user tasks must never show a retry-required warning.
+      fixture.state.run.status = 'waiting_user'; fixture.state.run.progress.retryRequired = false;
+      await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9909', type: 'context.compacted', summary: '普通等待输入状态' }]);
+      await expect(page.locator('.workspace-topbar .runtime-pill')).toHaveText(zh ? '等待你确认' : 'Needs your input');
+      await expect(notice).toHaveCount(0); expect(requests).toEqual(['POST','POST']);
+    } finally { release?.(); }
+  });
+}
+
+for (const language of ['zh', 'en']) {
+  test(`native editor search keeps replace undo and close behavior in narrow panes ${language}`, async ({ page }) => {
+    const zh = language === 'zh'; const fixture = await installWorkspaceFixture(page);
+    if (!zh) await page.addInitScript(() => localStorage.setItem('app_lang', 'en'));
+    await page.setViewportSize({ width: 390, height: 844 }); await page.goto(runPath);
+    const draft = page.locator('.run-composer textarea'); await draft.fill('保留未发送的文件查找要求');
+    await page.getByRole('button', { name: zh ? '打开检查器' : 'Open inspector', exact: true }).click();
+    const nav = page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources', exact: true });
+    await nav.getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
+    const tree = page.getByRole('complementary', { name: zh ? '文件目录' : 'File explorer', exact: true });
+    await tree.getByRole('button', { name: 'docs', exact: true }).click(); await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
+    await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
+    const content = page.locator('.cm-content');
+    const original = 'alpha first\nalpha second\nAlpha third\nalphabet fourth';
+    await content.fill(original); await content.press('ControlOrMeta+f');
+    const panel = page.locator('.cm-search'); const find = panel.getByRole('textbox', { name: 'Find', exact: true });
+    await expect(find).toBeFocused(); await find.fill(''); await find.pressSequentially('alpha');
+    await expect(page.locator('.cm-searchMatch')).toHaveCount(4);
+    await panel.locator('button[name="next"]').click();
+    await expect(page.locator('.cm-line:has(.cm-searchMatch-selected)')).toHaveText('alpha first');
+    await panel.locator('button[name="prev"]').click();
+    await expect(page.locator('.cm-line:has(.cm-searchMatch-selected)')).toHaveText('alphabet fourth');
+    await panel.locator('input[name="case"]').check(); await expect(page.locator('.cm-searchMatch')).toHaveCount(3);
+    await panel.locator('input[name="word"]').check(); await expect(page.locator('.cm-searchMatch')).toHaveCount(2);
+    await panel.locator('input[name="word"]').uncheck(); await panel.locator('input[name="case"]').uncheck();
+    const replacement = panel.getByRole('textbox', { name: 'Replace', exact: true }); await replacement.fill(''); await replacement.pressSequentially('omega');
+    await panel.locator('button[name="replaceAll"]').click();
+    await expect(content.locator('.cm-line')).toHaveText(['omega first','omega second','omega third','omegabet fourth']);
+    const close = panel.getByRole('button', { name: 'close', exact: true }); await close.click();
+    await expect(panel).toHaveCount(0); await expect(content).toBeFocused();
+    await content.press('ControlOrMeta+z'); await expect(content.locator('.cm-line')).toHaveText(original.split('\n'));
+    await content.press('ControlOrMeta+Shift+z'); await expect(content.locator('.cm-line').first()).toHaveText('omega first');
+    await content.press('ControlOrMeta+z'); await content.press('ControlOrMeta+f');
+    await expect(find).toHaveValue('alpha'); await find.press('Escape');
+    await expect(panel).toHaveCount(0); await expect(content).toBeFocused();
+    // The same layout must fit each read-only MergeView column too.
+    await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
+    await expectComparisonLayout(page.locator('.changes-panel'));
+    const compare = page.locator('.workspace-code-editor');
+    for (const pane of await compare.locator('.cm-content').all()) await expect(pane).toHaveAttribute('contenteditable', 'false');
+    expect(await compare.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();
+    await expect(draft).toHaveValue('保留未发送的文件查找要求');
+    expect(fixture.workspace.saves).toHaveLength(0); expect(fixture.state.inputs).toHaveLength(0);
+  });
+}

@@ -48,7 +48,6 @@ const {
 } = require("../services/mail-service");
 const {
   OtpDeliveryError,
-  FALLBACK_SHARED_QUOTA_IP,
   createOtpDeliveryService,
   resolveOtpSendIdempotencyKey,
 } = require("../services/otp-delivery-service");
@@ -505,32 +504,13 @@ const installAuthRoutes = (app, options = {}) => {
             env.TURNSTILE_ACTION ||
             "email_otp",
     ).trim();
-  const emailOtpTurnstileFallbackEnabled = () => {
-    const configured = String(
-      env.AUTH_EMAIL_OTP_TURNSTILE_FALLBACK_ENABLED ?? "true",
-    )
-      .trim()
-      .toLowerCase();
-    return /^(1|true|yes|on)$/.test(configured);
-  };
-  const verifyOtpTurnstile = async ({ req, body, purpose }) => {
-    const token = readTurnstileToken(body);
-    const fallbackRequested = body?.turnstileFallback === true;
-    if (
-      purpose === "login" &&
-      !token &&
-      fallbackRequested &&
-      emailOtpTurnstileFallbackEnabled()
-    ) {
-      return { ok: true, skipped: true, reason: "USER_REQUESTED_LOGIN_FALLBACK" };
-    }
-    return turnstileVerifier({
-      token,
+  const verifyOtpTurnstile = async ({ req, body, purpose }) =>
+    turnstileVerifier({
+      token: readTurnstileToken(body),
       remoteIp: getClientIp(req),
       expectedAction: turnstileAction(purpose),
       env,
     });
-  };
   const setRetryAfter = (res, seconds) => {
     const value = Math.max(0, Math.ceil(Number(seconds) || 0));
     if (value > 0) res.setHeader("Retry-After", String(value));
@@ -591,19 +571,6 @@ const installAuthRoutes = (app, options = {}) => {
     target,
     purpose,
   }) => {
-    const useFallback = purpose === "login" &&
-      body?.turnstileFallback === true &&
-      !readTurnstileToken(body) &&
-      emailOtpTurnstileFallbackEnabled();
-    let quotaIp = getClientIp(req);
-    if (useFallback && String(env.NODE_ENV || "").trim().toLowerCase() === "production") {
-      if (!databaseMode()) {
-        throw new OtpDeliveryError("OTP_FALLBACK_UNAVAILABLE", { status: 503, retryable: true });
-      }
-      // Requests without a Turnstile token share a conservative durable
-      // quota. No proxy header or hosting plan can create more quota buckets.
-      quotaIp = FALLBACK_SHARED_QUOTA_IP;
-    }
     const requestKey = otpSendRequestKey({
       req,
       body,
@@ -633,7 +600,7 @@ const installAuthRoutes = (app, options = {}) => {
       const started = await getOtpDeliveryService().beginAttempt({
         target,
         purpose,
-        ip: quotaIp,
+        ip: getClientIp(req),
         requestKey,
       });
       if (!started.ok) {

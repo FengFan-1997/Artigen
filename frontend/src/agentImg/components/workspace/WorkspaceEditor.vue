@@ -1,47 +1,32 @@
-<template>
-  <div
-    class="workspace-code-editor"
-    :style="{
-      '--code-background': palette.background,
-      '--code-foreground': palette.foreground
-    }"
-    :aria-label="label"
-  >
-    <div ref="host" class="editor-host"></div>
-  </div>
-</template>
+<template><div ref="host" class="workspace-code-editor" :aria-label="label"></div></template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { basicSetup } from '@uiw/codemirror-extensions-basic-setup';
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { basicSetup } from 'codemirror';
 import { EditorView, keymap } from '@codemirror/view';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import {
-  defaultSettingsVscodeDark,
-  defaultSettingsVscodeLight,
-  vscodeDark,
-  vscodeLight
-} from '@uiw/codemirror-theme-vscode';
-
+import { MergeView, unifiedMergeView } from '@codemirror/merge';
+import { vscodeDark, vscodeLight } from '@uiw/codemirror-theme-vscode';
 const props = withDefaults(
   defineProps<{
     modelValue: string;
     path: string;
-    theme: 'light' | 'dark';
     readonly?: boolean;
+    compareTo?: string;
     label?: string;
+    theme: 'light' | 'dark';
   }>(),
   { readonly: false, label: '文件编辑器' }
 );
 const emit = defineEmits<{ 'update:modelValue': [value: string]; save: [] }>();
 const host = ref<HTMLElement | null>(null);
-const themeSlot = new Compartment();
-const selectedTheme = () => (props.theme === 'light' ? vscodeLight : vscodeDark);
-const palette = computed(() =>
-  props.theme === 'light' ? defaultSettingsVscodeLight : defaultSettingsVscodeDark
-);
 let editor: EditorView | null = null;
+let merge: MergeView | null = null;
 let revision = 0;
-
+let unified: boolean | null = null;
+let resizeObserver: ResizeObserver | null = null;
+const themeSlot = new Compartment();
+const labelSlot = new Compartment();
+const currentTheme = () => props.theme === 'dark' ? vscodeDark : vscodeLight;
 async function mountEditor() {
   const ticket = ++revision;
   let language: Extension[] = [];
@@ -57,100 +42,210 @@ async function mountEditor() {
   } else if (extension === 'json') {
     const { json } = await import('@codemirror/lang-json');
     language = [json()];
-  } else if (['html', 'htm'].includes(extension || '')) {
+  } else if (extension === 'html') {
     const { html } = await import('@codemirror/lang-html');
     language = [html()];
-  } else if (['css', 'scss', 'less'].includes(extension || '')) {
+  } else if (extension === 'css') {
     const { css } = await import('@codemirror/lang-css');
     language = [css()];
   }
   if (ticket !== revision || !host.value) return;
+  const scrollTop = editor?.scrollDOM.scrollTop ?? merge?.b.scrollDOM.scrollTop ?? 0;
   editor?.destroy();
+  merge?.destroy();
   editor = null;
+  merge = null;
   host.value.replaceChildren();
-
-  // The upstream VS Code theme owns editor colors; local styles only adapt geometry.
-  const geometry = EditorView.theme({
+  const layout = EditorView.theme({
     '&': { height: '100%', fontSize: '13px' },
-    '.cm-scroller': { overflow: 'auto', lineHeight: '1.65' },
-    '.cm-content': { padding: '12px 0' }
+    '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace,SFMono-Regular,monospace', lineHeight: '1.6' },
+    '.cm-content': { padding: '16px 0' }
   });
-  editor = new EditorView({
-    parent: host.value,
-    state: EditorState.create({
-      doc: props.modelValue,
-      extensions: [
-        basicSetup({
-          highlightActiveLine: true,
-          highlightActiveLineGutter: true,
-          crosshairCursor: false
-        }),
-        ...language,
-        themeSlot.of(selectedTheme()),
-        geometry,
-        EditorView.contentAttributes.of({ 'aria-label': props.label }),
-        EditorState.readOnly.of(props.readonly),
-        EditorView.editable.of(!props.readonly),
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) emit('update:modelValue', update.state.doc.toString());
-        }),
-        keymap.of([
-          {
-            key: 'Mod-s',
-            run: () => {
-              emit('save');
-              return true;
-            }
-          }
-        ])
-      ]
-    })
-  });
+  const extensions = [
+    basicSetup,
+    ...language,
+    themeSlot.of(currentTheme()),
+    layout,
+    labelSlot.of(EditorView.contentAttributes.of({ 'aria-label': props.label })),
+    keymap.of([
+      {
+        key: 'Mod-s',
+        run: () => {
+          emit('save');
+          return true;
+        }
+      }
+    ])
+  ];
+  if (props.compareTo !== undefined) {
+    unified = host.value.clientWidth < 720;
+    const readonly = [
+      ...extensions,
+      EditorState.readOnly.of(true),
+      EditorView.editable.of(false),
+      EditorView.contentAttributes.of({ tabindex: '0', 'aria-readonly': 'true' })
+    ];
+    if (unified) {
+      editor = new EditorView({
+        parent: host.value,
+        state: EditorState.create({
+          doc: props.modelValue,
+          extensions: [...readonly, unifiedMergeView({ original: props.compareTo, mergeControls: false })]
+        })
+      });
+      editor.scrollDOM.scrollTop = scrollTop;
+    } else {
+      merge = new MergeView({
+        parent: host.value,
+        a: { doc: props.compareTo, extensions: readonly },
+        b: { doc: props.modelValue, extensions: readonly },
+        highlightChanges: true
+      });
+      merge.b.scrollDOM.scrollTop = scrollTop;
+    }
+  } else {
+    unified = null;
+    editor = new EditorView({
+      parent: host.value,
+      state: EditorState.create({
+        doc: props.modelValue,
+        extensions: [
+          ...extensions,
+          EditorState.readOnly.of(props.readonly),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) emit('update:modelValue', update.state.doc.toString());
+          })
+        ]
+      })
+    });
+  }
 }
-
-watch(
-  () => props.theme,
-  () => editor?.dispatch({ effects: themeSlot.reconfigure(selectedTheme()) })
-);
+watch(() => props.theme, () => {
+  if (editor) editor.dispatch({ effects: themeSlot.reconfigure(currentTheme()) });
+  if (merge) {
+    merge.a.dispatch({ effects: themeSlot.reconfigure(currentTheme()) });
+    merge.b.dispatch({ effects: themeSlot.reconfigure(currentTheme()) });
+  }
+});
+watch(() => props.label, (label) => {
+  const effect = () => labelSlot.reconfigure(EditorView.contentAttributes.of({ 'aria-label': label }));
+  if (editor) editor.dispatch({ effects: effect() });
+  if (merge) {
+    merge.a.dispatch({ effects: effect() });
+    merge.b.dispatch({ effects: effect() });
+  }
+});
 watch(
   () => props.modelValue,
   (value) => {
+    if (props.compareTo !== undefined) {
+      void mountEditor();
+      return;
+    }
     if (editor && editor.state.doc.toString() !== value)
       editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: value } });
   }
 );
 watch(
-  () => [props.path, props.readonly],
-  () => void mountEditor()
+  () => [props.path, props.readonly, props.compareTo],
+  () => {
+    void mountEditor();
+  }
 );
-onMounted(() => void mountEditor());
+onMounted(() => {
+  resizeObserver = new ResizeObserver(() => {
+    if (props.compareTo !== undefined && unified !== null && host.value && (host.value.clientWidth < 720) !== unified)
+      void mountEditor();
+  });
+  if (host.value) resizeObserver.observe(host.value);
+  void mountEditor();
+});
 onBeforeUnmount(() => {
   revision++;
+  resizeObserver?.disconnect();
   editor?.destroy();
+  merge?.destroy();
 });
 </script>
 <style scoped>
 .workspace-code-editor {
-  display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--code-background);
 }
-.editor-host {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
+.workspace-code-editor :deep(.cm-search) {
+  --search-close-size: 28px;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) repeat(3, max-content);
+  align-items: center;
+  gap: 6px;
+  padding: 10px calc(var(--search-close-size) + 18px) 10px 10px;
+}
+.workspace-code-editor :deep(.cm-search > :is(input, button, label)) { margin: 0; }
+.workspace-code-editor :deep(.cm-search > br) { display: none; }
+.workspace-code-editor :deep(.cm-search .cm-textfield) { box-sizing: border-box; min-width: 0; width: 100%; min-height: 32px; padding: 4px 8px; border-radius: 6px; font: inherit; font-size: 13px; }
+.workspace-code-editor :deep(.cm-search .cm-button) { justify-self: start; max-width: 100%; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background-image: none; font: inherit; font-size: 12px; line-height: 20px; overflow-wrap: anywhere; }
+.workspace-code-editor :deep(.cm-search input[name='search']) { grid-area: 1 / 1; }
+.workspace-code-editor :deep(.cm-search button[name='next']) { grid-area: 1 / 2; }
+.workspace-code-editor :deep(.cm-search button[name='prev']) { grid-area: 1 / 3; }
+.workspace-code-editor :deep(.cm-search button[name='select']) { grid-area: 1 / 4; }
+.workspace-code-editor :deep(.cm-search label) { display: inline-flex; align-items: center; justify-self: start; gap: 5px; white-space: normal; font-size: 12px; line-height: 20px; }
+.workspace-code-editor :deep(.cm-search label:nth-of-type(1)) { grid-area: 2 / 1; }
+.workspace-code-editor :deep(.cm-search label:nth-of-type(2)) { grid-area: 2 / 2; }
+.workspace-code-editor :deep(.cm-search label:nth-of-type(3)) { grid-area: 2 / 3 / auto / 5; }
+.workspace-code-editor :deep(.cm-search input[type='checkbox']) { flex: none; width: 16px; height: 16px; margin: 0; }
+.workspace-code-editor :deep(.cm-search input[name='replace']) { grid-area: 3 / 1; }
+.workspace-code-editor :deep(.cm-search button[name='replace']) { grid-area: 3 / 2; }
+.workspace-code-editor :deep(.cm-search button[name='replaceAll']) { grid-area: 3 / 3 / auto / 5; }
+.workspace-code-editor :deep(.cm-search button[name='close']) { display: grid; place-items: center; top: 10px; right: 10px; width: var(--search-close-size); height: var(--search-close-size); min-width: var(--search-close-size); min-height: var(--search-close-size); padding: 0; border: 0; border-radius: 6px; color: var(--text); background: transparent; font-size: 20px; line-height: 1; }
+.workspace-code-editor :deep(.cm-search :is(input, button):focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }
+@media (hover: hover) and (pointer: fine) {
+  .workspace-code-editor :deep(.cm-search button:hover) { background-color: var(--surface-hover); }
+}
+@container (max-width: 520px) {
+  .workspace-code-editor :deep(.cm-search) { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 10px; }
+  .workspace-code-editor :deep(.cm-search input[name='search']) { grid-area: 1 / 1 / auto / -1; width: calc(100% - var(--search-close-size) - 8px); }
+  .workspace-code-editor :deep(.cm-search button[name='next']) { grid-area: 2 / 1; }
+  .workspace-code-editor :deep(.cm-search button[name='prev']) { grid-area: 2 / 2; }
+  .workspace-code-editor :deep(.cm-search button[name='select']) { grid-area: 2 / 3; }
+  .workspace-code-editor :deep(.cm-search label:nth-of-type(1)) { grid-area: 3 / 1; }
+  .workspace-code-editor :deep(.cm-search label:nth-of-type(2)) { grid-area: 3 / 2; }
+  .workspace-code-editor :deep(.cm-search label:nth-of-type(3)) { grid-area: 3 / 3; }
+  .workspace-code-editor :deep(.cm-search input[name='replace']) { grid-area: 4 / 1 / auto / -1; }
+  .workspace-code-editor :deep(.cm-search button[name='replace']) { grid-area: 5 / 1; }
+  .workspace-code-editor :deep(.cm-search button[name='replaceAll']) { grid-area: 5 / 2 / auto / -1; }
+}
+@container (max-width: 280px) {
+  .workspace-code-editor :deep(.cm-search) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace-code-editor :deep(.cm-search button[name='select']) { grid-area: 3 / 1 / auto / -1; }
+  .workspace-code-editor :deep(.cm-search label:nth-of-type(1)) { grid-area: 4 / 1 / auto / -1; }
+  .workspace-code-editor :deep(.cm-search label:nth-of-type(2)) { grid-area: 5 / 1; }
+  .workspace-code-editor :deep(.cm-search label:nth-of-type(3)) { grid-area: 5 / 2; }
+  .workspace-code-editor :deep(.cm-search input[name='replace']) { grid-area: 6 / 1 / auto / -1; }
+  .workspace-code-editor :deep(.cm-search button[name='replace']) { grid-area: 7 / 1; }
+  .workspace-code-editor :deep(.cm-search button[name='replaceAll']) { grid-area: 7 / 2; }
+}
+.workspace-code-editor :deep(.cm-mergeView) {
+  height: 100%;
+}
+.workspace-code-editor :deep(.cm-mergeViewEditors) {
+  height: 100%;
+}
+.workspace-code-editor :deep(.cm-editor) {
+  height: 100%;
+  container-type: inline-size;
 }
 @media (max-width: 799px), (pointer: coarse) {
+  .workspace-code-editor :deep(.cm-search) { --search-close-size: 44px; }
   .workspace-code-editor :deep(.cm-search input:not([type='checkbox'])),
+  .workspace-code-editor :deep(.cm-search .cm-button),
   .workspace-code-editor :deep(.cm-search button) {
     min-height: 44px;
     font-size: 16px;
   }
+  .workspace-code-editor :deep(.cm-search button) { min-width: 44px; }
   .workspace-code-editor :deep(.cm-search label) {
     display: inline-flex;
     align-items: center;

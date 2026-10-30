@@ -136,17 +136,20 @@
               <span>{{ zh ? '当前每次生成最多使用 1 张商品参考图' : 'Each run currently uses at most one product reference' }}</span>
             </div>
             <div class="asset-grid">
-              <article v-for="role in uploadRoles" :key="role.id" class="asset-slot">
+              <article v-for="role in uploadRoles" :key="role.id" class="asset-slot" :aria-busy="uploadingRole === role.id">
                 <div class="asset-preview">
                   <img v-if="firstAsset(role.id)" :src="assetUrl(firstAsset(role.id)!.url)" :alt="role.label" />
                   <span v-else>{{ role.short }}</span>
                 </div>
                 <strong>{{ role.label }}</strong>
                 <small>{{ role.description }}</small>
-                <label class="upload-button">
-                  {{ firstAsset(role.id) ? (zh ? '替换/新增' : 'Replace/add') : (zh ? '上传' : 'Upload') }}
-                  <input type="file" accept="image/png,image/jpeg,image/webp" @change="uploadAsset(role.id, $event)" />
+                <label class="upload-button" :class="{ 'is-disabled': uploadingRole }">
+                  {{ uploadingRole === role.id ? (zh ? '上传中…' : 'Uploading…') : firstAsset(role.id) ? (zh ? '替换/新增' : 'Replace/add') : (zh ? '上传' : 'Upload') }}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" :disabled="Boolean(uploadingRole)" @change="uploadAsset(role.id, $event)" />
                 </label>
+                <p v-if="assetUploadStatus[role.id]" class="asset-upload-status" :class="assetUploadStatus[role.id]" role="status" aria-live="polite">
+                  {{ assetStatusText(assetUploadStatus[role.id]!) }}
+                </p>
               </article>
             </div>
           </section>
@@ -280,6 +283,15 @@ const project = ref<CreativeProject | null>(null);
 const loading = ref(true);
 const saving = ref(false);
 const notice = ref('');
+type AssetUploadState = 'uploading' | 'success' | 'error' | 'refresh-error';
+const uploadingRole = ref<ProjectAssetRole | null>(null);
+const assetUploadStatus = reactive<Partial<Record<ProjectAssetRole, AssetUploadState>>>({});
+const assetStatusText = (state: AssetUploadState) => ({
+  uploading: zh.value ? '正在上传素材…' : 'Uploading asset…',
+  success: zh.value ? '素材已加入项目' : 'Asset added to the project.',
+  error: zh.value ? '上传失败，请检查图片格式和大小后重试' : 'Upload failed. Check the file type and size, then retry.',
+  'refresh-error': zh.value ? '素材已上传，刷新失败，请重新打开项目查看' : 'Uploaded, but refresh failed. Reopen the project to check.'
+})[state];
 const selectedVersions = ref<string[]>([]);
 const form = reactive({
   title: '',
@@ -428,15 +440,26 @@ const uploadAsset = async (role: ProjectAssetRole, event: Event) => {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   input.value = '';
-  if (!file) return;
-  notice.value = zh.value ? '正在安全上传素材…' : 'Uploading asset securely…';
+  if (!file || uploadingRole.value) return;
+  const targetProject = projectId.value;
+  uploadingRole.value = role;
+  assetUploadStatus[role] = 'uploading';
   try {
-    await uploadCreativeProjectAsset(projectId.value, { file, role });
-    await loadProject();
-    notice.value = zh.value ? '素材已加入项目' : 'Asset added to the project.';
-    trackEvent('project_reference_uploaded', { projectId: projectId.value, role });
+    await uploadCreativeProjectAsset(targetProject, { file, role });
+    if (projectId.value !== targetProject) return;
+    trackEvent('project_reference_uploaded', { projectId: targetProject, role });
+    try {
+      const refreshed = await getCreativeProject(targetProject);
+      if (projectId.value !== targetProject) return;
+      project.value = refreshed;
+      assetUploadStatus[role] = 'success';
+    } catch {
+      if (projectId.value === targetProject) assetUploadStatus[role] = 'refresh-error';
+    }
   } catch {
-    notice.value = zh.value ? '素材上传失败，请检查图片格式和大小' : 'Upload failed. Check the file type and size.';
+    if (projectId.value === targetProject) assetUploadStatus[role] = 'error';
+  } finally {
+    uploadingRole.value = null;
   }
 };
 
@@ -647,6 +670,9 @@ textarea { resize: vertical; }
 .asset-slot strong,.asset-slot small { display: block; }
 .asset-slot small { min-height: 34px; margin: 5px 0 12px; color: #808a82; line-height: 1.4; }
 .upload-button { position: relative; display: block; padding: 8px; border: 1px solid #3c463d; border-radius: 9px; text-align: center; cursor: pointer; }
+.upload-button.is-disabled { cursor: wait; opacity: .65; }
+.asset-upload-status { margin: 8px 0 0; color: #bac2b9; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.asset-upload-status.error, .asset-upload-status.refresh-error { color: #ffaaaa; }
 .upload-button:focus-within { outline: 2px solid #c8ff3d; outline-offset: 2px; }
 .upload-button input {
   position: absolute;

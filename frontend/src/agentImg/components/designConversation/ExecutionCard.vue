@@ -29,11 +29,6 @@
         <span>{{ zh ? '现在选择后，只有这个云端任务需要的文件才会上传。' : 'Choose it now; only files needed by this cloud execution will upload.' }}</span>
       </div>
 
-      <div v-if="execution.plan.conversationContextMessages" class="conversation-context-note">
-        <b>{{ zh ? '已带入本对话上下文' : 'Conversation context included' }}</b>
-        <span>{{ zh ? `执行会参考此前 ${execution.plan.conversationContextMessages} 条文字消息，本轮要求优先；历史附件需单独选择。` : `Execution will reference ${execution.plan.conversationContextMessages} earlier text messages. This request takes priority; earlier files must be selected separately.` }}</span>
-      </div>
-
       <div v-if="execution.status === 'waiting_budget'" class="budget-block">
         <div>
           <b>{{ budgetTitle }}</b>
@@ -62,25 +57,9 @@
           <img v-if="artifact.mimeType.startsWith('image/')" :src="agentAssetUrl(artifact)" :alt="artifact.filename" width="64" height="56" loading="lazy" />
           <span>
             <b>{{ artifact.filename }}</b>
-            <small>{{ artifact.verificationStatus === 'passed' ? (zh ? `验证通过 · v${artifact.version}` : `Verified · v${artifact.version}`) : artifact.verificationStatus }}</small>
+            <small>{{ artifact.verificationStatus === 'passed' ? (zh ? '验证通过' : 'Verified') : artifact.verificationStatus }}</small>
           </span>
         </a>
-        <button
-          v-for="artifact in run.status === 'succeeded' ? run.artifacts.filter((item) => item.verificationStatus === 'passed' && item.assetId) : []"
-          :key="`continue-${artifact.artifactId}`"
-          class="continue-artifact"
-          type="button"
-          @click="emit('continue-from-artifact', { artifactId: artifact.artifactId, filename: artifact.filename, mimeType: artifact.mimeType, byteSize: artifact.byteSize, version: artifact.version, role: artifact.role, sourceRunId: run.runId })"
-        >
-          {{ zh ? `基于 ${artifact.filename} · v${artifact.version} 继续` : `Continue from ${artifact.filename} · v${artifact.version}` }}
-        </button>
-      </div>
-
-      <div v-if="run?.sourceArtifacts?.length" class="source-artifact-note">
-        {{ zh ? '本轮沿用了上一轮：' : 'Continued from: ' }}
-        <span v-for="(artifact, index) in run.sourceArtifacts" :key="artifact.artifactId">
-          {{ index ? ' · ' : '' }}{{ artifact.filename }} · v{{ artifact.version }}
-        </span>
       </div>
 
       <div v-if="pendingApprovals.length" class="approval-list" aria-live="assertive">
@@ -104,9 +83,10 @@
           <router-link v-else :to="`/artigen/agent/runs/${run?.runId}`">{{ zh ? '打开安全接管' : 'Open secure takeover' }}</router-link>
         </div>
       </div>
-      <p v-if="expiredApprovals.length" class="approval-expired" role="status">{{ zh ? '有审批已过期，不能再批准；请刷新任务查看最新状态。' : 'An approval expired and can no longer be granted. Refresh for the current status.' }}</p>
+      <ExpiredApprovalsNotice :count="expiredApprovals.length" :zh="zh">
+        <template #actions><router-link v-if="run" :to="`/artigen/agent/runs/${run.runId}`">{{ zh ? '查看任务' : 'View task' }}</router-link></template>
+      </ExpiredApprovalsNotice>
     </div>
-
 
     <footer>
       <div class="progress-track" aria-hidden="true"><span :style="{ transform: `scaleX(${progressPercent / 100})` }"></span></div>
@@ -127,9 +107,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import WorkspaceIcon from '../workspace/WorkspaceIcon.vue';
+import ExpiredApprovalsNotice from '../workspace/ExpiredApprovalsNotice.vue';
 import type { DesignExecution } from '../../services/designConversations';
 import { useAgentApprovals } from '../../composables/useAgentApprovals';
-import { agentAssetUrl, type AgentApproval, type AgentArtifact, type AgentRun } from '../../services/agentRuns';
+import { agentAssetUrl, type AgentApproval, type AgentRun } from '../../services/agentRuns';
 import { taskAssetUrl, type ServerToolTask } from '../../services/toolTasks';
 
 const props = defineProps<{
@@ -149,7 +130,6 @@ const emit = defineEmits<{
   approve: [approval: AgentApproval];
   authorize: [approval: AgentApproval];
   deny: [approval: AgentApproval];
-  'continue-from-artifact': [artifact: { artifactId: string; filename: string; mimeType: string; byteSize: number; version: number; role: AgentArtifact['role']; sourceRunId: string }];
 }>();
 
 const displayStatus = computed(() => {
@@ -266,7 +246,6 @@ const authorizationButtonLabel = (approval: AgentApproval) => props.zh
 </script>
 
 <style scoped>
-.execution-timeline { margin: 16px 20px; }
 .execution-card { position: relative; max-width: 920px; margin: 4px auto 28px; overflow: hidden; border: 0; border-radius: 12px; color: var(--text); background: color-mix(in srgb,var(--surface) 86%,transparent); box-shadow: none; }
 .execution-card::before { position: absolute; inset: 0 auto 0 0; width: 1px; background: var(--muted-2); content: ''; }
 .status-running::before,.status-queued::before,.status-provisioning::before,.status-verifying::before { background: var(--acid); }
@@ -288,13 +267,11 @@ header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 66
 .local-note,.upload-note,.budget-block { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: var(--surface-raised); }
 .local-note,.upload-note { flex-wrap: wrap; }.local-note b,.upload-note b { font-size: 12px; }.local-note span,.upload-note span { color: var(--muted); font-size: 12px; }
 .upload-note { background: color-mix(in srgb,var(--acid) 5%,var(--surface-raised)); }
-.conversation-context-note { display: grid; gap: 3px; margin-top: 12px; padding: 10px 12px; border-left: 2px solid var(--acid); border-radius: 7px; background: color-mix(in srgb,var(--acid) 5%,var(--surface-raised)); }
-.conversation-context-note b { font-size: 12px; }.conversation-context-note span { color: var(--muted); font-size: 11px; line-height: 1.5; }
-.budget-block { justify-content: space-between; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 720; }
-.failure-block { display: grid; gap: 5px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: color-mix(in srgb,var(--danger) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--danger); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.budget-block { justify-content: space-between; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); }.budget-block div { display: grid; min-width: 0; gap: 3px; }.budget-block b { font-size: 12px; }.budget-block span { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }.budget-block a { flex: 0 0 auto; color: var(--text); font-size: 12px; font-weight: 720; }
+.failure-block { display: grid; gap: 5px; margin-top: 12px; padding: 11px 12px; border: 0; border-radius: 9px; background: color-mix(in srgb,var(--danger) 8%,var(--surface-raised)); }.failure-block b { color: var(--danger); font-size: 12px; }.failure-block span { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .deliverables { margin-top: 14px; }.deliverables > p { margin: 0 0 8px; font-size: 12px; font-weight: 660; }
 .deliverables > a { display: inline-flex; align-items: center; gap: 10px; min-width: 180px; max-width: 300px; margin: 0 8px 8px 0; padding: 8px; border: 0; border-radius: 9px; color: var(--text); text-decoration: none; background: var(--surface-raised); }.deliverables > a:hover { background: var(--surface-hover,var(--surface)); }.deliverables img { width: 64px; height: 56px; border-radius: 7px; object-fit: cover; }.deliverables span { display: grid; gap: 3px; min-width: 0; font-size: 12px; }.deliverables b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.deliverables small { color: var(--success); }
-.approval-list { display: grid; gap: 10px; margin-top: 14px; }.approval-card { min-width: 0; padding: 13px 14px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); box-shadow: inset 1px 0 var(--warning); }.approval-kicker { color: var(--warning); font-size: 12px; font-weight: 720; }.approval-card h4 { margin: 5px 0; overflow-wrap: anywhere; }.approval-card p { margin: 0 0 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }.approval-card small { display: block; overflow-wrap: anywhere; color: var(--muted); }.approval-card .authorization-scope { margin-top: 10px; padding: 9px; border: 0; border-radius: 8px; color: var(--text); background: color-mix(in srgb,var(--surface) 70%,transparent); }.approval-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }.approval-actions button,.approval-card a { min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; color: var(--acid-ink); font-size: 12px; text-decoration: none; background: var(--acid); cursor: pointer; }.approval-actions .session { color: var(--text); background: var(--surface); }.approval-actions .deny { color: var(--danger); background: transparent; }
+.approval-list { display: grid; gap: 10px; margin-top: 14px; }.approval-card { min-width: 0; padding: 13px 14px; border: 0; border-radius: 10px; background: color-mix(in srgb,var(--warning) 8%,var(--surface-raised)); }.approval-kicker { color: var(--warning); font-size: 12px; font-weight: 720; }.approval-card h4 { margin: 5px 0; overflow-wrap: anywhere; }.approval-card p { margin: 0 0 6px; overflow-wrap: anywhere; color: var(--muted); font-size: 12px; line-height: 1.5; }.approval-card small { display: block; overflow-wrap: anywhere; color: var(--muted); }.approval-card .authorization-scope { margin-top: 10px; padding: 9px; border: 0; border-radius: 8px; color: var(--text); background: color-mix(in srgb,var(--surface) 70%,transparent); }.approval-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }.approval-actions button,.approval-card a { min-height: 40px; padding: 8px 10px; border: 0; border-radius: 8px; color: var(--acid-ink); font-size: 12px; text-decoration: none; background: var(--acid); cursor: pointer; }.approval-actions .session { color: var(--text); background: var(--surface); }.approval-actions .deny { color: var(--danger); background: transparent; }
 .execution-card > footer { padding: 0 14px 13px; }.progress-track { height: 2px; overflow: hidden; border-radius: 2px; background: var(--surface-raised); }.progress-track span { display: block; height: 100%; background: var(--acid); transform-origin: left center; transition: transform 220ms cubic-bezier(.23,1,.32,1); }.footer-actions { display: flex; align-items: center; gap: 8px; padding-top: 10px; }.footer-actions > span { margin-right: auto; color: var(--muted); font-size: 12px; }.footer-actions button,.footer-actions a { padding: 8px 9px; border: 0; border-radius: 8px; color: var(--text); font-size: 12px; text-decoration: none; background: transparent; cursor: pointer; }.footer-actions button:hover,.footer-actions a:hover { background: var(--surface-raised); }.footer-actions .primary { color: var(--acid-ink); font-weight: 720; background: var(--acid); }.footer-actions .cancel { color: var(--danger); }
 .footer-actions button:focus-visible,.footer-actions a:focus-visible,.approval-actions button:focus-visible,.approval-card a:focus-visible,.deliverables a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .footer-actions button:active,.approval-actions button:active { transform: scale(.97); }
@@ -302,7 +279,6 @@ header h3 { margin: 0; overflow-wrap: anywhere; font-size: 14px; font-weight: 66
 .approval-evidence div { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 8px; }
 .approval-evidence dt { color: var(--muted); font-size: 12px; }
 .approval-evidence dd { margin: 0; color: var(--text); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.approval-expired { color: var(--warning); font-size: 13px; line-height: 1.6; }
 .status-failed .progress-track span,.status-cancelled .progress-track span { background: var(--danger); }
 @media (max-width: 799px) {
   .execution-card > header { align-items: flex-start; padding: 12px; }.execution-body { padding: 6px 12px 12px; }.status-chip { max-width: 112px; overflow: hidden; text-overflow: ellipsis; }.execution-meta { gap: 8px 12px; }.budget-block { align-items: flex-start; flex-wrap: wrap; }.approval-actions { display: grid; grid-template-columns: 1fr; }.approval-actions button { min-height: 44px; font-size: 12px; line-height: 1.35; }.footer-actions { flex-wrap: wrap; }.footer-actions > span { width: 100%; }.footer-actions button,.footer-actions a { min-height: 44px; flex: 1; text-align: center; }.deliverables > a { max-width: 100%; width: 100%; }

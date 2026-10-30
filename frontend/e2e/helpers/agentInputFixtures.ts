@@ -135,16 +135,14 @@ export const installAgentInputFixture = async (
   await page.clock.setFixedTime(new Date('2026-10-15T07:00:00.000Z'));
   await page.addInitScript(
     ({ theme, inspector }) => {
-      // Authentication/layout belong to the app, never its opaque preview frames.
-      if (window !== window.top) return;
       localStorage.setItem('app_user_id', 'input-fixture');
       localStorage.setItem(
         'artigen-workspace-preferences',
         JSON.stringify({
-          version: 4,
+          version: 2,
           theme,
           ...(inspector ? {resourceMode:'task'} : {}),
-          ...(inspector === undefined ? {} : { inspectorVisibility: { compose: !inspector, task: !inspector } })
+          ...(inspector === undefined ? {} : { rightCollapsed: !inspector })
         })
       );
       const sources: Array<EventTarget & { url: string; closed: boolean }> = [];
@@ -167,9 +165,6 @@ export const installAgentInputFixture = async (
   const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    // WebKit routes local object URLs through this hook too. Preserve the
-    // browser's same-origin preview while still blocking external requests.
-    if (url.protocol === 'blob:' && url.origin === new URL(page.url()).origin) return route.continue();
     if (!['127.0.0.1', 'localhost'].includes(url.hostname)) return route.abort();
     if (!url.pathname.startsWith('/api/')) return route.continue();
     const p = url.pathname;
@@ -178,7 +173,7 @@ export const installAgentInputFixture = async (
       route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) });
     if (p === '/api/workspace/navigation') return json({ok:true,projects:[],sessions:[],nextCursor:null});
     if (/\/api\/agent-runs\/[^/]+\/messages$/.test(p)) return json({ok:true,messages:[],nextCursor:null});
-    if (/\/api\/agent-runs\/[^/]+\/(?:activity|history)$/.test(p)) return json({ok:true,events:[]});
+    if (/\/api\/agent-runs\/[^/]+\/(activity|history)$/.test(p)) return json({ok:true,events:[]});
     if (p === '/api/auth/session')
       return json({
         ok: true,

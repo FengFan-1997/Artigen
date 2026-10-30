@@ -513,7 +513,6 @@ const installSystemRoutes = (app, deps) => {
         environment: release.environment,
         releasePolicy: release.releasePolicy,
         capabilities: release.capabilities,
-        signupOffer: release.signupOffer,
         capabilitySemantics: release.capabilitySemantics,
         gitSha: release.gitSha,
       });

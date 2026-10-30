@@ -33,45 +33,6 @@ const env = {
   AGENT_BETA_MODE: "disabled",
 };
 
-test("conversation metadata cannot change project ownership around an existing execution", {
-  skip: process.env.RUN_WORKSPACE_PG !== "1",
-}, async () => {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  let owner, project, conversation, run;
-  try {
-    owner = (await pool.query("INSERT INTO users(display_name) VALUES('Conversation ownership fixture') RETURNING id")).rows[0].id;
-    project = (await pool.query("INSERT INTO creative_projects(user_id,title) VALUES($1,'Association fixture') RETURNING id", [owner])).rows[0].id;
-    conversation = (await pool.query("INSERT INTO design_conversations(user_id) VALUES($1) RETURNING id", [owner])).rows[0].id;
-    const workspace = createWorkspaceService({ pool, env });
-    const update = (projectId, title) => workspace.updateConversation({ userId: owner, conversationId: conversation, projectId, title });
-    await update(project);
-    await update(null);
-    const execution = (await pool.query("INSERT INTO design_executions(conversation_id,route_kind,status) VALUES($1,'agent_run','planning') RETURNING id", [conversation])).rows[0].id;
-    await assert.rejects(update(project), { code: "WORKSPACE_CONVERSATION_PROJECT_LOCKED" });
-    await update(null, "Title remains editable");
-    await pool.query("UPDATE design_executions SET status='cancelled' WHERE id=$1", [execution]);
-    await update(project);
-    await update(null);
-    run = (await pool.query(`INSERT INTO agent_runs
-      (user_id,status,idempotency_key,request_hash,model_name,sandbox_version,max_credits)
-      VALUES($1,'succeeded',$2,$3,'fixture','fixture',50) RETURNING id`,
-    [owner, crypto.randomUUID(), crypto.randomBytes(32)])).rows[0].id;
-    await pool.query("UPDATE design_executions SET status='succeeded',agent_run_id=$2 WHERE id=$1", [execution, run]);
-    await assert.rejects(update(project), { code: "WORKSPACE_CONVERSATION_PROJECT_LOCKED" });
-    await update(null, "Completed title remains editable");
-    const state = (await pool.query("SELECT project_id,title FROM design_conversations WHERE id=$1", [conversation])).rows[0];
-    assert.equal(state.project_id, null);
-    assert.equal(state.title, "Completed title remains editable");
-  } finally {
-    try {
-      if (conversation) await pool.query("DELETE FROM design_conversations WHERE id=$1", [conversation]);
-      if (run) await pool.query("DELETE FROM agent_runs WHERE id=$1", [run]);
-      if (project) await pool.query("DELETE FROM creative_projects WHERE id=$1", [project]);
-      if (owner) await pool.query("DELETE FROM users WHERE id=$1", [owner]);
-    } finally { await pool.end(); }
-  }
-});
-
 test("read-only connector preserves 30 records and long patches without issuing a write", async () => {
   const records = Array.from({ length: 30 }, (_, i) => ({
     filename: `file-${i}`,
@@ -386,7 +347,7 @@ test(
       const lease = { runId: run, workerId: "fixture-worker", leaseEpoch: 1 };
       await runtime.appendPublicMessage({
         ...lease,
-        text: "## Real public message\n\nA | B\n---|---\n1|2\n\n```xml\n<analysis>public XML example</analysis>\n```",
+        text: "## Real public message\n\nA | B\n---|---\n1|2",
         sourceKey: "turn:1",
       });
       await runtime.appendPublicMessage({
@@ -399,7 +360,6 @@ test(
           .length,
         1,
       );
-      assert.match((await workspace.messages({ userId: owner, runId: run })).messages[0].text, /<analysis>public XML example/);
       const row = (
         await pool.query(
           "SELECT * FROM agent_events WHERE run_id=$1 AND event_type='message.created'",
