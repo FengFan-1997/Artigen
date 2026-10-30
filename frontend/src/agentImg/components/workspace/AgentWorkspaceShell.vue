@@ -864,7 +864,7 @@ svg { display: block; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-w
 .new-task svg { width: 16px; }
 .new-task span { flex: 1; text-align: left; font-size: 13px; font-weight: 650; }
 kbd { padding: 1px 5px; border: 0; border-radius: 5px; color: var(--muted-2); font-family: inherit; font-size: var(--font-meta); font-weight: 560; background: color-mix(in srgb,var(--surface) 72%,transparent); box-shadow: none; }
-.history-search { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; min-height: 40px; margin: 0 12px 10px; padding: 0 10px; border: 0; border-radius: 10px; color: var(--muted); background: color-mix(in srgb,var(--surface) 76%,transparent); }
+.history-search { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; min-height: 40px; margin: 0 12px 10px; padding: 0 10px; border: 1px solid var(--control-border); border-radius: 10px; color: var(--muted); background: color-mix(in srgb,var(--surface) 76%,transparent); }
 .history-search svg { width: 16px; height: 16px; }
 .history-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text); font-size: 12px; background: transparent; }
 .history-search input::placeholder { color: var(--muted-2); }
