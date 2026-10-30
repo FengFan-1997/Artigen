@@ -165,7 +165,12 @@ const installSharedApi = async (
   // default collapsed zero state is covered in agent-workspace-polish.spec.ts.
   await page.addInitScript(() => {
     if (!localStorage.getItem('artigen-workspace-preferences')) {
-      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({ version: 3, rightCollapsed: false, resourceMode:'task', theme: 'dark' }));
+      localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
+        version: 4,
+        inspectorVisibility: { compose: false, task: false },
+        resourceMode: 'task',
+        theme: 'dark'
+      }));
     }
   });
   await page.route('**/api/auth/session', (route) => route.fulfill({
