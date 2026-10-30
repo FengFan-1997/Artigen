@@ -1621,7 +1621,7 @@ onBeforeUnmount(() => {
   align-items: center;
   min-width: 0;
   padding: 3px 10px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 9px;
   background: var(--surface);
 }

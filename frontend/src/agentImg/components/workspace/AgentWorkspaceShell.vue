@@ -741,6 +741,7 @@ onBeforeUnmount(() => {
   --surface-hover: #313530;
   --surface-selected: #313530;
   --border: #3a3f38;
+  --control-border: #737a6f;
   --text: #f3f4ef;
   --muted: #a1a79b;
   --muted-2: #a1a79b;
@@ -817,6 +818,7 @@ onBeforeUnmount(() => {
   --surface-hover: #e3e7df;
   --surface-selected: #fff;
   --border: #cfd5ca;
+  --control-border: #7c8477;
   --text: #171a16;
   --muted: #5b6557;
   --muted-2: #566052;
