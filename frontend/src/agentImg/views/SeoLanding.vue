@@ -112,6 +112,7 @@
         <RouterLink
           to="/artigen/tools"
           class="feature-card"
+          tabindex="0"
           @click="trackToolNavigation('conversion', 'format_factory')"
         >
           <div class="card-icon">
@@ -137,6 +138,7 @@
         <RouterLink
           to="/artigen/ai"
           class="feature-card"
+          tabindex="0"
           @click="trackToolNavigation('conversion', 'ai_workshop')"
         >
           <div class="card-icon">
@@ -163,6 +165,7 @@
         <RouterLink
           to="/artigen/market"
           class="feature-card"
+          tabindex="0"
           @click="trackToolNavigation('click', 'market')"
         >
           <div class="card-icon" aria-hidden="true">

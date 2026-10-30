@@ -1382,7 +1382,7 @@ onBeforeUnmount(() => {
 .run-state button { min-height: 28px; margin-left: 3px; padding: 3px 8px; border: 0; border-radius: 6px; color: inherit; background: var(--surface); font: inherit; cursor: pointer; }
 .run-state button:hover { background: var(--surface-hover); }
 .run-state .spinning { animation: none; }
-.landscape-refresh-control { display: none; }
+.landscape-refresh-control { display: none !important; }
 .event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }
 .event-message p { color: var(--muted); font-size: 12px; }
 .approval-card { margin: 26px 0; padding: 16px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
@@ -1588,7 +1588,7 @@ onBeforeUnmount(() => {
 @media (max-height: 480px) {
   .conversation-scroll { padding-bottom: 96px; }
   .run-inline-refresh { display: none; }
-  .landscape-refresh-control { display: inline-flex; }
+  .landscape-refresh-control { display: inline-flex !important; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }

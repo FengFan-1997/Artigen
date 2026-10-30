@@ -980,6 +980,7 @@ const backButtonStyles = {
                     <button
                       class="generate-button local-layout-button hover-effect"
                       type="button"
+                      tabindex="0"
                       :disabled="!ingredientsInput || isLoading"
                       @click="onLocalLayout"
                     >
@@ -1707,6 +1708,10 @@ const backButtonStyles = {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.demo-watermark {
+  color: rgba(0, 0, 0, 0.72);
 }
 
 .image-container {

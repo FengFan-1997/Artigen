@@ -396,6 +396,8 @@ const onHistorySearchEscape = (event: KeyboardEvent) => {
 const leftCollapsed = ref(false);
 const rightCollapsed = ref(props.defaultInspectorCollapsed);
 let rightPreferenceSet = false;
+const inspectorVisibility: Partial<Record<'compose' | 'task', boolean>> = {};
+const inspectorScope = () => props.defaultInspectorCollapsed ? 'compose' : 'task';
 const leftDrawerOpen = ref(false);
 const rightDrawerOpen = ref(false);
 const leftWidth = ref(280);
@@ -498,14 +500,15 @@ const emptyInspectorLabel = (id: InspectorTab) => ({
 }[id]);
 
 const persistPreferences = () => {
+  if (rightPreferenceSet) inspectorVisibility[inspectorScope()] = rightCollapsed.value;
   try { localStorage.setItem('artigen-workspace-preferences', JSON.stringify({
-    version: 3,
+    version: 4,
     theme: theme.value,
     leftWidth: leftWidth.value,
     rightWidth: rightWidth.value,
     leftCollapsed: leftCollapsed.value,
     resourceMode: resourceMode.value,
-    rightCollapsed: rightPreferenceSet ? rightCollapsed.value : undefined
+    inspectorVisibility
   })); } catch { /* Layout remains usable without browser storage. */ }
 };
 const toggleLeft = () => { leftCollapsed.value = !leftCollapsed.value; persistPreferences(); };
@@ -657,12 +660,20 @@ onMounted(() => {
     const stored = JSON.parse(localStorage.getItem('artigen-workspace-preferences') || '{}');
     if (['files','changes','github','task'].includes(stored.resourceMode)) resourceMode.value = stored.resourceMode;
     if (['dark', 'light', 'system'].includes(stored.theme)) theme.value = stored.theme;
-    if ([2,3].includes(stored.version) && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
-    if (stored.version === 3 && Number(stored.rightWidth)) rightWidth.value = Math.max(480, Number(stored.rightWidth));
+    if ([2,3,4].includes(stored.version) && Number(stored.leftWidth)) leftWidth.value = Math.min(340, Math.max(216, Number(stored.leftWidth)));
+    if ([3,4].includes(stored.version) && Number(stored.rightWidth)) rightWidth.value = Math.max(480, Number(stored.rightWidth));
     leftCollapsed.value = stored.leftCollapsed === true;
-    if (typeof stored.rightCollapsed === 'boolean') {
+    // Legacy visibility belonged to active tasks. It must not open a new, empty composer.
+    for (const scope of ['compose', 'task'] as const) {
+      const preference = stored.version === 4
+        ? stored.inspectorVisibility?.[scope]
+        : scope === 'task' ? stored.rightCollapsed : undefined;
+      if (typeof preference === 'boolean') inspectorVisibility[scope] = preference;
+    }
+    const preference = inspectorVisibility[inspectorScope()];
+    if (typeof preference === 'boolean') {
       rightPreferenceSet = true;
-      rightCollapsed.value = stored.rightCollapsed;
+      rightCollapsed.value = preference;
     }
   } catch {}
   media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -708,7 +719,9 @@ watch(() => props.websiteAvailable, (available) => {
 });
 watch(() => props.defaultInspectorTab, (value) => { activeTab.value = value; resourceMode.value = 'task'; });
 watch(() => props.defaultInspectorCollapsed, (value) => {
-  if (!rightPreferenceSet) rightCollapsed.value = value;
+  const preference = inspectorVisibility[inspectorScope()];
+  rightPreferenceSet = typeof preference === 'boolean';
+  rightCollapsed.value = preference ?? value;
 });
 onBeforeUnmount(() => {
   hideRailTooltip();
