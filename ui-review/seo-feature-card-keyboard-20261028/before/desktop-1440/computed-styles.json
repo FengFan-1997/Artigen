@@ -1,0 +1,24 @@
+{
+  "viewport": {
+    "width": 1440,
+    "height": 960
+  },
+  "before": {
+    "tagName": "DIV",
+    "tabIndex": -1,
+    "background": "rgba(255, 255, 255, 0.02)",
+    "transform": "none",
+    "outlineStyle": "none",
+    "outlineWidth": "3px",
+    "outlineOffset": "0px"
+  },
+  "hover": {
+    "tagName": "DIV",
+    "tabIndex": -1,
+    "background": "rgba(255, 255, 255, 0.05)",
+    "transform": "matrix(1, 0, 0, 1, 0, -5)",
+    "outlineStyle": "none",
+    "outlineWidth": "3px",
+    "outlineOffset": "0px"
+  }
+}

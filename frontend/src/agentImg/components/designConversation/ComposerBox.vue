@@ -125,7 +125,7 @@ watch([() => props.draft, () => props.compact], async () => {
 
 <style scoped>
 .composer-box { width: 100%; min-width: 0; padding: 15px 16px 12px; border: 1px solid var(--control-border); border-radius: 20px; color: var(--text); background: var(--surface); box-shadow: none; transition: background-color 180ms ease; }
-.composer-box:focus-within { background: var(--surface-raised); outline: 2px solid var(--focus); outline-offset: 1px; }
+.composer-box:focus-within { background: var(--surface-raised); outline: 2px solid var(--focus); outline-offset: 1px; box-shadow: inset 0 0 0 1px rgb(66 100 0); }
 textarea { display: block; width: 100%; min-height: 78px; max-height: min(180px, 24dvh); box-sizing: border-box; padding: 5px 6px 10px; resize: none; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 16px; line-height: 1.58; background: transparent; }
 textarea::placeholder { color: var(--muted); }
 .compact textarea { min-height: 64px; }

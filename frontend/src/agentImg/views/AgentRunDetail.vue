@@ -6,9 +6,10 @@
     :zh="zh"
     :title="run?.objectivePreview || (zh ? 'Agent 运行' : 'Agent run')"
     subtitle=""
-    :status-label="run ? '' : loadError ? (zh ? '读取失败' : 'Could not load') : (zh ? '读取中' : 'Loading')"
+    :status-label="run ? statusLabel(run.status) : loadError ? (zh ? '读取失败' : 'Could not load') : (zh ? '读取中' : 'Loading')"
     :status-tone="workspaceTone"
     :task-cost-label="taskUsageLabel"
+    :account-task-cost-label="accountTaskUsageLabel"
     :credit-label="creditLabel"
     :credit-loading="creditsLoading"
     :credit-error="creditsError ? (zh ? '余额暂时无法读取' : 'Balance could not load') : ''"
@@ -39,6 +40,9 @@
 
     <template #topbar-actions>
       <div v-if="run" class="run-controls">
+        <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" class="run-icon-control landscape-refresh-control" type="button" :disabled="refreshingStatus" :aria-label="zh ? '刷新状态' : 'Refresh status'" :title="zh ? '刷新状态' : 'Refresh status'" @click="refreshStatus">
+          <WorkspaceIcon name="refresh" :size="18" />
+        </button>
         <button v-if="canPause" class="run-icon-control" type="button" :disabled="controlBusy || run.progress.pauseRequested" :aria-label="run.progress.pauseRequested ? (zh ? '正在暂停' : 'Pausing') : (zh ? '暂停' : 'Pause')" :title="zh ? '暂停任务' : 'Pause task'" @click="control('pause')">
           <WorkspaceIcon name="pause" :size="18" />
         </button>
@@ -104,7 +108,7 @@
             <div class="run-state" :class="displayState" role="status" aria-live="polite">
               <WorkspaceIcon :name="displayStateIcon" :size="16" :class="{ spinning: stateAnimating }" />
               <span>{{ displayStateLabel }}</span>
-              <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" type="button" :disabled="refreshingStatus" @click="refreshStatus">{{ zh ? '刷新状态' : 'Refresh status' }}</button>
+              <button v-if="displayState === 'unavailable' || displayState === 'disconnected'" class="run-inline-refresh" type="button" :disabled="refreshingStatus" @click="refreshStatus">{{ zh ? '刷新状态' : 'Refresh status' }}</button>
             </div>
             <small v-if="streamDisconnected && !terminal && !['disconnected', 'unavailable'].includes(displayState)" class="connection-note" role="status">{{ zh ? '实时连接中断，正在定期同步。' : 'Live connection interrupted; syncing periodically.' }}</small>
             <p>{{ runSummary }}</p>
@@ -532,7 +536,17 @@ const displayStateIcon = computed(() => {
 });
 const stateAnimating = computed(() => ['running', 'provisioning', 'verifying'].includes(displayState.value));
 const creditLabel = computed(() => credits.value ? `${zh.value ? '可用' : 'Available'} ${formatRunCredits(credits.value.available)} ${zh.value ? '点' : 'credits'}` : '');
-const taskUsageLabel = computed(() => run.value ? `${terminal.value ? (zh.value ? '本次结算' : 'Charged') : (zh.value ? '本次已用' : 'Task usage')} ${formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used)} ${zh.value ? '点' : 'credits'}` : '');
+const taskUsageLabel = computed(() => {
+  if (!run.value) return '';
+  const used = formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used);
+  const maximum = formatRunCredits(run.value.budget.maximum);
+  return `${terminal.value ? (zh.value ? '结算' : 'Charged') : (zh.value ? '已用' : 'Used')} ${used} / ${maximum} ${zh.value ? '点' : 'credits'}`;
+});
+const accountTaskUsageLabel = computed(() => {
+  if (!run.value) return '';
+  const amount = formatRunCredits(terminal.value ? run.value.budget.charged : run.value.budget.used);
+  return `${terminal.value ? (zh.value ? '本次结算' : 'Charged') : (zh.value ? '本次已用' : 'Task usage')} ${amount} ${zh.value ? '点' : 'credits'}`;
+});
 const refreshCredits = (requireLatest = false) => {
   if (creditsRequest) {
     if (requireLatest) creditsRefreshNeeded = true;
@@ -1262,11 +1276,11 @@ const eventLabel = (type: string) => {
 const eventSummary = (event: AgentEvent) => agentEventSummary(event, zh.value);
 const formatTime = (value: string) => new Intl.DateTimeFormat(
   zh.value ? 'zh-CN' : 'en-US',
-  { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+  { hour: '2-digit', minute: '2-digit', second: '2-digit', ...(zh.value ? { timeZone: 'Asia/Shanghai' } : {}) }
 ).format(new Date(value));
 const formatHistoryDate = (value: string) => new Intl.DateTimeFormat(
   zh.value ? 'zh-CN' : 'en-US',
-  { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+  { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(zh.value ? { timeZone: 'Asia/Shanghai' } : {}) }
 ).format(new Date(value));
 const formatBytes = (value: number) => {
   if (value < 1024) return `${value} B`;
@@ -1368,6 +1382,7 @@ onBeforeUnmount(() => {
 .run-state button { min-height: 28px; margin-left: 3px; padding: 3px 8px; border: 0; border-radius: 6px; color: inherit; background: var(--surface); font: inherit; cursor: pointer; }
 .run-state button:hover { background: var(--surface-hover); }
 .run-state .spinning { animation: none; }
+.landscape-refresh-control { display: none; }
 .event-message.child .agent-avatar { color: var(--text); background: var(--surface-raised); }
 .event-message p { color: var(--muted); font-size: 12px; }
 .approval-card { margin: 26px 0; padding: 16px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
@@ -1568,6 +1583,12 @@ onBeforeUnmount(() => {
 @media (max-width: 960px) {
   .run-controls button { width: 44px; min-height: 44px; padding: 0; justify-content: center; font-size: 0; }
   .run-controls svg { width: 16px; }
+  .run-controls .run-menu-content .danger-control { width: 100%; min-height: 44px; justify-content: flex-start; padding-inline: 10px; font-size: 12px; }
+}
+@media (max-height: 480px) {
+  .conversation-scroll { padding-bottom: 96px; }
+  .run-inline-refresh { display: none; }
+  .landscape-refresh-control { display: inline-flex; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; }

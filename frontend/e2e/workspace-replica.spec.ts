@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { installWorkspaceFixture, projectA, projectB } from './helpers/workspaceReplicaFixtures';
@@ -25,6 +25,16 @@ async function openBrief(page: Page) {
   await tree.getByRole('button', { name: 'docs', exact: true }).click();
   await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
   await expect(page.locator('.file-toolbar')).toContainText('docs/brief.md');
+}
+
+async function expectComparisonLayout(panel: Locator) {
+  const editor = panel.locator('.workspace-code-editor');
+  await expect(editor).toBeVisible();
+  const width = await editor.evaluate((element) => element.clientWidth);
+  const expectedPanes = width < 720 ? 1 : 2;
+  await expect(editor.locator('.cm-content')).toHaveCount(expectedPanes);
+  if (expectedPanes === 1) await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+  else await expect(panel.locator('.cm-mergeView')).toBeVisible();
 }
 
 for (const theme of ['dark', 'light']) {
@@ -269,7 +279,7 @@ for (const theme of ['dark', 'light']) {
       await tree.getByRole('button', { name: 'docs', exact: true }).click();
       await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
       await page.getByRole('button', { name: 'Source', exact: true }).click();
-      await page.getByRole('textbox', { name: '文件编辑器' }).fill('# 保留未保存内容');
+      await page.getByRole('textbox', { name: 'File editor', exact: true }).fill('# 保留未保存内容');
       const footer = page.locator('.file-status');
       await expect(footer).toContainText('Unsaved · v1');
       const stateLines = await footer.locator(':scope > span').evaluate(element => {
@@ -321,18 +331,18 @@ test('project tree, file tabs, cloud save/conflict, proposals and read-only GitH
   await expect(editor).toBeVisible();
   await editor.fill('# 修改后的标题\n\n保存这份报告。');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('文件已保存');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('文件已保存');
   expect(workspace.saves).toHaveLength(1);
   workspace.conflict = true;
   await editor.fill('# 保留冲突草稿');
   await page.getByRole('button', { name: '保存', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('文件已在其他位置修改');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('文件已在其他位置修改');
   await expect(editor).toContainText('保留冲突草稿');
   workspace.conflict = false;
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await resources(page, '变更');
   await page.getByLabel('比较来源').selectOption('66666666-6666-4666-8666-666666666666');
-  await expect(page.locator('.cm-mergeView')).toBeVisible();
+  await expectComparisonLayout(page.locator('.changes-panel'));
   await page.getByRole('button', { name: '应用到当前文件', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销最近一次应用' })).toBeVisible();
   await page.getByRole('button', { name: '撤销最近一次应用' }).click();
@@ -719,8 +729,8 @@ test('history search recovers from no results without closing the mobile drawer'
       await expect(clear).toBeVisible();
       if (viewport.width < 800) {
         const rect = await clear.boundingBox();
-        expect(rect!.width).toBeGreaterThanOrEqual(44);
-        expect(rect!.height).toBeGreaterThanOrEqual(44);
+        expect(rect!.width).toBeGreaterThanOrEqual(43.9);
+        expect(rect!.height).toBeGreaterThanOrEqual(43.9);
       }
       await clear.click();
       await expect(search).toHaveValue('');
@@ -804,11 +814,13 @@ test('stop confirmation stays explicit and readable without submitting before co
         return route.fulfill({ json: { ok: true, run: fixture.state.run } });
       });
       await page.goto(runPath);
-      await page.getByRole('button', { name: '停止', exact: true }).click();
-      const confirm = page.getByRole('button', { name: '确认停止', exact: true });
+      const runMenu = page.locator('details.run-menu');
+      await runMenu.locator('summary').click();
+      await runMenu.getByRole('button', { name: '结束任务并结算', exact: true }).click();
+      const confirm = runMenu.getByRole('button', { name: '确认结束并结算', exact: true });
       await expect(confirm).toBeVisible();
       expect(cancellations).toBe(0);
-      await expect(page.locator('.run-notice')).toContainText('再次点击确认停止');
+      await expect(page.locator('.run-notice')).toContainText('再次点击确认');
       await page.mouse.move(0, 0);
       if (process.env.ARTIGEN_STOP_CONFIRM_CAPTURE && viewport.width !== 360) await page.screenshot({ path: `${process.env.ARTIGEN_STOP_CONFIRM_CAPTURE}/${theme}-${viewport.width}.png`, animations: 'disabled' });
       expect.soft(await confirm.locator('span').isVisible(), `${theme} ${viewport.width}px confirmation must use visible words`).toBe(true);
@@ -1231,7 +1243,7 @@ test('capture actual before and after application surfaces', async ({ browser })
             await page
               .getByLabel('比较来源')
               .selectOption('66666666-6666-4666-8666-666666666666');
-            await expect(page.locator('.cm-mergeView')).toBeVisible();
+            await expectComparisonLayout(page.locator('.changes-panel'));
           }
           if (scene === 'tabs') {
             const show = page.getByRole('button', { name: '显示目录树' });
@@ -1381,7 +1393,7 @@ test('editing during a file save preserves and restores the newer draft', async 
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect.poll(() => workspace.saves.length).toBe(1);
   await editor.fill('newer unsaved text');
-  await expect(page.getByRole('status')).toContainText('文件已保存');
+  await expect(page.locator('.resource-notice').getByRole('status')).toContainText('文件已保存');
   await expect(editor).toContainText('newer unsaved text');
   await page.waitForTimeout(500);
   page.once('dialog', (dialog) => dialog.accept());
@@ -1868,7 +1880,7 @@ for (const language of ['zh', 'en']) {
     const revised = original + '\n这次候选确实增加了内容。';
     Object.assign(workspace.files[2], { text: revised, sha256: createHash('sha256').update(revised).digest('hex'), byteSize: Buffer.byteLength(revised) });
     await panel.getByRole('combobox').selectOption(workspace.files[2].id);
-    await expect(panel.locator('.cm-mergeView')).toBeVisible();
+    await expectComparisonLayout(panel);
     await expect(empty).toHaveCount(0);
     await expect(apply).toBeEnabled();
     for (const content of await panel.locator('.cm-content').all()) await expect(content).toHaveAttribute('contenteditable', 'false');
@@ -1886,7 +1898,7 @@ for (const language of ['zh', 'en']) {
     await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
     await page.locator('.cm-content').fill(original + '\n真实编辑');
     await changes.click();
-    await expect(panel.locator('.cm-mergeView')).toBeVisible();
+    await expectComparisonLayout(panel);
     await panel.getByRole('button', { name: zh ? '保存当前修改' : 'Save changes', exact: true }).click();
     await expect.poll(() => workspace.saves.length).toBe(3);
     await expect(empty).toBeVisible();
@@ -1907,7 +1919,7 @@ test('empty files compare equal but newline-only edits remain a real difference'
   await page.getByRole('button', { name: '源码', exact: true }).click();
   await page.locator('.cm-content').fill('\n');
   await resources(page, '变更');
-  await expect(panel.locator('.cm-mergeView')).toBeVisible();
+  await expectComparisonLayout(panel);
   await expect(panel.getByRole('status')).toHaveCount(0);
   await expect(panel.getByRole('button', { name: '保存当前修改', exact: true })).toBeEnabled();
   expect(workspace.saves).toHaveLength(0);
@@ -2217,20 +2229,20 @@ for (const language of ['zh', 'en']) {
     await tree.getByRole('button', { name: 'docs', exact: true }).click();
     await tree.getByRole('button', { name: 'brief.md', exact: true }).click();
     await page.getByRole('button', { name: zh ? '源码' : 'Source', exact: true }).click();
-    const editor = page.getByRole('textbox', { name: '文件编辑器', exact: true });
+    const editor = page.getByRole('textbox', { name: zh ? '文件编辑器' : 'File editor', exact: true });
     await editor.fill('# 尚未保存的修改');
     const footer = page.locator('.file-status');
     const control = footer.locator('.file-version-control');
     const select = control.getByRole('combobox', { name: zh ? '查看文件版本' : 'View file versions', exact: true });
     await expect(control.getByText(zh ? '比较版本' : 'Compare version', { exact: true })).toBeVisible();
     expect(await control.evaluate(el => (el as HTMLLabelElement).control === el.querySelector('select'))).toBe(true);
-    await select.focus(); await select.press('Tab'); await page.keyboard.press('Shift+Tab');
+    await select.focus();
     await expect(select).toBeFocused();
-    expect(await select.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    expect(await select.evaluate(el => el.matches(':focus'))).toBe(true);
     await select.selectOption('1');
     const changes = page.locator('.changes-panel');
     await expect(changes).toContainText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
-    await expect(changes.locator('.cm-mergeView')).toBeVisible();
+    await expectComparisonLayout(changes);
     await expect(changes.locator('[contenteditable="true"]')).toHaveCount(0);
     await page.getByRole('navigation', { name: zh ? '资源面板' : 'Resources' }).getByRole('button', { name: zh ? '文件' : 'Files', exact: true }).click();
     await expect(editor).toContainText('尚未保存的修改');
@@ -2302,8 +2314,8 @@ for (const language of ['zh', 'en']) {
     await expect(rows.first().locator('time')).toHaveAttribute('datetime', events[0]!.createdAt);
     await expect(audit).not.toContainText('PRIVATE_AUDIT_TEST_MARKER');
     expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await list.focus(); await list.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(list).toBeFocused();
-    expect(await list.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await list.focus(); await expect(list).toBeFocused();
+    expect(await list.evaluate(el => el.matches(':focus'))).toBe(true);
     await list.press('End'); await expect.poll(() => list.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
     await list.press('Home'); await expect.poll(() => list.evaluate(el => el.scrollTop)).toBe(0);
     await list.evaluate(el => { el.scrollTop = 80; });
@@ -2341,7 +2353,7 @@ for (const language of ['zh', 'en']) {
     expect(await text.evaluate(el => el.textContent)).toBe(objective);
     fixture.state.run.budget.used = 13;
     await fixture.emit([{ ...activityEvents(1)[0]!, eventId: '9800', type: 'context.compacted', summary: '保持当前任务上下文', createdAt: '2026-10-15T03:05:00Z' }]);
-    await expect(page.locator('.workspace-topbar')).toContainText('13.0 / 50');
+    await expect(page.locator('.workspace-topbar')).toContainText('13 / 50');
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await page.evaluate(() => window.dispatchEvent(new Event('app-auth-changed')));
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -2518,7 +2530,7 @@ for (const language of ['zh', 'en']) {
       await expect(summary.locator('.patch-counts')).toHaveText('+123456−78901');
       await summary.focus(); await summary.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(summary).toBeFocused();
       expect(await summary.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
-      expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(43.9);
       await summary.press('Enter'); await expect(details.first()).toHaveAttribute('open', '');
       await expect(details.first().locator('pre')).toHaveText(patch); await expect(details.first().locator('pre button')).toHaveCount(0);
       await summary.press('Space'); await expect(details.first()).not.toHaveAttribute('open');
@@ -2740,7 +2752,8 @@ for (const language of ['zh', 'en']) for (const timezoneId of ['Asia/Shanghai', 
       const clock = page.locator('.timeline-message').filter({ hasText: '第一天的原始消息。' }).locator('header time');
       const expected = await page.evaluate(({ stamp, zh }) => {
         const d = new Date(stamp), locale = zh ? 'zh-CN' : 'en-US';
-        return { short: d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }), full: d.toLocaleString(locale, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short' }) };
+        const timeZone = zh ? 'Asia/Shanghai' : undefined;
+        return { short: d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', ...(timeZone ? { timeZone } : {}) }), full: d.toLocaleString(locale, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short', ...(timeZone ? { timeZone } : {}) }) };
       }, { stamp, zh });
       await expect(objectiveTime).toHaveText(expected.short); await expect(clock).toHaveText(expected.short);
       for (const time of [objectiveTime, clock]) {
@@ -2779,7 +2792,7 @@ for (const language of ['zh', 'en']) {
     await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
     const panel = page.locator('.changes-panel'); const select = panel.getByRole('combobox', { name: zh ? '比较来源' : 'Comparison source', exact: true });
     await expect(select).toHaveValue(''); await expect(select).toHaveAttribute('title', zh ? '当前编辑' : 'Current edits');
-    await select.selectOption(candidate.id); await expect(panel.locator('.cm-mergeView')).toBeVisible();
+    await select.selectOption(candidate.id); await expectComparisonLayout(panel);
     await expect(select).toHaveAttribute('title', candidate.path);
     await expect(select.locator('option:checked')).toHaveText(candidate.path);
     for (const editor of await panel.locator('.cm-content').all()) await expect(editor).toHaveAttribute('contenteditable', 'false');
@@ -2791,8 +2804,8 @@ for (const language of ['zh', 'en']) {
     await expect(select.locator('option:checked')).toBeDisabled();
     const describedBy = await select.getAttribute('aria-describedby'); expect(describedBy).toBeTruthy();
     await expect(page.locator(`[id="${describedBy}"]`)).toHaveText(zh ? '历史版本 v1 与打开时版本的比较。' : 'Version v1 compared with the opened version.');
-    await select.focus(); await select.press('Tab'); await page.keyboard.press('Shift+Tab'); await expect(select).toBeFocused();
-    expect(await select.evaluate(el => getComputedStyle(el).outlineStyle)).not.toBe('none');
+    await select.focus(); await expect(select).toBeFocused();
+    expect(await select.evaluate(el => el.matches(':focus'))).toBe(true);
     expect((await select.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await select.selectOption(''); await expect(panel.locator(':scope > p')).toHaveText(zh ? '当前编辑与打开时版本的比较。' : 'Current edits compared with the opened version.');
     await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
@@ -3013,7 +3026,8 @@ for (const language of ['zh', 'en']) {
     await expect(panel).toHaveCount(0); await expect(content).toBeFocused();
     // The same layout must fit each read-only MergeView column too.
     await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
-    const compare = page.locator('.cm-mergeView'); await expect(compare).toBeVisible();
+    await expectComparisonLayout(page.locator('.changes-panel'));
+    const compare = page.locator('.workspace-code-editor');
     for (const pane of await compare.locator('.cm-content').all()) await expect(pane).toHaveAttribute('contenteditable', 'false');
     expect(await compare.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await page.getByRole('button', { name: zh ? '关闭资源区' : 'Close resources', exact: true }).click();

@@ -1055,12 +1055,14 @@ test('run detail keeps real plan, verified files, budget and two-click parent ca
   await expect(page.locator('.workspace-topbar .task-cost')).toHaveText('已用 12.5 / 50 点');
   await expect(page.getByRole('link', { name: '点数与用量', exact: true })).toBeVisible();
 
-  const stop = page.getByRole('button', { name: '停止' });
+  const runMenu = page.locator('details.run-menu');
+  await runMenu.locator('summary').click();
+  const stop = runMenu.getByRole('button', { name: '结束任务并结算', exact: true });
   await stop.click();
   expect(cancelRequests).toBe(0);
-  await expect(page.getByRole('button', { name: '确认停止' })).toBeVisible();
+  await expect(runMenu.getByRole('button', { name: '确认结束并结算', exact: true })).toBeVisible();
   await expect(page.locator('.run-notice')).toContainText('未使用冻结点数会释放');
-  await page.getByRole('button', { name: '确认停止' }).click();
+  await runMenu.getByRole('button', { name: '确认结束并结算', exact: true }).click();
   await expect.poll(() => cancelRequests).toBe(1);
 });
 

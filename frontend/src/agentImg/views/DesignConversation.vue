@@ -350,6 +350,7 @@ import { useLanguageStore } from '@/stores/language';
 import { useAgentImgAuth } from '../composables/useAgentImgAuth';
 import { useWorkspaceDraft } from '../composables/useWorkspaceDraft';
 import { approvalIsAvailable } from '../composables/useAgentApprovals';
+import { bootstrapAuthSession } from '@/login/session';
 import {
   attachDesignExecutionTarget,
   cancelDesignExecution,
@@ -426,6 +427,7 @@ const selectedAttachments = ref<SelectedAttachment[]>([]);
 const notice = ref('');
 const sending = ref(false);
 const planning = ref(false);
+const planningTerminalEvents = ref(0);
 const workspaceSearch = ref('');
 const fileInput = ref<HTMLInputElement | null>(null);
 const scrollArea = ref<HTMLElement | null>(null);
@@ -732,7 +734,10 @@ const connectConversationStream = (id: string, revision = conversationRevision) 
   closeConversationStream = openDesignEventStream(id, {
     onEvent: (event) => {
       if (!isCurrentConversation(id, revision) || event.conversationId !== id) return;
-      if (['execution.ready', 'clarification.required', 'planning.failed'].includes(event.type)) planning.value = false;
+      if (['execution.ready', 'clarification.required', 'planning.failed'].includes(event.type)) {
+        planningTerminalEvents.value += 1;
+        planning.value = false;
+      }
       scheduleRefresh(event.type === 'execution.ready' && typeof event.data.executionId === 'string' ? event.data.executionId : undefined);
     }
   });
@@ -979,7 +984,9 @@ const submitAuthenticated = async () => {
   const originalDraftTask = conversationDraftTask();
   let id = selectedConversationId.value;
   const attachments = [...selectedAttachments.value];
+  const planningEventVersion = planningTerminalEvents.value;
   sending.value = true;
+  planning.value = true;
   notice.value = '';
   conversationRefreshRevision += 1;
   try {
@@ -1001,16 +1008,27 @@ const submitAuthenticated = async () => {
     discardSaved(owner, `conversation:${id}`, submittedDraft);
     discardSaved(owner, originalDraftTask, submittedDraft);
     if (!isCurrentConversation(id, revision)) return;
-    if (conversation.value) conversation.value.messages = [...(conversation.value.messages || []), sent];
+    if (conversation.value) {
+      const messages = conversation.value.messages || [];
+      if (!messages.some((message) => message.messageId === sent.messageId)) {
+        conversation.value.messages = [...messages, sent];
+      }
+    }
     if (draft.value === submittedDraft) draft.value = '';
     const sentFileIds = new Set(attachments.map((item) => item.clientId));
     selectedAttachments.value = selectedAttachments.value.filter((item) => !sentFileIds.has(item.clientId));
-    planning.value = true;
+    // An execution event may arrive before the message response. In that
+    // case the stream handler has already removed the planning placeholder;
+    // do not re-introduce it after the POST resolves.
+    if (planningTerminalEvents.value !== planningEventVersion) planning.value = false;
     window.dispatchEvent(new Event('workspace:navigation-changed'));
     await refreshConversationList();
     if (isCurrentConversation(id, revision)) await scrollToBottom(true);
   } catch (error) {
-    if (isCurrentConversation(id, revision)) notice.value = errorText(error);
+    if (isCurrentConversation(id, revision)) {
+      planning.value = false;
+      notice.value = errorText(error);
+    }
   } finally {
     if (isCurrentConversation(id, revision)) sending.value = false;
   }
@@ -1380,7 +1398,8 @@ const executionsForMessage = (messageId: string) => (
 const handleAuthChanged = () => {
   const previousOwner = authUserId.value;
   syncAuth();
-  if (previousOwner !== authUserId.value || !isAuthed.value) {
+  const shouldRetryConversation = isAuthed.value && Boolean(conversationLoadError.value && selectedConversationId.value);
+  if (previousOwner !== authUserId.value || !isAuthed.value || shouldRetryConversation) {
     const requested = isAuthed.value ? String(route.query.c || '').trim() : '';
     beginConversationSelection(requested);
     loadingConversation.value = Boolean(requested);
@@ -1408,6 +1427,12 @@ onMounted(async () => {
     statusUnavailable.value = true;
   }
   if (disposed) return;
+  // Wait for the cookie-backed session check before deciding whether a saved
+  // conversation can be restored. The session module starts this request at
+  // page load; awaiting it here prevents a transient login-required state from
+  // swallowing a deep link while the request is still in flight.
+  await bootstrapAuthSession();
+  if (disposed) return;
   syncAuth();
   if (!isAuthed.value) {
     loadingConversation.value = false;
@@ -1417,7 +1442,7 @@ onMounted(async () => {
   const initialRevision = conversationRevision;
   await refreshConversationList().catch(() => {});
   if (disposed || initialRevision !== conversationRevision) return;
-  const requested = String(route.query.c || '').trim() || (explicitNew ? '' : (() => {
+  const requested = String(route.query.c || '').trim() || (explicitNew || draft.value.trim() ? '' : (() => {
     try {
       const scoped = window.localStorage.getItem(lastConversationKey());
       if (scoped !== null) return scoped;

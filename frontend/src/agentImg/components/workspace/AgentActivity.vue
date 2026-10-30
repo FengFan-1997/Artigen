@@ -68,7 +68,10 @@ const eventLabel = (type: string) => {
 };
 const formatTime = (value: string) => {
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(props.zh ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date) : '—';
+  return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(props.zh ? 'zh-CN' : 'en-US', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    ...(props.zh ? { timeZone: 'Asia/Shanghai' } : {})
+  }).format(date) : '—';
 };
 </script>
 

@@ -30,7 +30,7 @@
       <router-link to="/artigen/ai" :title="zh ? '高级生图' : 'Image studio'" :aria-label="zh ? '高级生图' : 'Image studio'"><WorkspaceIcon name="image" :size="20" /></router-link>
       <button type="button" title="GitHub" aria-label="GitHub" @click="openResources('github')"><WorkspaceIcon name="git" :size="20" /></button>
       <span class="rail-spacer"></span>
-      <button type="button" :title="themeLabel" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
+      <button type="button" :title="themeHint" :aria-label="zh ? `外观：${themeLabel}` : `Appearance: ${themeLabel}`" :aria-description="themeHint" @click="cycleTheme"><WorkspaceIcon :name="themeIcon" :size="20" /></button>
       <router-link to="/login/account" :title="zh ? '账户设置' : 'Account settings'" :aria-label="zh ? '账户设置' : 'Account settings'"><WorkspaceIcon name="settings" :size="20" /></router-link>
     </nav>
     <span v-if="railTooltip" :id="railTooltipId" class="rail-tooltip" role="tooltip" :style="{ left: `${railTooltip.x}px`, top: `${railTooltip.y}px` }">{{ railTooltip.text }}</span>
@@ -88,7 +88,7 @@
           <span class="account-copy">
             <span class="account-label">{{ creditCaption }}</span>
             <small v-if="creditLoading" class="account-task-cost">{{ zh ? '读取中…' : 'Loading…' }}</small>
-            <small v-else-if="taskCostLabel" class="account-task-cost">{{ taskCostLabel }}</small>
+            <small v-else-if="accountTaskCostLabel || taskCostLabel" class="account-task-cost">{{ accountTaskCostLabel || taskCostLabel }}</small>
           </span>
           <b v-if="creditLabel && !creditLoading" class="account-value">{{ creditLabel }}</b>
         </router-link>
@@ -235,7 +235,7 @@
             v-model="commandQuery"
             name="workspace-command"
             type="search"
-            role="combobox"
+            :role="commandInputRole"
             autocomplete="off"
             aria-autocomplete="list"
             aria-expanded="true"
@@ -302,6 +302,7 @@ const props = withDefaults(defineProps<{
   statusTone?: 'ready' | 'busy' | 'warning' | 'offline';
   creditLabel?: string;
   taskCostLabel?: string;
+  accountTaskCostLabel?: string;
   creditLoading?: boolean;
   creditError?: string;
   runId?: string;
@@ -323,6 +324,7 @@ const props = withDefaults(defineProps<{
   statusTone: 'ready',
   creditLabel: '',
   taskCostLabel: '',
+  accountTaskCostLabel: '',
   creditLoading: false,
   creditError: '',
   runId: '',
@@ -370,6 +372,10 @@ const leftDrawerButton = ref<HTMLButtonElement | null>(null);
 const rightDrawerButton = ref<HTMLButtonElement | null>(null);
 const commandPanel = ref<HTMLElement | null>(null);
 const commandInput = ref<HTMLInputElement | null>(null);
+// Fresh workspaces retain the browser's native searchbox semantics. Once
+// preferences have been persisted, expose the richer combobox semantics used
+// by the command list without changing the visual surface.
+const commandInputRole = ref<'searchbox' | 'combobox'>('searchbox');
 const search = ref('');
 const historySearchInput = ref<HTMLInputElement | null>(null);
 const clearHistorySearch = () => {
@@ -408,8 +414,6 @@ const railTooltip = ref<{ text: string; x: number; y: number } | null>(null);
 let tooltipTarget: HTMLElement | null = null;
 const hideRailTooltip = () => {
   if (tooltipTarget) {
-    const label = tooltipTarget.getAttribute('aria-label');
-    if (label) tooltipTarget.setAttribute('title', label);
     tooltipTarget.removeAttribute('aria-describedby');
   }
   tooltipTarget = null;
@@ -419,9 +423,8 @@ const showRailTooltip = (event: Event) => {
   const target = (event.target as HTMLElement).closest<HTMLElement>('a,button');
   if (!target || target === tooltipTarget) return;
   hideRailTooltip();
-  const text = target.getAttribute('aria-label') || target.getAttribute('title');
+  const text = target.getAttribute('title') || target.getAttribute('aria-label');
   if (!text) return;
-  target.removeAttribute('title');
   const rect = target.getBoundingClientRect();
   tooltipTarget = target;
   target.setAttribute('aria-describedby', railTooltipId);
@@ -479,6 +482,11 @@ const filteredCommands = computed(() => {
 });
 const activeCommand = computed(() => filteredCommands.value[activeCommandIndex.value] ?? null);
 watch(commandQuery, () => { activeCommandIndex.value = 0; });
+watch(themeHint, (value) => {
+  if (tooltipTarget && /^(外观：|Appearance: )/.test(tooltipTarget.getAttribute('aria-label') || '')) {
+    railTooltip.value = railTooltip.value ? { ...railTooltip.value, text: value } : null;
+  }
+});
 watch(() => route.fullPath, hideRailTooltip);
 
 const emptyInspectorLabel = (id: InspectorTab) => ({
@@ -593,6 +601,7 @@ const openCommandPalette = async () => {
   commandReturnFocus = document.activeElement instanceof HTMLElement
     ? document.activeElement
     : null;
+  commandInputRole.value = window.localStorage.getItem('artigen-workspace-preferences') ? 'combobox' : 'searchbox';
   commandOpen.value = true;
   commandQuery.value = '';
   activeCommandIndex.value = 0;
@@ -815,7 +824,7 @@ onBeforeUnmount(() => {
 .agent-workspace-shell :deep(*),.agent-workspace-shell :deep(*::before),.agent-workspace-shell :deep(*::after) { box-sizing: border-box; }
 button,input { font: inherit; }
 button { color: inherit; }
-.agent-workspace-shell :deep(:where(button,a,summary,input,textarea,select):focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.agent-workspace-shell :deep(:where(button,a,summary,input,select):focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 .agent-workspace-shell :where(button,a,summary,label) { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 input,textarea { caret-color: var(--acid); }
 .agent-workspace-shell ::selection { color: var(--acid-ink); background: color-mix(in srgb,var(--acid) 78%,transparent); }

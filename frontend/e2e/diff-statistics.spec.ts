@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { installWorkspaceFixture } from './helpers/workspaceReplicaFixtures';
 import { inputRunId } from './helpers/agentInputFixtures';
@@ -20,8 +20,18 @@ async function comparison(page: Page, zh: boolean, installModuleRoute: () => Pro
   await nav.getByRole('button', { name: zh ? '变更' : 'Changes', exact: true }).click();
   const panel = page.locator('.changes-panel');
   await panel.getByRole('combobox').selectOption(fixture.workspace.files[2].id);
-  await expect(panel.locator('.cm-mergeView')).toBeVisible();
+  await expectComparisonLayout(panel);
   return { fixture, nav, panel, header: panel.locator(':scope > header'), newer };
+}
+
+async function expectComparisonLayout(panel: Locator) {
+  const editor = panel.locator('.workspace-code-editor');
+  await expect(editor).toBeVisible();
+  const width = await editor.evaluate((element) => element.clientWidth);
+  const expectedPanes = width < 720 ? 1 : 2;
+  await expect(editor.locator('.cm-content')).toHaveCount(expectedPanes);
+  if (expectedPanes === 1) await expect(panel.locator('.cm-mergeView')).toHaveCount(0);
+  else await expect(panel.locator('.cm-mergeView')).toBeVisible();
 }
 
 for (const language of ['zh', 'en']) {
